@@ -22,26 +22,47 @@ PREAMBLE = (
     "process.\n"
 )
 
-# Acronyms and technical terms that should be uppercased in presentation
-ACRONYMS = {"vat", "nda", "ndas", "cpse", "hse", "qms", "ncr", "capa", "dc", "ropa", "dpia", "dpias", "jv", "esg", "it", "spa", "epc", "w-and-i"}
+# Acronyms that should be uppercased in presentation (singular forms only)
+ACRONYMS = {"vat", "nda", "cpse", "hse", "qms", "ncr", "capa", "dc", "ropa", "dpia", "jv", "esg", "it", "spa", "epc"}
 
 
 def _titleise(text: str) -> str:
-    """Capitalise text normally, but uppercase acronyms.
+    """Render text in sentence case with acronyms uppercased.
 
-    Handles plural forms (e.g., 'ndas' -> 'NDAs', 'dpias' -> 'DPIAs').
-    Special case: 'w-and-i' -> 'W&I'.
+    - Capitalises the first letter only (sentence case, not title case)
+    - Acronyms are uppercased in place: 'vat' -> 'VAT', 'nda' -> 'NDA'
+    - Plural acronyms keep the acronym uppercased and add lowercase 's': 'ndas' -> 'NDAs'
+    - Special case: 'w and i' -> 'W&I'
+
+    Examples:
+        'statutory accounts' -> 'Statutory accounts'
+        'cpse replies' -> 'CPSE replies'
+        'nda' -> 'NDA'
+        'ndas' -> 'NDAs'
+        'w and i' -> 'W&I'
     """
-    if text.lower() == "w-and-i":
+    # Special case for W&I
+    if text.lower() == "w and i":
         return "W&I"
 
     words = text.split()
     result = []
-    for word in words:
-        if word.lower() in ACRONYMS:
-            result.append(word.upper())
+    for i, word in enumerate(words):
+        word_lower = word.lower()
+
+        # Check if word is an acronym or acronym + 's'
+        if word_lower in ACRONYMS:
+            result.append(word_lower.upper())
+        elif word_lower.endswith("s") and word_lower[:-1] in ACRONYMS:
+            # Handle plural acronyms: 'ndas' -> 'NDAs'
+            result.append(word_lower[:-1].upper() + "s")
+        elif i == 0:
+            # First word: capitalize only the first letter (sentence case)
+            result.append(word_lower.capitalize())
         else:
-            result.append(word.capitalize())
+            # Other non-acronym words: keep as-is (lowercase)
+            result.append(word_lower)
+
     return " ".join(result)
 
 

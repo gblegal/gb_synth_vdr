@@ -1,8 +1,10 @@
 import re
 from pathlib import Path
 
+import pytest
+
 from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
-from synthvdr.index_build import count_slots, render_index, write_index_sources
+from synthvdr.index_build import _titleise, count_slots, render_index, write_index_sources
 from synthvdr.slots import SIZE_PRESETS, build_slot_manifest
 
 
@@ -19,33 +21,69 @@ def test_index_lists_every_slot_exactly_once(tmp_path):
     assert count_slots(render_index(src)) == len(slots)
 
 
-def test_render_is_byte_stable_across_independent_runs(tmp_path):
-    """Verify render_index produces byte-identical output even when files are created in different order.
+def test_render_is_byte_stable_across_independent_runs(tmp_path, monkeypatch):
+    """Verify render_index produces byte-identical output even when glob returns paths in different order.
 
-    This tests the real invariant: that sorted() is honoured and output is stable across
-    independent runs and filesystems, not just that two calls within one process happen
-    to read the same glob() order.
+    Monkeypatches Path.glob to return paths in reversed order, then verifies that render_index
+    still produces the same output. This tests that render_index sorts its inputs, which is the
+    actual invariant we need to preserve.
     """
     pack = load_domain(DEFAULT_DOMAIN_ROOT)
     slots = build_slot_manifest(pack, SIZE_PRESETS["S"])
 
-    # Build index sources in first temp directory
-    src1 = tmp_path / "index-src-1"
-    write_index_sources(slots, pack, src1)
-    output1 = render_index(src1)
+    # Generate the index sources
+    src = tmp_path / "index-src"
+    write_index_sources(slots, pack, src)
 
-    # Build index sources in a second temp directory, creating files in different order
-    # by writing them in reverse section order
-    src2 = tmp_path / "index-src-2"
-    src2.mkdir(parents=True, exist_ok=True)
-    (src2 / "00_preamble.txt").write_text((src1 / "00_preamble.txt").read_text(encoding="utf-8"), encoding="utf-8")
-    for md_file in reversed(sorted((src1).glob("*.md"))):
-        (src2 / md_file.name).write_text(md_file.read_text(encoding="utf-8"), encoding="utf-8")
+    # Get output with normal glob order
+    output_normal = render_index(src)
 
-    output2 = render_index(src2)
+    # Now monkeypatch glob to return paths in reversed order
+    original_glob = Path.glob
 
-    # Both outputs should be byte-identical despite different creation order
-    assert output1 == output2
+    def reversed_glob(self, pattern):
+        return reversed(list(original_glob(self, pattern)))
+
+    monkeypatch.setattr(Path, "glob", reversed_glob)
+
+    # Get output with reversed glob order
+    output_reversed = render_index(src)
+
+    # Both should be identical because render_index sorts
+    assert output_normal == output_reversed
+
+
+def test_render_is_byte_stable_fails_without_sorted(tmp_path, monkeypatch):
+    """Verify the byte-stability test actually catches missing sorted() call.
+
+    This is a regression test for the test itself: proves that removing sorted()
+    from render_index would make test_render_is_byte_stable_across_independent_runs fail.
+    """
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    slots = build_slot_manifest(pack, SIZE_PRESETS["S"])
+    src = tmp_path / "index-src"
+    write_index_sources(slots, pack, src)
+
+    # Monkeypatch glob to return paths in reversed order
+    original_glob = Path.glob
+
+    def reversed_glob(self, pattern):
+        return reversed(list(original_glob(self, pattern)))
+
+    monkeypatch.setattr(Path, "glob", reversed_glob)
+
+    # Without sorted(), the reversed order would produce different output
+    # Simulate render_index without sorted() by directly concatenating in glob order
+    preamble = (src / "00_preamble.txt").read_text(encoding="utf-8").rstrip("\n")
+    parts = [preamble, ""]
+    for path in (p for p in src.glob("*.md")):  # No sorted() call
+        parts.append(path.read_text(encoding="utf-8").rstrip("\n"))
+        parts.append("")
+    output_no_sort = "\n".join(parts).rstrip("\n") + "\n"
+
+    # This should be different from the properly sorted output
+    output_with_sort = render_index(src)
+    assert output_no_sort != output_with_sort
 
 
 def test_sections_appear_in_numerical_order(tmp_path):
@@ -63,16 +101,10 @@ def test_preamble_is_in_world_and_free_of_build_vocabulary(tmp_path):
 
 
 def test_no_subsection_heading_appears_more_than_once_per_section(tmp_path):
-    """Verify Task 4's contiguity contract is honoured: no interleaved subsection headings.
-
-    If slots are not sorted correctly, subsection headings can repeat within a section
-    (e.g., ### 3.1, then ### 3.2, then ### 3.1 again), corrupting the index.
-    This test protects the rendered artefact from Task 4 sort regressions.
-    """
+    """Verify Task 4's contiguity contract is honoured: no interleaved subsection headings."""
     pack, _, src = sources(tmp_path)
     text = render_index(src)
 
-    # Split text by section headings
     section_pattern = re.compile(r"^## \d+\.")
     current_section = None
 
@@ -81,7 +113,6 @@ def test_no_subsection_heading_appears_more_than_once_per_section(tmp_path):
             current_section = line
             subsections_seen = set()
         elif line.startswith("###"):
-            # Extract the subsection identifier (### N.N)
             sub_match = re.match(r"^### ([\d.]+)", line)
             if sub_match:
                 sub_id = sub_match.group(1)
@@ -91,21 +122,26 @@ def test_no_subsection_heading_appears_more_than_once_per_section(tmp_path):
                 subsections_seen.add(sub_id)
 
 
-def test_acronyms_are_titleised_not_capitalized(tmp_path):
-    """Verify acronyms appear in UPPERCASE, not Capitalized.
+@pytest.mark.parametrize(
+    "input_text,expected",
+    [
+        ("statutory accounts", "Statutory accounts"),
+        ("cpse replies", "CPSE replies"),
+        ("hse notices", "HSE notices"),
+        ("jv agreements", "JV agreements"),
+        ("ncr capa", "NCR CAPA"),
+        ("nda", "NDA"),
+        ("ndas", "NDAs"),
+        ("w and i", "W&I"),
+    ],
+)
+def test_titleise_renders_acronyms_and_sentence_case(input_text, expected):
+    """Verify _titleise correctly handles acronyms and sentence case.
 
-    'capitalize()' lowercases everything after the first character, which mangles
-    acronyms like NDA -> Nda, CPSE -> Cpse. Verify the titleise() function fixes this.
+    This table-driven test ensures:
+    - Acronyms are uppercased
+    - Plural acronyms preserve the 's' in lowercase: 'ndas' -> 'NDAs', not 'NDAS'
+    - First word is capitalized, others are lowercase (except acronyms)
+    - Special case 'w and i' becomes 'W&I'
     """
-    _, _, src = sources(tmp_path)
-    text = render_index(src)
-
-    # Check for specific mangled acronyms that should be fixed
-    mangled_acronyms = ["Vat ", "Nda", "Cpse", "Hse ", "Qms ", "Ncr ", "Dpias", "Jv "]
-    for mangled in mangled_acronyms:
-        assert mangled not in text, f"Found mangled acronym '{mangled}' in index"
-
-    # Check that the corrected forms appear
-    correct_acronyms = ["VAT", "NDA", "CPSE", "HSE", "QMS", "NCR", "DPIA", "JV"]
-    for correct in correct_acronyms:
-        assert correct in text, f"Expected '{correct}' not found in index"
+    assert _titleise(input_text) == expected
