@@ -24,7 +24,7 @@ def test_render_is_byte_stable_across_calls(tmp_path):
 def test_sections_appear_in_numerical_order(tmp_path):
     pack, _, src = sources(tmp_path)
     text = render_index(src)
-    positions = [text.index(s.title) for s in pack.sections]
+    positions = [text.index(f"## {s.number}. {s.title}") for s in pack.sections]
     assert positions == sorted(positions)
 
 
