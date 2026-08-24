@@ -133,6 +133,10 @@ def test_no_subsection_heading_appears_more_than_once_per_section(tmp_path):
         ("nda", "NDA"),
         ("ndas", "NDAs"),
         ("w and i", "W&I"),
+        ("qa log", "QA log"),
+        ("qa log 03", "QA log 03"),
+        ("w and i 01", "W&I 01"),
+        ("its", "Its"),
     ],
 )
 def test_titleise_renders_acronyms_and_sentence_case(input_text, expected):
@@ -142,6 +146,31 @@ def test_titleise_renders_acronyms_and_sentence_case(input_text, expected):
     - Acronyms are uppercased
     - Plural acronyms preserve the 's' in lowercase: 'ndas' -> 'NDAs', not 'NDAS'
     - First word is capitalized, others are lowercase (except acronyms)
-    - Special case 'w and i' becomes 'W&I'
+    - The 'w and i' token run becomes 'W&I', whether it is the whole string or
+      a prefix of a longer, ordinal-suffixed title
+    - Short words like 'its' are not mistaken for a pluralised acronym ('it' + 's')
     """
     assert _titleise(input_text) == expected
+
+
+def test_titleise_agrees_on_bare_and_ordinal_suffixed_forms():
+    """Close the whole bug class, not just nine examples.
+
+    _titleise is called on bare subsection names (for the '### N.N Name' heading)
+    and on the same words plus a trailing ordinal (for each document title in that
+    subsection, e.g. 'qa log 01'). Any transform that behaves differently between
+    the two — such as an exact-string special case that only matches the bare
+    form — is a live bug, because the majority of real calls are the suffixed
+    form. Assert the two agree, for every subsection in the domain pack, so this
+    holds regardless of how the taxonomy grows.
+    """
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    for section in pack.sections:
+        for sub in section.subsections:
+            words = sub.replace("-", " ")
+            bare = _titleise(words)
+            suffixed = _titleise(f"{words} 01")
+            assert suffixed.removesuffix(" 01") == bare, (
+                f"{words!r}: bare={bare!r} but suffixed={suffixed!r} "
+                f"(with ' 01' stripped: {suffixed.removesuffix(' 01')!r})"
+            )

@@ -23,7 +23,22 @@ PREAMBLE = (
 )
 
 # Acronyms that should be uppercased in presentation (singular forms only)
-ACRONYMS = {"vat", "nda", "cpse", "hse", "qms", "ncr", "capa", "dc", "ropa", "dpia", "jv", "esg", "it", "spa", "epc"}
+ACRONYMS = {
+    "vat", "nda", "cpse", "hse", "qms", "ncr", "capa", "dc", "ropa", "dpia",
+    "jv", "esg", "it", "spa", "epc", "qa",
+}
+
+# Minimum length of the singular form before a trailing 's' is treated as a
+# pluralised acronym. Without this floor, 'it' (an acronym) makes ordinary
+# words like 'its' render as 'ITs'.
+_MIN_ACRONYM_LEN_FOR_PLURAL = 3
+
+# The word run that collapses to 'W&I'. Titles are compound strings — a
+# section heading gets the bare words, but every document title in that
+# subsection gets the words plus a trailing ordinal ('w and i 01'). A
+# whole-string equality check only ever matches the heading; matching the
+# run wherever it occurs handles both.
+_W_AND_I_RUN = ("w", "and", "i")
 
 
 def _titleise(text: str) -> str:
@@ -31,8 +46,12 @@ def _titleise(text: str) -> str:
 
     - Capitalises the first letter only (sentence case, not title case)
     - Acronyms are uppercased in place: 'vat' -> 'VAT', 'nda' -> 'NDA'
-    - Plural acronyms keep the acronym uppercased and add lowercase 's': 'ndas' -> 'NDAs'
-    - Special case: 'w and i' -> 'W&I'
+    - Plural acronyms keep the acronym uppercased and add lowercase 's':
+      'ndas' -> 'NDAs'. Only fires when the singular form is at least
+      `_MIN_ACRONYM_LEN_FOR_PLURAL` characters, so short acronyms don't
+      swallow ordinary words ('its' stays 'Its', not 'ITs').
+    - The token run 'w', 'and', 'i' collapses to 'W&I' wherever it appears
+      in the word list, including inside a longer, ordinal-suffixed title.
 
     Examples:
         'statutory accounts' -> 'Statutory accounts'
@@ -40,20 +59,43 @@ def _titleise(text: str) -> str:
         'nda' -> 'NDA'
         'ndas' -> 'NDAs'
         'w and i' -> 'W&I'
+        'w and i 01' -> 'W&I 01'
+        'its' -> 'Its'
     """
-    # Special case for W&I
-    if text.lower() == "w and i":
-        return "W&I"
-
     words = text.split()
+
+    # Collapse every occurrence of the 'w and i' run into a single 'W&I'
+    # token before the per-word pass, so it works whether it's the whole
+    # string or has a trailing ordinal (or, in principle, a leading one).
+    collapsed: List[str] = []
+    run_len = len(_W_AND_I_RUN)
+    idx = 0
+    while idx < len(words):
+        window = tuple(w.lower() for w in words[idx : idx + run_len])
+        if window == _W_AND_I_RUN:
+            collapsed.append("W&I")
+            idx += run_len
+        else:
+            collapsed.append(words[idx])
+            idx += 1
+    words = collapsed
+
     result = []
     for i, word in enumerate(words):
+        if word == "W&I":
+            result.append(word)
+            continue
+
         word_lower = word.lower()
 
         # Check if word is an acronym or acronym + 's'
         if word_lower in ACRONYMS:
             result.append(word_lower.upper())
-        elif word_lower.endswith("s") and word_lower[:-1] in ACRONYMS:
+        elif (
+            word_lower.endswith("s")
+            and len(word_lower) - 1 >= _MIN_ACRONYM_LEN_FOR_PLURAL
+            and word_lower[:-1] in ACRONYMS
+        ):
             # Handle plural acronyms: 'ndas' -> 'NDAs'
             result.append(word_lower[:-1].upper() + "s")
         elif i == 0:
