@@ -22,7 +22,7 @@ class SizePreset:
 
 
 SIZE_PRESETS: Dict[str, SizePreset] = {
-    "XS": SizePreset("XS", docs=20, findings=4, distractors=2),
+    "XS": SizePreset("XS", docs=40, findings=4, distractors=2),
     "S": SizePreset("S", docs=60, findings=12, distractors=5),
     "M": SizePreset("M", docs=200, findings=25, distractors=10),
     "L": SizePreset("L", docs=800, findings=60, distractors=18),
@@ -87,7 +87,16 @@ def build_slot_manifest(pack: DomainPack, preset: SizePreset) -> List[Slot]:
                     tier=tier,
                 )
             )
-    return slots
+    # Sort by (section_number, sub_index, ordinal) to ensure contiguous subsections.
+    # Keeps round-robin tier assignment while grouping same-subsection slots.
+    def slot_sort_key(slot: Slot) -> tuple:
+        parts = slot.slot_id.split(".")
+        section_number = int(parts[0])
+        sub_index = int(parts[1]) - 1  # Convert back to 0-based
+        ordinal = int(parts[2])
+        return (section_number, sub_index, ordinal)
+
+    return sorted(slots, key=slot_sort_key)
 
 
 def write_anchors_csv(slots: List[Slot], path: Path) -> None:
