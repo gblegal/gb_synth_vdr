@@ -1,0 +1,8 @@
+archetypes:
+  shortform:  {floor: 500,  filename_patterns: ["certificate", "notice", "consent", "resolution", "letter"]}
+  report:     {floor: 1000, filename_patterns: ["report", "assessment", "valuation", "review", "opinion"]}
+  standard:   {floor: 1200, filename_patterns: ["agreement", "contract", "deed", "policy", "lease"]}
+  longform:   {floor: 2500, filename_patterns: ["spa", "facility", "trust-deed", "information-memorandum"]}
+  register:   {floor: 300,  filename_patterns: ["register", "schedule", "log", "index", "list"]}
+default_archetype: standard
+tier_f_floor: 350
