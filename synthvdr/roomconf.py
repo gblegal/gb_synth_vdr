@@ -25,11 +25,45 @@ REQUIRED_KEYS = (
     "EXPECTED_KDP_CARRIERS",
 )
 
-_LINE = re.compile(r'^([A-Z][A-Z0-9_]*)=(?:"(.*)"|(.*))$')
-
 
 class RoomConfError(Exception):
     """room.conf is missing, malformed, or missing a required key."""
+
+
+def _parse_line(line: str) -> tuple[str, str] | None:
+    """Parse KEY=VALUE, handling quoted and bare values plus comments.
+
+    Raises RoomConfError if the line has a syntax error (e.g., unterminated quote).
+    Returns (key, value) or None if the line is malformed but not a syntax error.
+
+    For quoted values: KEY="VALUE" where VALUE can contain # literally.
+    For bare values: KEY=VALUE where a # preceded by whitespace starts a comment.
+    """
+    match = re.match(r'^([A-Z][A-Z0-9_]*)=(.*)$', line)
+    if not match:
+        return None
+
+    key, remainder = match.groups()
+
+    if remainder.startswith('"'):
+        # Quoted value - find closing quote
+        i = 1
+        while i < len(remainder):
+            if remainder[i] == '"':
+                # Found closing quote
+                value = remainder[1:i]
+                return key, value
+            i += 1
+        # No closing quote found - syntax error
+        raise RoomConfError("unterminated quoted value")
+    else:
+        # Bare value - strip comment (# preceded by whitespace) and trailing whitespace
+        comment_match = re.search(r'\s+#', remainder)
+        if comment_match:
+            value = remainder[:comment_match.start()].rstrip()
+        else:
+            value = remainder.rstrip()
+        return key, value
 
 
 @dataclass(frozen=True)
@@ -61,15 +95,24 @@ def load_room_conf(path: Path) -> RoomConf:
     if not path.is_file():
         raise RoomConfError(f"no room.conf at {path}")
     values: Dict[str, str] = {}
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    for line_num, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        match = _LINE.match(line)
-        if not match:
-            continue
-        key, quoted, bare = match.groups()
-        values[key] = quoted if quoted is not None else bare.strip()
+
+        try:
+            result = _parse_line(line)
+        except RoomConfError as e:
+            # Re-raise with file and line info
+            raise RoomConfError(f"{path}: line {line_num}: {e}") from None
+
+        if result is None:
+            # Malformed line that doesn't match KEY=VALUE pattern
+            raise RoomConfError(f"{path}: line {line_num}: malformed: {raw}")
+
+        key, value = result
+        values[key] = value
+
     missing = [k for k in REQUIRED_KEYS if k not in values]
     if missing:
         raise RoomConfError(f"{path}: missing required keys: {', '.join(missing)}")
