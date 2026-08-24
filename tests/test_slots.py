@@ -57,20 +57,18 @@ def test_anchors_csv_round_trips(tmp_path):
 
 
 def test_subsections_are_contiguous_per_section():
-    """For each section, same-subsection slots must not be interleaved."""
+    """For each section, subsections must appear in runs, never interleaved."""
     _, slots = manifest("M")
     for section_dir in {s.section_dir for s in slots}:
         section_slots = [s for s in slots if s.section_dir == section_dir]
-        subsections_seen: list[str] = []
+        seen: list[str] = []
         for slot in section_slots:
-            if not subsections_seen or slot.subsection != subsections_seen[-1]:
-                subsections_seen.append(slot.subsection)
-            else:
-                # Same subsection as last — verify no new subsection was already seen
-                if slot.subsection not in subsections_seen[:-1]:
-                    continue
-                # Found interleaving: same subsection reappears after a different one
-                assert False, f"Subsection {slot.subsection} reappears after a different subsection in {section_dir}"
+            # When subsection changes, assert it has not been seen before (contiguity)
+            if not seen or slot.subsection != seen[-1]:
+                assert slot.subsection not in seen, (
+                    f"{slot.subsection} reappears after a different subsection in {section_dir}"
+                )
+                seen.append(slot.subsection)
 
 
 def test_all_presets_exact_count_and_uniqueness():
