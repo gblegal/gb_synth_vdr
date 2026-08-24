@@ -111,3 +111,58 @@ def test_hash_without_space_after_quoted_value_raises(tmp_path):
     conf_text = SAMPLE.replace('FLAG_STRING_2="DD flag"', 'FLAG_STRING_2="DD flag"#nospace')
     with pytest.raises(RoomConfError, match="unexpected trailing text"):
         load_room_conf(write(tmp_path, conf_text))
+
+
+# ---------------------------------------------------------------------------
+# Path hygiene: BLIND_TREE, FLAGGED_TREE and KEY_ROOT are turned into real
+# filesystem paths and, for FLAGGED_TREE, fed to shutil.rmtree — a bad value
+# here is a destructive-path risk. Each must be non-empty, relative, and
+# free of a '..' segment, checked at load time so every consumer is covered.
+# ---------------------------------------------------------------------------
+
+_ORIGINAL_PATH_LINE = {
+    "BLIND_TREE": 'BLIND_TREE="data-room"',
+    "FLAGGED_TREE": 'FLAGGED_TREE="_key/flagged"',
+    "KEY_ROOT": 'KEY_ROOT="_key"',
+}
+
+
+@pytest.mark.parametrize("key", ["BLIND_TREE", "FLAGGED_TREE", "KEY_ROOT"])
+@pytest.mark.parametrize("bad_value", ["", "/", "/tmp/x", "../../escape"])
+def test_path_valued_key_rejects_unsafe_value(tmp_path, key, bad_value):
+    conf_text = SAMPLE.replace(_ORIGINAL_PATH_LINE[key], f'{key}="{bad_value}"')
+    assert conf_text != SAMPLE
+    with pytest.raises(RoomConfError, match=key):
+        load_room_conf(write(tmp_path, conf_text))
+
+
+@pytest.mark.parametrize("key", ["BLIND_TREE", "FLAGGED_TREE", "KEY_ROOT"])
+def test_path_valued_key_accepts_a_nested_relative_value(tmp_path, key):
+    conf_text = SAMPLE.replace(_ORIGINAL_PATH_LINE[key], f'{key}="a/b/c"')
+    conf = load_room_conf(write(tmp_path, conf_text))
+    assert conf.get(key) == "a/b/c"
+
+
+@pytest.mark.parametrize("key", ["BLIND_TREE", "FLAGGED_TREE", "KEY_ROOT"])
+def test_path_valued_key_does_not_false_positive_on_a_dotted_segment(tmp_path, key):
+    # Subsection directories legitimately contain dots (e.g. a section
+    # numbered '11.2'); the '..' check must key on whole path segments, not
+    # on the substring '..' appearing anywhere in the value.
+    conf_text = SAMPLE.replace(_ORIGINAL_PATH_LINE[key], f'{key}="11.2_site-reports/x"')
+    conf = load_room_conf(write(tmp_path, conf_text))
+    assert conf.get(key) == "11.2_site-reports/x"
+
+
+def test_get_relative_path_validates_a_non_required_key_on_demand(tmp_path):
+    conf = load_room_conf(write(tmp_path, SAMPLE + 'SUBSET_OUT="_key/subset"\n'))
+    assert conf.get_relative_path("SUBSET_OUT") == "_key/subset"
+
+
+@pytest.mark.parametrize("bad_value", ["", "/etc", "../escape"])
+def test_get_relative_path_rejects_unsafe_value_on_demand(tmp_path, bad_value):
+    # SUBSET_OUT isn't in REQUIRED_KEYS, so load_room_conf lets it through
+    # unchecked (per test_unknown_key_is_kept_not_rejected above) — the
+    # check only happens when a later tool calls get_relative_path on it.
+    conf = load_room_conf(write(tmp_path, SAMPLE + f'SUBSET_OUT="{bad_value}"\n'))
+    with pytest.raises(RoomConfError, match="SUBSET_OUT"):
+        conf.get_relative_path("SUBSET_OUT")

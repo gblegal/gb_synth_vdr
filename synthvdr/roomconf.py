@@ -25,9 +25,41 @@ REQUIRED_KEYS = (
     "EXPECTED_KDP_CARRIERS",
 )
 
+# Keys whose values are relative filesystem paths under the room root. Tools
+# that turn these into real paths (e.g. synthvdr.twin.build_flagged_tree)
+# call shutil.rmtree on the result, so a bad value here is a destructive-path
+# risk, not just a cosmetic one — every one of them is checked at load time.
+PATH_KEYS = (
+    "BLIND_TREE",
+    "FLAGGED_TREE",
+    "KEY_ROOT",
+)
+
 
 class RoomConfError(Exception):
     """room.conf is missing, malformed, or missing a required key."""
+
+
+def _check_relative_path(path: Path, key: str, value: str) -> None:
+    """Reject a path-valued room.conf entry that could escape the room root.
+
+    A value must be non-empty, must not be absolute, and must not contain a
+    '..' segment. Segment membership is checked after splitting on '/', not
+    by substring search — subsection directories legitimately contain dots
+    (e.g. '11.2_site-reports'), and a substring check would misfire on them.
+    """
+    if not value:
+        raise RoomConfError(f"{path}: {key} is empty — it must be a relative path")
+    if value.startswith("/"):
+        raise RoomConfError(
+            f"{path}: {key} {value!r} is an absolute path — "
+            "it must be relative to the room root"
+        )
+    if ".." in value.split("/"):
+        raise RoomConfError(
+            f"{path}: {key} {value!r} contains a '..' segment — "
+            "it must stay inside the room root"
+        )
 
 
 def _parse_line(line: str) -> tuple[str, str] | None:
@@ -105,6 +137,17 @@ class RoomConf:
     def get_pattern(self, key: str) -> str:
         return self.get(key)
 
+    def get_relative_path(self, key: str) -> str:
+        """Like get(), but for a key whose value must be a safe relative
+        path. Applies the same non-empty / non-absolute / no-'..' rule as
+        the required PATH_KEYS, on demand — for path-valued keys a later
+        tool reads that aren't in REQUIRED_KEYS and so aren't checked by
+        load_room_conf automatically.
+        """
+        value = self.get(key)
+        _check_relative_path(self.path, key, value)
+        return value
+
 
 def load_room_conf(path: Path) -> RoomConf:
     if not path.is_file():
@@ -131,4 +174,8 @@ def load_room_conf(path: Path) -> RoomConf:
     missing = [k for k in REQUIRED_KEYS if k not in values]
     if missing:
         raise RoomConfError(f"{path}: missing required keys: {', '.join(missing)}")
+
+    for key in PATH_KEYS:
+        _check_relative_path(path, key, values[key])
+
     return RoomConf(values=values, path=path)

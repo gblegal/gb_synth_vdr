@@ -16,6 +16,10 @@ from .roomconf import RoomConf
 from .schema import Finding, FindingSet
 
 
+class TwinError(Exception):
+    """The flagged tree cannot be safely derived from the blind tree."""
+
+
 @dataclass(frozen=True)
 class TwinReport:
     written: int
@@ -67,6 +71,20 @@ def build_flagged_tree(room: Path, conf: RoomConf, findings: FindingSet) -> Twin
     for finding in findings.findings:
         for rel in finding.evidence_paths():
             carriers.setdefault(rel, []).append(finding)
+
+    # Belt-and-braces backstop before the destructive call: load_room_conf
+    # already rejects an unsafe FLAGGED_TREE, but a RoomConf can also be
+    # constructed by hand (bypassing that check), so refuse outright rather
+    # than deleting anything outside the room.
+    room_resolved = room.resolve()
+    flagged_resolved = flagged_root.resolve()
+    try:
+        flagged_resolved.relative_to(room_resolved)
+    except ValueError:
+        raise TwinError(
+            f"FLAGGED_TREE resolves outside the room root — refusing to delete "
+            f"{flagged_resolved} (room is {room_resolved})"
+        ) from None
 
     if flagged_root.exists():
         shutil.rmtree(flagged_root)

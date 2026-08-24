@@ -1,6 +1,9 @@
-from synthvdr.roomconf import load_room_conf
+import pytest
+
+from synthvdr.roomconf import RoomConf, load_room_conf
 from synthvdr.schema import Finding, FindingSet
 from synthvdr.twin import (
+    TwinError,
     annotation_block,
     build_flagged_tree,
     derive_twin,
@@ -211,3 +214,30 @@ def test_build_flagged_tree_only_touches_the_configured_flagged_root(tmp_path):
     assert (room / "data-room/01_corporate/1.1_articles/1.1.1_articles.md").read_text(
         encoding="utf-8"
     ) == "# Articles\n"
+
+
+def test_build_flagged_tree_refuses_a_flagged_root_that_resolves_outside_the_room(tmp_path):
+    # load_room_conf is the primary defence and already rejects an unsafe
+    # FLAGGED_TREE value (see tests/test_roomconf.py), so simulate the one
+    # way past it: a RoomConf built by hand rather than via load_room_conf.
+    room, conf = make_room(tmp_path)
+    write_blind(room, "01_corporate/1.1_articles/1.1.1_articles.md", "# Articles\n")
+
+    # A real directory a naive rmtree would wipe out if the guard didn't
+    # fire. It lives under tmp_path — never outside the test sandbox — but
+    # is a sibling of `room`, i.e. genuinely outside the room the function
+    # must stay confined to.
+    victim = tmp_path / "outside" / "escape"
+    victim.mkdir(parents=True)
+    (victim / "sentinel.txt").write_text("must survive\n")
+
+    escaping_conf = RoomConf(
+        values={**conf.values, "FLAGGED_TREE": "../outside/escape"},
+        path=conf.path,
+    )
+    findings = FindingSet(findings=[], room="Project Testbed")
+
+    with pytest.raises(TwinError, match="FLAGGED_TREE"):
+        build_flagged_tree(room, escaping_conf, findings)
+
+    assert (victim / "sentinel.txt").read_text(encoding="utf-8") == "must survive\n"
