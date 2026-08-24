@@ -19,6 +19,7 @@
       "items": { "$ref": "#/definitions/finding" }
     }
   },
+  "additionalProperties": false,
   "definitions": {
     "finding": {
       "type": "object",
@@ -83,7 +84,7 @@
           "description": "Free-text note left by the discoverability audit."
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     }
   }
 }

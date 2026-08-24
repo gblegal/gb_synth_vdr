@@ -69,12 +69,24 @@ def _require(row: dict, key: str, context: str):
     return row[key]
 
 
+def _load_yaml(path: Path) -> dict:
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise SchemaError(f"{path}: not valid YAML — {exc}") from exc
+    return doc or {}
+
+
 def load_findings(path: Path) -> FindingSet:
-    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    doc = _load_yaml(path)
     rows = doc.get("findings") or []
     findings: List[Finding] = []
     seen: Set[str] = set()
-    for row in rows:
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise SchemaError(
+                f"{path}: findings[{index}] is not a mapping — got {type(row).__name__}"
+            )
         fid = _require(row, "id", str(path))
         if fid in seen:
             raise SchemaError(f"{path}: duplicate finding id {fid}")
@@ -104,11 +116,15 @@ def load_findings(path: Path) -> FindingSet:
 
 
 def load_distractors(path: Path) -> List[Distractor]:
-    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    doc = _load_yaml(path)
     rows = doc.get("distractors") or []
     out: List[Distractor] = []
     seen: Set[str] = set()
-    for row in rows:
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise SchemaError(
+                f"{path}: distractors[{index}] is not a mapping — got {type(row).__name__}"
+            )
         did = _require(row, "id", str(path))
         if did in seen:
             raise SchemaError(f"{path}: duplicate distractor id {did}")
@@ -125,9 +141,37 @@ def load_distractors(path: Path) -> List[Distractor]:
     return out
 
 
+def _path_errors(path: str, owner: str, field: str) -> List[str]:
+    """Path hygiene: every stored path must be non-empty, relative to the
+    room root, and free of parent-directory traversal.
+    """
+    if not path:
+        return [f"{owner}: {field} is empty — every path must be relative and non-empty"]
+    errors: List[str] = []
+    if path.startswith("/"):
+        errors.append(
+            f"{owner}: {field} {path!r} is an absolute path — "
+            "paths must be relative to the room root"
+        )
+    if ".." in path.split("/"):
+        errors.append(
+            f"{owner}: {field} {path!r} contains a '..' segment — "
+            "paths must stay inside the room root"
+        )
+    return errors
+
+
 def validate(findings: FindingSet, distractors: List[Distractor]) -> List[str]:
     errors: List[str] = []
     known = set(findings.by_id)
+
+    # Map every evidence path to the finding(s) it belongs to, so a
+    # distractor colliding with real evidence can be reported by id.
+    evidence_owners: Dict[str, List[str]] = {}
+    for finding in findings.findings:
+        for path in finding.evidence_paths():
+            evidence_owners.setdefault(path, []).append(finding.id)
+
     for finding in findings.findings:
         for link in finding.cross_links:
             if link not in known:
@@ -143,6 +187,23 @@ def validate(findings: FindingSet, distractors: List[Distractor]) -> List[str]:
             errors.append(
                 f"{finding.id}: corroboration is set but multi_document is false"
             )
+
+        errors.extend(_path_errors(finding.source, finding.id, "source"))
+        for path in finding.corroboration:
+            errors.extend(_path_errors(path, finding.id, "corroboration entry"))
+        if finding.source and finding.source in finding.corroboration:
+            errors.append(
+                f"{finding.id}: corroboration re-lists its own source {finding.source!r} — "
+                "corroboration must name other documents, not the source itself"
+            )
+        if len(finding.corroboration) != len(set(finding.corroboration)):
+            dupes = sorted(
+                {p for p in finding.corroboration if finding.corroboration.count(p) > 1}
+            )
+            errors.append(
+                f"{finding.id}: corroboration contains duplicate path(s) {dupes}"
+            )
+
     for distractor in distractors:
         if distractor.resolution == distractor.location:
             errors.append(
@@ -152,6 +213,24 @@ def validate(findings: FindingSet, distractors: List[Distractor]) -> List[str]:
         if distractor.shape_matches and distractor.shape_matches not in known:
             errors.append(
                 f"{distractor.id}: shape_matches {distractor.shape_matches} does not exist"
+            )
+
+        errors.extend(_path_errors(distractor.location, distractor.id, "location"))
+        errors.extend(_path_errors(distractor.resolution, distractor.id, "resolution"))
+
+        if distractor.location in evidence_owners:
+            owners = ", ".join(evidence_owners[distractor.location])
+            errors.append(
+                f"{distractor.id}: location {distractor.location!r} is evidence for "
+                f"finding(s) {owners} — a distractor's alarming document must not "
+                "double as real evidence"
+            )
+        if distractor.resolution in evidence_owners:
+            owners = ", ".join(evidence_owners[distractor.resolution])
+            errors.append(
+                f"{distractor.id}: resolution {distractor.resolution!r} is evidence for "
+                f"finding(s) {owners} — a distractor's resolving document must be "
+                "genuinely benign, not itself planted evidence"
             )
     return errors
 

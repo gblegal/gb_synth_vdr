@@ -15,6 +15,7 @@
       "items": { "$ref": "#/definitions/distractor" }
     }
   },
+  "additionalProperties": false,
   "definitions": {
     "distractor": {
       "type": "object",
@@ -41,7 +42,7 @@
           "description": "Relative path to the document that resolves the alarm. Must differ from location — the resolving evidence must live in a separate document."
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     }
   }
 }
