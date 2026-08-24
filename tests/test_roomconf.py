@@ -99,3 +99,15 @@ def test_malformed_line_raises(tmp_path):
     conf_text = SAMPLE + "export KEY=VALUE\n"
     with pytest.raises(RoomConfError, match="malformed"):
         load_room_conf(write(tmp_path, conf_text))
+
+
+def test_trailing_character_after_quoted_value_raises(tmp_path):
+    conf_text = SAMPLE.replace('BLIND_TREE="data-room"', 'BLIND_TREE="data-room"x')
+    with pytest.raises(RoomConfError, match="unexpected trailing text"):
+        load_room_conf(write(tmp_path, conf_text))
+
+
+def test_hash_without_space_after_quoted_value_raises(tmp_path):
+    conf_text = SAMPLE.replace('FLAG_STRING_2="DD flag"', 'FLAG_STRING_2="DD flag"#nospace')
+    with pytest.raises(RoomConfError, match="unexpected trailing text"):
+        load_room_conf(write(tmp_path, conf_text))

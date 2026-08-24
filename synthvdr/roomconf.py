@@ -52,6 +52,21 @@ def _parse_line(line: str) -> tuple[str, str] | None:
             if remainder[i] == '"':
                 # Found closing quote
                 value = remainder[1:i]
+                after_quote = remainder[i+1:]
+
+                # After the closing quote, only whitespace and optional # comment are allowed.
+                # A # must be preceded by whitespace to start a comment; #nospace is trailing text.
+                # We reject input like "value"x or "value"#nospace because they cannot
+                # be faithfully represented in bash, and we use silence-equals-pass
+                # discipline to catch typos early rather than lose data silently.
+                trailing = after_quote.lstrip()
+                if trailing:
+                    # There's non-whitespace content after the quote.
+                    # It's only allowed if it's a properly-spaced comment (whitespace then #).
+                    if not (after_quote[0] in ' \t' and trailing.startswith('#')):
+                        # Either no whitespace before content, or content is not a comment
+                        raise RoomConfError(f"unexpected trailing text after quoted value: {after_quote}")
+
                 return key, value
             i += 1
         # No closing quote found - syntax error
