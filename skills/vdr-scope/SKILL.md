@@ -175,12 +175,17 @@ values step 4 just printed, plus:
   for, so they must never occur there by coincidence. `"Key diligence points"` and `"DD flag"`
   are the strings this project's own fixtures use and are a safe choice unless the domain
   already uses that exact phrasing incidentally.
-- `FINDING_PREFIXES` — one `|`-separated, uppercase-letter-starting token per workstream in
-  the domain pack (e.g. `CORP|FIN|TAX|FING|COMM|IP|ITX|PROP|EMP|REG|ENV|INS|PEN|DATA|LIT|OPS|MGMT|TXN|ESG|JV`),
-  covering **every** workstream, not just the ones you expect to carry a finding —
-  `/vdr-findings` has not run yet, so you do not yet know which workstreams will. A workstream
-  left out here is a workstream whose finding IDs the leakage gate cannot recognise if one
-  ever leaked into the blind room.
+- `FINDING_PREFIXES` — one `|`-separated, uppercase-letter-starting token **per workstream, in
+  the domain pack's own order** (`pack.workstreams()` — the same order `sections.yaml` and
+  `finding-archetypes.yaml` both declare and `load_domain` requires them to agree on), e.g.
+  `CORP|FIN|TAX|FING|COMM|IP|IT|PROP|EMPL|REG|ENV|INS|PEN|DATA|LIT|OPS|MGMT|TXN|ESG|JV` for the
+  shipped M&A domain pack — covering **every** workstream, not just the ones you expect to
+  carry a finding — `/vdr-findings` has not run yet, so you do not yet know which workstreams
+  will. A workstream left out here is a workstream whose finding IDs the leakage gate cannot
+  recognise if one ever leaked into the blind room. **The order is load-bearing, not
+  cosmetic**: `/vdr-build` pairs this list positionally with `pack.workstreams()` to work out
+  which prefix a mid-authoring discovery gets — get the token count right but the order wrong
+  and every discovered finding is silently numbered under the wrong workstream's prefix.
 - `EXPECTED_KDP_CARRIERS=0` — no findings exist yet; `/vdr-findings` sets the real number.
 - `INDEX_TOTAL`, `BLIND_TOTAL`, `FLAGGED_TOTAL` — all equal to `len(slots)` from step 4.
 - `SECTION_DIRS` — the space-separated `pack.section_dirs()` string from step 4.

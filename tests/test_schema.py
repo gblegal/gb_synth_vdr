@@ -1,7 +1,10 @@
 import textwrap
+from pathlib import Path
 
 import pytest
 
+from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
+from synthvdr.roomconf import load_room_conf
 from synthvdr.schema import (
     ConsolidationResult,
     SchemaError,
@@ -472,6 +475,30 @@ def test_derive_prefix_for_workstream_does_not_block_a_workstream_with_no_existi
         ["environmental", "financial", "operations"], ["ENV", "FIN", "OPS"], _existing(tmp_path)
     )
     assert mapping["operations"] == "OPS"
+
+
+def test_derive_prefix_for_workstream_against_the_real_domain_pack_and_room_conf():
+    """Final review, F2: before this, no test ever ran derive_prefix_for_workstream against
+    the REAL domain pack and a REAL room.conf together — the shipped fixture room
+    (fixtures/xs-room/room.conf) declared only 4 FINDING_PREFIXES tokens against the domain
+    pack's 20 workstreams, so this call raised a length SchemaError immediately and the
+    genuine end-to-end path (`/vdr-build`'s own Step 3 snippet) was never exercised by
+    anything. The fixture's FINDING_PREFIXES was widened to the full 20 tokens, in
+    `pack.workstreams()`'s order, specifically so this path is covered.
+    """
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    room_conf_path = (
+        Path(__file__).resolve().parent.parent / "fixtures" / "xs-room" / "room.conf"
+    )
+    conf = load_room_conf(room_conf_path)
+    mapping = derive_prefix_for_workstream(
+        pack.workstreams(), conf.get("FINDING_PREFIXES").split("|"), existing_findings=()
+    )
+    assert mapping["corporate"] == "CORP"
+    assert mapping["financial"] == "FIN"
+    assert mapping["commercial"] == "COMM"
+    assert mapping["environmental"] == "ENV"
+    assert len(mapping) == 20
 
 
 # ---------------------------------------------------------------------------

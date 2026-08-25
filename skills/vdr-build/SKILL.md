@@ -173,11 +173,16 @@ on that are also shared functions, never reimplemented inline:
 - `derive_prefix_for_workstream` builds the workstream -> finding-ID-prefix mapping
   `FINDING_PREFIXES` needs to be read as, and **validates the correspondence** rather than
   trusting a bare `zip()`. `FINDING_PREFIXES` carries no explicit workstream labels — the
-  correspondence with the domain pack's workstream order is positional by convention only —
-  so a short list raises a clear error naming the mismatch, and a *reordered* list (same
-  length, wrong pairing, which a bare zip would accept silently and use to misattribute a new
-  finding's workstream) is caught by cross-checking every workstream that already has an
-  existing finding against that finding's own id.
+  correspondence with `pack.workstreams()`'s order is positional — so a short list raises a
+  clear error naming the mismatch, and a *reordered* list (same length, wrong pairing, which a
+  bare zip would accept silently and use to misattribute a new finding's workstream) is caught
+  by cross-checking every workstream that already has an existing finding against that
+  finding's own id. Always pass `pack.workstreams()` here, never `pack.finding_archetypes`
+  directly (a dict, whose key order happens to match today only because `load_domain` itself
+  now checks that `sections.yaml` and `finding-archetypes.yaml` agree — see
+  `synthvdr.domain.load_domain` — and refuses to load a domain pack where they do not; a
+  hand-edited `finding-archetypes.yaml` that reorders two workstreams now fails at load time,
+  before this script ever runs, rather than silently mispairing a discovery here).
 - `parse_new_findings_ledger` reads `_key/build-status.md`'s "New findings" table into
   `{provisional_id: final_id}` — the durable record of what has already been allocated.
   **Consolidation is not something this build guarantees happens exactly once.** A wave can
@@ -206,7 +211,7 @@ conf = load_room_conf(Path("room.conf"))
 pack = load_domain(DEFAULT_DOMAIN_ROOT)
 existing = load_findings(Path("_key/findings.yaml"))
 prefix_for_workstream = derive_prefix_for_workstream(
-    pack.finding_archetypes, conf.get("FINDING_PREFIXES").split("|"), existing.findings
+    pack.workstreams(), conf.get("FINDING_PREFIXES").split("|"), existing.findings
 )
 
 status_path = Path("_key/build-status.md")

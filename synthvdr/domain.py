@@ -43,6 +43,22 @@ class DomainPack:
     def section_dirs(self) -> List[str]:
         return [s.dir_name for s in self.sections]
 
+    def workstreams(self) -> List[str]:
+        """The domain pack's canonical workstream order — sections.yaml's own
+        `number`-sorted order, which `load_domain` has already confirmed
+        `finding-archetypes.yaml` agrees with (see the check there).
+
+        This is the one list any positional pairing with room.conf's
+        FINDING_PREFIXES must be built from (`synthvdr.schema.
+        derive_prefix_for_workstream`'s `workstreams` argument) — never
+        `dict(finding_archetypes)`'s key order directly, even though the two
+        are required to match, because this is the name for "the domain
+        pack's canonical order" that stays correct even if a future domain
+        pack adds a third file that also has an opinion about workstream
+        order.
+        """
+        return [s.workstream for s in self.sections]
+
     def section_by_dir(self, dir_name: str) -> Section:
         for section in self.sections:
             if section.dir_name == dir_name:
@@ -84,6 +100,39 @@ def load_domain(root: Path) -> DomainPack:
             f"{root}: archetype floor(s) {under_floor} are below tier_f_floor "
             f"({tier_f_floor}) — a tier-A anchor must never be held to a lower "
             "depth standard than tier-F filler"
+        )
+
+    # Final review, F2: sections.yaml and finding-archetypes.yaml each declare
+    # the domain's workstream list independently, and
+    # synthvdr.schema.derive_prefix_for_workstream zips a caller-supplied
+    # workstream order positionally against room.conf's FINDING_PREFIXES. That
+    # zip trusts its caller to pass workstreams in "the domain pack's
+    # canonical order" — a convention that, before this check, spanned two
+    # files with nothing enforcing they agreed. Swapping two rows in
+    # finding-archetypes.yaml (same set of workstreams, same length, wrong
+    # order) is a one-line edit that would silently re-pair every finding-ID
+    # prefix with the wrong workstream — on wave 1 of a fresh room,
+    # derive_prefix_for_workstream's own cross-check covers nothing, because
+    # no workstream has an existing finding yet to check the pairing against.
+    # Checked here, once, at load time, so that blind spot is closed at the
+    # source instead of depending on findings existing later to catch it.
+    section_workstreams = [s.workstream for s in sections]
+    archetype_workstreams = list(finding_archetypes)
+    if section_workstreams != archetype_workstreams:
+        missing = sorted(set(section_workstreams) - set(archetype_workstreams))
+        extra = sorted(set(archetype_workstreams) - set(section_workstreams))
+        if missing or extra:
+            raise DomainError(
+                f"{root}: finding-archetypes.yaml's workstreams do not match "
+                f"sections.yaml's — missing {missing}, unexpected {extra}"
+            )
+        raise DomainError(
+            f"{root}: finding-archetypes.yaml declares the same workstreams as "
+            "sections.yaml but in a DIFFERENT ORDER. sections.yaml (canonical): "
+            f"{section_workstreams}. finding-archetypes.yaml: {archetype_workstreams}. "
+            "Every positional pairing with room.conf's FINDING_PREFIXES trusts this "
+            "order — a reordering here would silently mint new finding IDs under the "
+            "wrong workstream's prefix."
         )
 
     return DomainPack(
