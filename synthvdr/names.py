@@ -3,13 +3,46 @@
 Deliberately NOT in qa/leakage.py: Task 14's namecheck module needs these, and a
 top-level module must not import from the gate package — synthvdr/qa/__init__.py
 imports every gate, so that dependency would drag the whole suite in.
+
+HOW AN UNCHECKED NAME IS FOUND, AND WHY IT IS DONE BACKWARDS. Gate 14 does not
+extract candidate names from prose and then ask whether each one is on the cast
+list. Three earlier versions did, and each carried both error classes at once:
+the regex absorbs whatever capitalised words happen to precede a name ("See
+Kessler Werke GmbH"), so a rule is needed to tell an ordinary leading word from
+part of a name — and that is named-entity recognition, which no word-count rule
+or stoplist performs. A determiner stoplist handled "The" and missed "See",
+"Under", "Per" and "Registered". An unbounded trailing-sub-phrase walk killed
+those false positives but let a cast entry of "Holdings Limited" cover the
+different, unchecked "Ashfell Trading Holdings Limited". Bounding that walk to
+one leading word only shrank both windows to two words.
+
+So the operation is inverted: `mask_cast_names` removes every known cast name
+from the text FIRST, and `entity_tokens` then scans the residue. A registered
+name is gone before the regex ever runs, so no number of ordinary leading words
+can manufacture a candidate — the false-positive class goes structurally, with
+no stoplist and no bound. Whatever the regex still finds carries a corporate
+suffix that no cast entry accounts for, which is the definition of unchecked.
+
+ACCEPTED RESIDUAL. If a genuine cast entry is a strict trailing sub-phrase of a
+different entity's full name — cast "Holdings Limited", room text "Ashfell
+Trading Holdings Limited" — masking removes the shorter name and the longer,
+unchecked one no longer carries a suffix, so it is not flagged. This is not
+chased, for two reasons. Guarding the mask's left edge (refuse to mask when a
+capitalised word precedes the occurrence) reopens the exact false-positive class
+above, since "See" and "Registered" are capitalised too. And gate 14 is a safety
+net, not a proof: the primary control is /vdr-scope checking every fact-sheet
+name at Gate A, and invented fact-sheet casts do not produce nested names. The
+degenerate end of the same shape — a one-word or bare-suffix cast row, which
+would blanket-mask a whole suffix family — is malformed input rather than a
+matching problem, and `malformed_cast_entries` makes gate 14 reject it loudly
+instead of silently degrading into a gate that cannot fail.
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Set
+from typing import List, Set
 
 ENTITY_SUFFIXES = (
     "Limited", "Ltd", "PLC", "LLP", "LLC", "Inc", "Incorporated",
@@ -17,6 +50,7 @@ ENTITY_SUFFIXES = (
 )
 
 _SUFFIX_ALTERNATION = "|".join(re.escape(s) for s in ENTITY_SUFFIXES)
+_SUFFIXES_LOWER = frozenset(s.lower() for s in ENTITY_SUFFIXES)
 
 # Inter-word separation is spaces and tabs only, not \s — an entity name
 # does not span a paragraph, and \s would let the run cross a blank line
@@ -36,42 +70,61 @@ def entity_tokens(text: str) -> Set[str]:
     Limited") — there is no closed list of words that might come before a
     name, so a version of this function that tried to exclude them one
     spelling at a time would always be one word behind the next document
-    that plants a new one. That reconciliation is the cast list's job (see
-    `covered_by_cast`), not this function's: it stays a plain, context-free
-    matcher. The suffix is matched case-insensitively (Limited/limited,
-    GmbH/GMBH all count).
+    that plants a new one. Callers that care about the difference remove
+    the names they already know with `mask_cast_names` BEFORE calling this,
+    rather than asking this function to guess; it stays a plain,
+    context-free matcher. The suffix is matched case-insensitively
+    (Limited/limited, GmbH/GMBH all count).
     """
     return {match.group(1).strip() for match in _ENTITY.finditer(text)}
 
 
-def covered_by_cast(candidate: str, cast: Set[str]) -> bool:
-    """True if `candidate` is on the cast list, or becomes a cast entry once
-    exactly one leading word is dropped.
+def mask_cast_names(text: str, cast: Set[str]) -> str:
+    """Remove every known cast name from `text`, longest entry first.
 
-    Bounded to one word deliberately, and NOT an unbounded walk of every
-    trailing sub-phrase — an earlier version of this function tried that
-    and it was too weak in the other direction: it also matched a
-    genuinely different, unchecked entity whose name happened to end in a
-    checked one's words ("Ashfell Trading Holdings Limited" against a cast
-    entry of just "Holdings Limited"), and let a single stray one-word cast
-    row ("GmbH") blanket-cover an entire suffix family. The regex only ever
-    absorbs *capitalised* words ahead of a recognised suffix, so the
-    false-positive shape this exists to fix is a single sentence-initial or
-    preposition-like word ("The", "See", "Under", "Per", "Registered") in
-    front of a genuine name — one word is the right bound for that. A real
-    entity's distinguishing prefix is essentially always more than one
-    word; where it is not, flagging is the safe direction for this gate.
-    Internal whitespace is normalised via `str.split()` before re-joining
-    with a single space, since a candidate captured by entity_tokens may
-    carry a tab between words where a cast-list entry is written with a
-    plain space.
+    Run this before `entity_tokens` and what comes back carries only names
+    the cast list does not account for — see the module docstring for why
+    the operation is inverted rather than filtered after the fact.
+
+    Two details are load-bearing. Entries are masked LONGEST FIRST so a
+    shorter one cannot pre-empt a longer one that contains it: masking
+    "Holdings Limited" out of "Ashfell Holdings Limited" would strand
+    "Ashfell" in the residue, where it can fuse with the capitalised words
+    beside it and be reported as part of a name the document never
+    contained. And each name is replaced by a SPACE rather than the empty
+    string, so the words either side of a removed name cannot fuse into a
+    candidate of their own.
+
+    Matching allows any run of spaces or tabs between a name's words, since
+    a name wrapped across a table cell or padded in a document is the same
+    name as the one the cast list writes with single spaces.
     """
-    if candidate in cast:
-        return True
-    words = candidate.split()
-    if len(words) < 2:
-        return False
-    return " ".join(words[1:]) in cast
+    for name in sorted(cast, key=lambda entry: (-len(entry), entry)):
+        words = name.split()
+        if not words:
+            continue
+        text = re.sub(r"[ \t]+".join(re.escape(word) for word in words), " ", text)
+    return text
+
+
+def malformed_cast_entries(cast: Set[str]) -> List[str]:
+    """Cast rows no name check could legitimately have produced, sorted.
+
+    A row that is a bare corporate suffix ("GmbH") or any single word would
+    blanket-mask every entity ending in it, turning gate 14 into a gate
+    that cannot fail — "Ashfell Trading GmbH" comes back clean against a
+    cast of {"GmbH"}. The cast list is generated from the fact sheet by the
+    name check, so a one-word row means that process went wrong; the right
+    response is to reject it by name, not to compensate for it in the
+    matcher. Both conditions are stated even though every current entry in
+    ENTITY_SUFFIXES is a single token, so adding a two-word suffix later
+    cannot quietly open the hole back up.
+    """
+    return sorted(
+        name
+        for name in cast
+        if len(name.split()) < 2 or name.strip().lower() in _SUFFIXES_LOWER
+    )
 
 
 def cast_list(path: Path) -> Set[str]:

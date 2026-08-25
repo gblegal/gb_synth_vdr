@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import List, Set, Tuple
 
-from ..names import cast_list, covered_by_cast, entity_tokens
+from ..names import cast_list, entity_tokens, malformed_cast_entries, mask_cast_names
 from .runner import fail, ok, skip
 
 # Gate 4. "registry" is deliberately absent: Land Registry is legitimate in-room.
@@ -189,13 +189,43 @@ def gate_12_key_containment(ctx):
 
 
 def gate_14_unchecked_names(ctx):
+    """Entity-shaped tokens in the blind tree that no name check cleared.
+
+    A safety net for company names that entered the room during authoring
+    without going through the name-collision check — not a proof; the
+    primary control is /vdr-scope checking every fact-sheet name at Gate A.
+
+    Every known cast name is masked out of each file's text and name FIRST,
+    and the residue is then scanned. Whatever the regex finds in the
+    residue is genuinely unknown, so no rule is needed to tell an ordinary
+    capitalised word preceding a registered name from part of that name —
+    the registered name is already gone. See synthvdr/names.py's module
+    docstring for the three extract-then-filter versions this replaced and
+    the residual it accepts. The filename is masked on the same terms as
+    the content, since the sweep is the same regex over the same kind of
+    text.
+
+    A malformed cast list is rejected before any file is read: a single-word
+    or bare-suffix row would blanket-mask a whole suffix family, and a gate
+    that silently cannot fail is worse than one that reports the row.
+    """
     name_check = ctx.key_root / "name-check.md"
     if not name_check.is_file():
         return skip("14", "unchecked names", "_key/name-check.md absent — run /vdr-scope name check")
+    cast = cast_list(name_check)
+    malformed = malformed_cast_entries(cast)
+    if malformed:
+        return fail(
+            "14",
+            "unchecked names",
+            "malformed cast row(s) in _key/name-check.md: "
+            + _truncated([repr(name) for name in malformed], sep=", ")
+            + " — a single-word or bare-suffix row masks every name ending in it;"
+            " regenerate the name check from the fact sheet",
+        )
     files = ctx.blind_files()
     if not files:
         return skip("14", "unchecked names", f"{ctx.blind_root} absent or empty")
-    cast = cast_list(name_check)
     unchecked: Set[str] = set()
     replaced = 0
     for path in files:
@@ -205,8 +235,8 @@ def gate_14_unchecked_names(ctx):
             continue
         if needed_fallback:
             replaced += 1
-        candidates = entity_tokens(text) | entity_tokens(path.name)
-        unchecked |= {c for c in candidates if not covered_by_cast(c, cast)}
+        unchecked |= entity_tokens(mask_cast_names(text, cast))
+        unchecked |= entity_tokens(mask_cast_names(path.name, cast))
     if unchecked:
         detail = _truncated(sorted(unchecked), sep=", ") + " — not on the cast list; check or remove"
         return fail("14", "unchecked names", detail + _fallback_note(replaced))

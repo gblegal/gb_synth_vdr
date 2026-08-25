@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from synthvdr.names import covered_by_cast, entity_tokens
+from synthvdr.names import cast_list, entity_tokens, mask_cast_names
 from synthvdr.qa.leakage import (
     ANSWER_KEY_NOUNS,
     BUILD_VOCABULARY,
@@ -208,49 +208,142 @@ def test_entity_tokens_matches_suffixes_case_insensitively():
 
 
 # ---------------------------------------------------------------------------
-# Review finding D (reopened twice) — round 2's fix enumerated leading words
-# ("The") instead of stating a property. Its replacement property — cover a
-# candidate if ANY trailing sub-phrase of it is on the cast list — was
-# itself too weak: it also covers a genuinely different, unchecked entity
-# whose name happens to end in a checked one's words ("Ashfell Trading
-# Holdings Limited" against a cast entry of just "Holdings Limited"), and
-# lets one stray one-word cast row ("GmbH") blanket-cover a whole suffix
-# family. The tightened property: a candidate is covered only if it is
-# itself on the cast list, or becomes a cast entry once exactly ONE leading
-# word is dropped — bounded because the regex only ever absorbs a single
-# sentence-initial or preposition-like word ahead of a genuine name.
+# Review finding D (reopened three times) — the OPERATION was the problem,
+# not the bound on it. Three rounds tried to extract a candidate from prose
+# and then ask "is this covered?": a determiner stoplist (handled "The",
+# missed "See", "Under", "Per", "Registered"); an unbounded trailing
+# sub-phrase walk (killed the false positives, but let a cast entry of
+# "Holdings Limited" cover the different, unchecked "Ashfell Trading
+# Holdings Limited"); then a one-leading-word bound (only shrank both
+# windows to two words). Separating "ordinary leading word" from "part of a
+# name" is named-entity recognition — no word-count rule does it, so every
+# bound carried both error classes at once.
+#
+# Round 4 inverts the operation: MASK every known cast name out of the text
+# first, then scan the residue. A known name is gone before the regex ever
+# runs, so no number of ordinary leading words can produce a candidate —
+# the whole false-positive class goes structurally, with no stoplist and no
+# bound. Anything the regex still finds carries a corporate suffix that no
+# cast entry accounts for, and is genuinely unknown.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "candidate, cast, expected",
+    "prose, expected",
     [
-        ("See Kessler Werke GmbH", {"Kessler Werke GmbH"}, True),
-        ("The Ashfell Holdings Limited", {"Ashfell Holdings Limited"}, True),
-        ("Registered Ashfell Holdings Limited", {"Ashfell Holdings Limited"}, True),
-        ("Kessler Werke GmbH", {"Kessler Werke GmbH"}, True),
-        # A different, unchecked entity whose name happens to end in a
-        # checked one's words must still be flagged — not covered.
-        ("Ashfell Trading Holdings Limited", {"Holdings Limited"}, False),
-        # A bare one-word cast row must not blanket-cover a suffix family.
-        ("Ashfell Trading GmbH", {"GmbH"}, False),
+        # The room fixture's cast holds both "Kessler Werke GmbH" and
+        # "Ashfell Holdings Limited", so each of these sentences names a
+        # correctly-registered company. Any number of ordinary capitalised
+        # words may precede it; none of them may fail the build.
+        ("See Kessler Werke GmbH for detail.", "PASS"),
+        ("As Noted Kessler Werke GmbH continued trading.", "PASS"),
+        ("Related Parties Kessler Werke GmbH holds a stake.", "PASS"),
+        ("Duly Registered Ashfell Holdings Limited filed.", "PASS"),
+        ("The Ashfell Holdings Limited signed.", "PASS"),
+        ("Ashfell Holdings Limited signed.", "PASS"),
+        # ...and an entity nobody checked is still caught.
+        ("A deed with Unlisted Trading Limited.", "FAIL"),
     ],
 )
-def test_covered_by_cast_drops_at_most_one_leading_word(candidate, cast, expected):
-    assert covered_by_cast(candidate, cast) is expected
+def test_gate_14_masks_the_cast_before_scanning_the_residue(room, prose, expected):
+    blind_doc(room).write_text(f"# Articles\n\n{prose}\n")
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == expected, result.detail
 
 
-def test_covered_by_cast_property_one_leading_word_covered_two_flagged():
-    # Property, not examples: for EVERY name on the cast list, prefixing it
-    # with exactly one capitalised word must register as covered, and
-    # prefixing it with two must register as flagged — the bound is on the
-    # NUMBER of leading words removed, not on which words they are.
-    cast = {"Ashfell Holdings Limited", "Kessler Werke GmbH", "Vantage Underwriting PLC"}
-    for name in cast:
-        one_word = f"See {name}"
-        two_words = f"We See {name}"
-        assert covered_by_cast(one_word, cast), one_word
-        assert not covered_by_cast(two_words, cast), two_words
+def test_gate_14_property_any_one_two_or_three_leading_words_leave_the_room_clean(room):
+    # Property, not examples, and with no bound on the number of leading
+    # words: for EVERY name on the room's own cast list, prefixing it with
+    # one, two or three ordinary capitalised words must leave the room
+    # clean. Masking removes the name itself, so what precedes it cannot
+    # matter — which is the whole point of inverting the operation.
+    cast = cast_list(room / "_key" / "name-check.md")
+    assert cast, "the fixture must have a non-empty cast list for this to mean anything"
+    for name in sorted(cast):
+        for prefix in ("See", "As Noted", "Related Parties Under"):
+            blind_doc(room).write_text(f"# Articles\n\n{prefix} {name} signed the deed.\n")
+            result = gate_14_unchecked_names(ctx_for(room))
+            assert result.status == "PASS", f"{prefix} {name}: {result.detail}"
+
+
+def test_gate_14_flags_an_unchecked_entity_in_the_same_room_as_covered_ones(room):
+    # Masking must not blunt the gate: a document that names two registered
+    # companies AND one nobody checked still fails, naming only the third.
+    blind_doc(room).write_text(
+        "# Articles\n\n"
+        "See Kessler Werke GmbH for detail. Duly Registered Ashfell Holdings "
+        "Limited filed. A deed with Unlisted Trading Limited.\n"
+    )
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "Unlisted Trading Limited" in result.detail
+    assert "Kessler" not in result.detail
+    assert "Ashfell" not in result.detail
+
+
+def test_gate_14_masks_cast_names_in_the_filename_too(room):
+    # The filename sweep runs the same regex over the same kind of text, so
+    # it needs the same masking — two ordinary leading words in a document
+    # slug must not fail the build either.
+    (room / "data-room" / "01_corporate" / "1.1_constitutional" /
+     "Executed Deed Ashfell Holdings Limited.md").write_text("# Deed\n\nOrdinary content.\n")
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "PASS", result.detail
+
+
+def test_mask_cast_names_removes_the_longest_entry_first():
+    # A shorter cast entry must not pre-empt a longer one that contains it:
+    # masking "Holdings Limited" first would strand "Ashfell" in the
+    # residue, where it can fuse with whatever capitalised words follow and
+    # be reported as part of a name that was never in the document.
+    residue = mask_cast_names(
+        "Ashfell Holdings Limited signed.",
+        {"Ashfell Holdings Limited", "Holdings Limited"},
+    )
+    assert "Ashfell" not in residue
+    assert entity_tokens(residue) == set()
+
+
+def test_gate_14_reports_the_right_name_when_a_shorter_cast_entry_is_nested(room):
+    # The user-visible consequence of the ordering above, end-to-end: with
+    # shortest-first masking the leftover "Ashfell" fuses with the genuinely
+    # unchecked entity beside it and the FAIL names a company that does not
+    # exist.
+    (room / "_key" / "name-check.md").write_text(
+        "| Name | Kind | Verdict | Checked |\n|---|---|---|---|\n"
+        "| Ashfell Holdings Limited | entity | clear | 2026-08-24 |\n"
+        "| Holdings Limited | entity | clear | 2026-08-24 |\n"
+    )
+    blind_doc(room).write_text("# Articles\n\nAshfell Holdings Limited Rival Trading Limited.\n")
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "FAIL"
+    assert result.detail.startswith("Rival Trading Limited —")
+
+
+# ---------------------------------------------------------------------------
+# Cast-list hygiene — the one gap masking leaves. A degenerate cast row that
+# is a bare corporate suffix blanket-masks every entity ending in it
+# ("Ashfell Trading GmbH" would come back clean against a cast of {"GmbH"}).
+# That is malformed input: a cast list is generated from the fact sheet by
+# the name check, so a one-word row means that process went wrong. Gate 14
+# rejects it loudly rather than silently degrading into a gate that cannot
+# fail.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("row", ["GmbH", "Limited", "Ashfell"])
+def test_gate_14_fails_on_a_malformed_cast_row(room, row):
+    (room / "_key" / "name-check.md").write_text(
+        "| Name | Kind | Verdict | Checked |\n|---|---|---|---|\n"
+        f"| {row} | entity | clear | 2026-08-24 |\n"
+        "| Ashfell Holdings Limited | entity | clear | 2026-08-24 |\n"
+    )
+    blind_doc(room).write_text("# Articles\n\nAshfell Trading GmbH signed.\n")
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "FAIL"
+    assert row in result.detail
+    # The well-formed row alongside it is not the problem and must not be named.
+    assert "Ashfell Holdings Limited" not in result.detail
 
 
 @pytest.mark.parametrize(
