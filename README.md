@@ -57,11 +57,14 @@ whole pipeline; run it with:
 python3 -m pytest tests/test_end_to_end.py -v
 ```
 
-To try the CLI surface by hand against a built copy of it:
+To try the CLI surface by hand against a built copy of it — **prefer `--strict`**: the
+plain form is a mid-build diagnostic (it legitimately skips gates whose inputs, like a
+subset or a render tree, do not exist yet) and its summary line can read as a clean pass
+even when most gates never ran at all — `--strict` is what actually verifies the room:
 
 ```bash
-python3 -m synthvdr.qa --room <built-room-dir>            # the QA gates
-python3 -m synthvdr.qa --room <built-room-dir> --strict    # release mode
+python3 -m synthvdr.qa --room <built-room-dir> --strict    # verifies the room; use this
+python3 -m synthvdr.qa --room <built-room-dir>              # mid-build diagnostic only
 python3 -m synthvdr score fixtures/xs-room/tool-output-sample.json --room <built-room-dir>
 ```
 

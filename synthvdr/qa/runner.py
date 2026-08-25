@@ -128,6 +128,20 @@ def run_gates(ctx, gates: List[Callable]) -> int:
     summary = f"{len(gates)} gates run, {failures} failed, {skips} skipped, {warns} warned"
     if failures == 0 and skips == 0:
         summary += " — no hard failures"
+    elif failures == 0 and skips * 2 > len(gates):
+        # Final review, F4: a majority of gates skipping is not itself a
+        # failure in non-strict mode (that is the whole point of SKIP
+        # discipline — an honest "we did not check this" rather than a
+        # silent pass), but "0 failed" leading the line reads as a clean
+        # room to a skimming newcomer even when most of what would have
+        # caught a real defect never ran at all (e.g. 15 of 17 gates
+        # skipped on a directory that is not a built room). Made
+        # unmistakable here, in the one place every caller sees it,
+        # rather than only in --strict, which does not run by default.
+        summary += (
+            f" — MOST GATES SKIPPED ({skips}/{len(gates)}): this run does not verify "
+            "the room; re-run with --strict before trusting it"
+        )
     print(summary)
     if skips and getattr(ctx, "strict", False):
         print("strict mode: skipped gates count as failures")

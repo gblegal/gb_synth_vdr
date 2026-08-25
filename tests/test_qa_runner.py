@@ -31,6 +31,34 @@ def test_skip_is_printed_and_counted_not_silent(capsys):
     assert "no hard failures" not in out.lower()
 
 
+def test_summary_is_unmistakable_when_most_gates_skip(capsys):
+    """Final review, F4: `--room` on a directory that is not a built room
+    shows '0 failed, 15 skipped' and reads as a pass to a skimming
+    newcomer — README's own first example runs exactly this, non-strict.
+    The summary must say so plainly without changing the (correct, by
+    design) non-strict exit code."""
+    code = results(
+        *[lambda c: skip(str(n), f"gate {n}", "input absent") for n in range(15)],
+        lambda c: ok("15", "counts"),
+        lambda c: ok("16", "canon"),
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "MOST GATES SKIPPED" in out
+    assert "15/17" in out
+
+
+def test_summary_is_not_flagged_when_skips_are_a_minority(capsys):
+    code = results(
+        lambda c: skip("1", "gate one", "input absent"),
+        lambda c: ok("2", "gate two"),
+        lambda c: ok("3", "gate three"),
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "MOST GATES SKIPPED" not in out
+
+
 def test_strict_turns_a_skip_into_a_failure(capsys):
     ctx = Ctx()
     ctx.strict = True
