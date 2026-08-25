@@ -21,13 +21,16 @@ verified, because the usual reason `_key/manifest.json` is missing is that
 this room has not been through /vdr-package yet, and that is reported
 plainly inside the rendered scorecard rather than being treated as a
 failure. 2 if room.conf or the answer key could not be loaded, if the tool
-output (or --baseline file) could not be read or parsed, if the tool
-output's room_hash provably names a different room than the one being
-scored (synthvdr.score.ProvenanceError), or if `_key/adjudications.yaml`
-exists but is malformed or cannot be reconciled against this run
-(synthvdr.score.AdjudicationError) — grouped with the other
-could-not-even-run failures, not with a scoring result, because in every
-one of these cases no trustworthy scorecard was produced at all.
+output (or --baseline file) could not be read or parsed — including a
+structurally invalid tool-output file (synthvdr.score.ToolOutputError:
+e.g. a JSON root that is not an object, or a markdown report with no
+parseable findings at all) — if the tool output's room_hash provably names
+a different room than the one being scored (synthvdr.score.ProvenanceError),
+or if `_key/adjudications.yaml` exists but is malformed or cannot be
+reconciled against this run (synthvdr.score.AdjudicationError) — grouped
+with the other could-not-even-run failures, not with a scoring result,
+because in every one of these cases no trustworthy scorecard was produced
+at all.
 """
 
 from __future__ import annotations
@@ -42,6 +45,7 @@ from .score import (
     AdjudicationError,
     ProvenanceError,
     ToolOutput,
+    ToolOutputError,
     check_provenance,
     diff_scorecards,
     load_adjudications_for_room,
@@ -66,7 +70,7 @@ def _load_output(path: Path) -> tuple[ToolOutput | None, str | None]:
         return load_tool_output(path), None
     except OSError as exc:
         return None, f"could not read {path}: {exc}"
-    except ValueError as exc:
+    except (ValueError, ToolOutputError) as exc:
         return None, f"could not parse {path}: {exc}"
 
 

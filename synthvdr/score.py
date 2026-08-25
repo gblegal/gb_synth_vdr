@@ -1,10 +1,27 @@
 """Score a tool's output against the answer key.
 
-Matching is two-stage. Stage one is deterministic: a tool that cites a finding's
-source or corroboration documents is matched to that finding. Stage two is LLM
-adjudication of what is left, performed by the /vdr-score skill and passed back
-in as Adjudication rows, so the scoring logic itself stays deterministic and
-every judgement is recorded rather than re-derived.
+Matching is two-stage. Stage one is deterministic: a tool that cites a
+finding's source or corroboration documents is matched to that finding — to
+every finding whose evidence it cites, not just one, because a single report
+can legitimately evidence more than one planted finding at once and the
+cited paths say so plainly. That is not ambiguous; ambiguity is reserved for
+a report that cites no known document at all, which is what the adjudication
+list is for. Stage two is LLM adjudication of what is left, performed by the
+/vdr-score skill and passed back in as Adjudication rows, so the scoring
+logic itself stays deterministic and every judgement is recorded rather than
+re-derived.
+
+Recall is the count of *distinct* findings matched by anything, over the
+total findings in the key. Precision is the count of reports that matched
+*at least one* finding, over the total reports — so two correct reports of
+the same finding score precision 1.0 (both were right), not 0.5 (as if one
+were a duplicate mistake), while still only crediting that one finding
+towards recall once. A multi-document finding's partial-trail check is
+computed over the *union* of documents cited by every report matched to it,
+not per report — a trail split across two separate reports is still a
+complete trail. This is also what keeps hit_table and partial_trails from
+disagreeing about the same finding: they are now built from the same
+per-finding view of the evidence, not two different per-report ones.
 
 Provenance. A scorecard is only meaningful if the tool output being scored was
 actually produced against the room whose answer key is doing the scoring —
@@ -27,7 +44,9 @@ exists but fails to parse, or that names a tool_index outside the tool
 output or a finding_id absent from the answer key, is always an error
 (AdjudicationError) — never silently treated as empty or dropped, because a
 scorecard rendered without a real adjudication is missing a match it was
-supposed to have.
+supposed to have. finding_id may be a string, null (a confirmed non-match),
+or a list of strings (the same many-to-many truth prematch can express),
+using the same normalisation either way.
 
 A recall of 0.0 does not by itself mean "nothing could be matched" — it is
 also what a fully-adjudicated run reports when every report was positively
@@ -36,6 +55,15 @@ apart: non-empty means some reports are still unresolved and could still
 raise recall once adjudicated, so render_scorecard marks the Recall line and
 the reported findings themselves as provisional in that case; empty means
 every report was resolved one way or the other, and the number is final.
+
+A tool-output file that cannot actually be parsed — a JSON root that is not
+an object, a findings list that is not a list, a finding row that is not an
+object, or a markdown report with no recognisable finding headings at all —
+raises ToolOutputError rather than silently degrading into a valid-looking
+zero-finding run. If a tool genuinely found nothing, the JSON format's
+explicit empty findings list is how it says so; an empty or prose-only
+markdown file does not, because there is no way to tell that apart from a
+report this parser simply failed to understand.
 """
 
 from __future__ import annotations
@@ -44,7 +72,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple, Union
 
 import yaml
 
@@ -69,7 +97,7 @@ class ToolOutput:
 @dataclass(frozen=True)
 class Adjudication:
     tool_index: int
-    finding_id: Optional[str]
+    finding_id: Optional[Union[str, List[str]]]
     reason: str
 
 
@@ -192,15 +220,36 @@ class AdjudicationSummary:
 _ADJUDICATIONS_RELATIVE_PATH = Path("_key") / "adjudications.yaml"
 
 
+def _normalize_finding_ids(finding_id: Optional[Union[str, Sequence[str]]]) -> List[str]:
+    """Normalize an Adjudication.finding_id — a string, None, or a sequence
+    of strings — into a sorted, de-duplicated list. This is the same shape
+    prematch() produces for a pre-match, so score() can treat pre-matched
+    and adjudicated report->finding links identically once normalized, and
+    it is sorted here (not left as a set, and not left in citation order)
+    for the same reason prematch sorts: the result must never depend on
+    PYTHONHASHSEED-salted set order, or on the order ids happened to be
+    listed in the YAML file.
+    """
+    if finding_id is None:
+        ids: List[str] = []
+    elif isinstance(finding_id, str):
+        ids = [finding_id]
+    else:
+        ids = list(finding_id)
+    return sorted(set(ids))
+
+
 def load_adjudications(path: Path) -> List[Adjudication]:
     """Parse `_key/adjudications.yaml`.
 
     Raises AdjudicationError on anything that is not a well-formed list of
-    {tool_index, finding_id, reason} rows. A missing tool_index or reason,
-    or a tool_index/finding_id of the wrong type, is a shape error caught
-    here; whether tool_index and finding_id actually resolve against a
-    specific run is checked separately by validate_adjudications, since
-    that needs the ToolOutput and FindingSet this file is being applied to.
+    {tool_index, finding_id, reason} rows. finding_id may be a string, null,
+    or a list of strings — the same many-to-many truth a pre-match can
+    express. A missing tool_index or reason, or a tool_index/finding_id of
+    the wrong shape, is caught here; whether tool_index and finding_id
+    actually resolve against a specific run is checked separately by
+    validate_adjudications, since that needs the ToolOutput and FindingSet
+    this file is being applied to.
     """
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -229,8 +278,11 @@ def load_adjudications(path: Path) -> List[Adjudication]:
                 "non-match, not an absent key"
             )
         finding_id = row["finding_id"]
-        if finding_id is not None and not isinstance(finding_id, str):
-            raise AdjudicationError(f"{context}: finding_id must be a string or null, got {finding_id!r}")
+        is_string_list = isinstance(finding_id, list) and all(isinstance(x, str) for x in finding_id)
+        if finding_id is not None and not isinstance(finding_id, str) and not is_string_list:
+            raise AdjudicationError(
+                f"{context}: finding_id must be a string, null, or a list of strings, got {finding_id!r}"
+            )
         if "reason" not in row:
             raise AdjudicationError(f"{context}: missing required field 'reason'")
         result.append(Adjudication(tool_index=tool_index, finding_id=finding_id, reason=row["reason"]))
@@ -245,14 +297,14 @@ def validate_adjudications(
 ) -> None:
     """Cross-check every adjudication against the specific tool output and
     answer key it is meant to score. A tool_index outside the reported
-    findings, a finding_id absent from the answer key, or two adjudications
-    naming the same tool_index (one would silently override the other in
-    score()) are all errors naming the offending entry — none of them may
-    be silently dropped, because a dropped adjudication is a silently
-    wrong score.
+    findings, a finding_id (or any id inside a finding_id list) absent from
+    the answer key, or two adjudications naming the same tool_index (one
+    would silently override the other in score()) are all errors naming the
+    offending entry — none of them may be silently dropped, because a
+    dropped adjudication is a silently wrong score.
     """
     known_ids = set(findings.by_id)
-    seen: Dict[int, Optional[str]] = {}
+    seen: Dict[int, Optional[Union[str, List[str]]]] = {}
     for adjudication in adjudications:
         if not (0 <= adjudication.tool_index < len(output.findings)):
             raise AdjudicationError(
@@ -260,11 +312,12 @@ def validate_adjudications(
                 f"the tool output has {len(output.findings)} finding(s) "
                 f"(valid indices: 0..{len(output.findings) - 1})"
             )
-        if adjudication.finding_id is not None and adjudication.finding_id not in known_ids:
-            raise AdjudicationError(
-                f"{source}: adjudication for tool_index {adjudication.tool_index} names "
-                f"finding_id {adjudication.finding_id!r}, which does not exist in the answer key"
-            )
+        for finding_id in _normalize_finding_ids(adjudication.finding_id):
+            if finding_id not in known_ids:
+                raise AdjudicationError(
+                    f"{source}: adjudication for tool_index {adjudication.tool_index} names "
+                    f"finding_id {finding_id!r}, which does not exist in the answer key"
+                )
         if adjudication.tool_index in seen:
             raise AdjudicationError(
                 f"{source}: tool_index {adjudication.tool_index} is adjudicated more than once "
@@ -300,6 +353,19 @@ def load_adjudications_for_room(
     )
 
 
+class ToolOutputError(Exception):
+    """A tool-output file is not a well-formed ToolOutput — the wrong JSON
+    shape (root not an object, findings not a list, a finding row not an
+    object), or a markdown report with no recognisable finding headings at
+    all. Always raised, never silently downgraded into a valid-looking
+    zero-finding ToolOutput: a wrong conclusion drawn from a file that could
+    not actually be parsed is exactly what this project's SKIP discipline
+    exists to prevent. If a tool genuinely found nothing, the JSON format's
+    explicit empty findings list is how it says so — an empty or
+    prose-only markdown file does not.
+    """
+
+
 _MD_FINDING = re.compile(r"^#{2,4}\s*(.+)$", re.MULTILINE)
 _MD_PATH = re.compile(r"`([\w./-]+\.(?:md|csv|pdf|docx))`")
 _MD_SEVERITY = re.compile(r"\b(critical|high|medium|low)\b", re.IGNORECASE)
@@ -321,6 +387,13 @@ def parse_markdown_report(text: str, tool: str = "unknown") -> ToolOutput:
                 summary=" ".join(body.split())[:400],
             )
         )
+    if not findings:
+        raise ToolOutputError(
+            "could not parse any findings from this markdown report — expected one or more "
+            "level 2-4 headings ('##', '###', or '####'), one per finding. If the tool "
+            "genuinely reported zero findings, use the JSON format with an explicit empty "
+            "'findings' list instead of an empty or prose-only markdown file."
+        )
     return ToolOutput(tool=tool, room_hash="", findings=findings)
 
 
@@ -328,39 +401,69 @@ def load_tool_output(path: Path) -> ToolOutput:
     text = path.read_text(encoding="utf-8")
     if path.suffix.lower() == ".json":
         doc = json.loads(text)
-        return ToolOutput(
-            tool=doc.get("tool", "unknown"),
-            room_hash=doc.get("room_hash", ""),
-            findings=[
+        if not isinstance(doc, dict):
+            raise ToolOutputError(
+                f"{path}: the JSON root must be an object with 'tool' and 'findings' keys — "
+                f"got {type(doc).__name__}"
+            )
+        raw_findings = doc.get("findings")
+        if raw_findings is None:
+            raw_findings = []
+        if not isinstance(raw_findings, list):
+            raise ToolOutputError(
+                f"{path}: 'findings' must be a list, got {type(raw_findings).__name__}"
+            )
+        findings: List[ToolFinding] = []
+        for index, row in enumerate(raw_findings):
+            if not isinstance(row, dict):
+                raise ToolOutputError(
+                    f"{path}: findings[{index}] must be an object, got {type(row).__name__}"
+                )
+            findings.append(
                 ToolFinding(
                     title=row.get("title", ""),
                     severity=row.get("severity", "medium"),
                     documents=list(row.get("documents") or []),
                     summary=row.get("summary", ""),
                 )
-                for row in doc.get("findings") or []
-            ],
+            )
+        return ToolOutput(
+            tool=doc.get("tool", "unknown"),
+            room_hash=doc.get("room_hash", ""),
+            findings=findings,
         )
     return parse_markdown_report(text, tool=path.stem)
 
 
-def prematch(output: ToolOutput, findings: FindingSet) -> Tuple[Dict[int, str], List[int]]:
-    by_source = {f.source: f.id for f in findings.findings}
-    by_corroboration: Dict[str, str] = {}
-    for finding in findings.findings:
-        for path in finding.corroboration:
-            by_corroboration.setdefault(path, finding.id)
+def prematch(output: ToolOutput, findings: FindingSet) -> Tuple[Dict[int, List[str]], List[int]]:
+    """Match each reported finding against every planted finding whose
+    source or corroboration document it cites — not just one. A report
+    citing the source documents of two findings is not ambiguous: the
+    cited paths say plainly that it matches both, so both are credited.
+    Ambiguity is reserved for a report that cites no known document at
+    all, which lands in the second return value for adjudication.
 
-    matched: Dict[int, str] = {}
+    Returns ({tool_index: sorted list of matched finding ids}, [indices
+    citing no known document]). Each match list is built from a set and
+    sorted before being returned, so which findings a report is credited
+    with never depends on the order it happened to list its citations, or
+    on PYTHONHASHSEED-salted set iteration order.
+    """
+    owners: Dict[str, Set[str]] = {}
+    for finding in findings.findings:
+        for path in finding.evidence_paths():
+            owners.setdefault(path, set()).add(finding.id)
+
+    matched: Dict[int, List[str]] = {}
     unmatched: List[int] = []
     for index, reported in enumerate(output.findings):
-        hit = next((by_source[d] for d in reported.documents if d in by_source), None)
-        if hit is None:
-            hit = next((by_corroboration[d] for d in reported.documents if d in by_corroboration), None)
-        if hit is None:
-            unmatched.append(index)
+        hit_ids: Set[str] = set()
+        for document in reported.documents:
+            hit_ids.update(owners.get(document, ()))
+        if hit_ids:
+            matched[index] = sorted(hit_ids)
         else:
-            matched[index] = hit
+            unmatched.append(index)
     return matched, unmatched
 
 
@@ -371,15 +474,16 @@ def score(
     adjudications: Sequence[Adjudication] = (),
 ) -> Scorecard:
     matched, unmatched = prematch(output, findings)
-    adjudicated = {a.tool_index: a.finding_id for a in adjudications}
+    adjudicated = {a.tool_index: _normalize_finding_ids(a.finding_id) for a in adjudications}
     # Adjudications take precedence over the deterministic pre-match where
-    # both apply — in either direction. A finding_id assigns or reassigns
-    # the match for that index; None is a positive confirmation that the
+    # both apply — in either direction. A non-empty id list assigns or
+    # reassigns the match for that index; an empty one (from finding_id
+    # None, or an explicit empty list) is a positive confirmation that the
     # index matches nothing, which must be able to remove a pre-match too,
     # not just decline to add one.
-    for index, finding_id in adjudicated.items():
-        if finding_id:
-            matched[index] = finding_id
+    for index, ids in adjudicated.items():
+        if ids:
+            matched[index] = ids
         else:
             matched.pop(index, None)
     still_unmatched = [i for i in unmatched if i not in adjudicated]
@@ -394,7 +498,12 @@ def score(
                 false_alarms.append(distractor_docs[document])
                 break
 
-    found_ids = set(matched.values())
+    # Recall counts distinct findings matched by anything, across every
+    # report — a finding hit by two reports is still one finding found.
+    found_ids: Set[str] = set()
+    for ids in matched.values():
+        found_ids.update(ids)
+
     by_severity: Dict[str, Tuple[int, int]] = {}
     for severity in SEVERITIES:
         pool = [f for f in findings.findings if f.severity == severity]
@@ -402,16 +511,30 @@ def score(
 
     total = len(findings.findings)
     recall = len(found_ids) / total if total else 0.0
+
+    # Precision counts reports that matched at least one finding — matched
+    # only ever holds a report index with a non-empty id list, so its
+    # length is exactly that count. Two correct reports of the same
+    # finding are both right (precision 1.0), not one right and one wrong.
     reported_count = len(output.findings)
-    precision = len(found_ids) / reported_count if reported_count else 0.0
+    precision = len(matched) / reported_count if reported_count else 0.0
+
+    # A multi-document finding's partial-trail check is computed over the
+    # UNION of documents cited by every report matched to it, not per
+    # report — a trail split across two reports (one citing the source,
+    # the other the corroboration) is a complete trail, not two partial
+    # ones, and this is what keeps hit_table and partial_trails agreeing.
+    trail_docs: Dict[str, Set[str]] = {}
+    for index, ids in matched.items():
+        cited = set(output.findings[index].documents)
+        for finding_id in ids:
+            trail_docs.setdefault(finding_id, set()).update(cited)
 
     partial: List[str] = []
-    for index, finding_id in matched.items():
+    for finding_id, cited_union in trail_docs.items():
         finding = findings.by_id[finding_id]
-        if finding.multi_document:
-            cited = set(output.findings[index].documents)
-            if not set(finding.evidence_paths()) <= cited:
-                partial.append(finding_id)
+        if finding.multi_document and not set(finding.evidence_paths()) <= cited_union:
+            partial.append(finding_id)
 
     return Scorecard(
         by_severity=by_severity,

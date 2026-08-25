@@ -302,3 +302,43 @@ def test_cli_refuses_a_malformed_adjudications_file(room, capsys):
     assert code == 2
     assert captured.out == ""
     assert "Traceback" not in captured.err
+
+
+# --- many-to-many matching and structurally invalid output, via the CLI ------
+
+
+def test_cli_credits_a_report_citing_both_findings_regardless_of_document_order(room, capsys):
+    emp_src = "09_employment/9.1_contracts/9.1.4_consultancy.md"
+    forward = write_multi_output(
+        room, "forward.json", [{"title": "t", "severity": "high", "documents": [SRC, emp_src], "summary": "s"}]
+    )
+    backward = write_multi_output(
+        room, "backward.json", [{"title": "t", "severity": "high", "documents": [emp_src, SRC], "summary": "s"}]
+    )
+    code_forward = main(["score", str(forward), "--room", str(room)])
+    out_forward = capsys.readouterr().out
+    code_backward = main(["score", str(backward), "--room", str(room)])
+    out_backward = capsys.readouterr().out
+    assert code_forward == code_backward == 0
+    assert "Recall:** 100%" in out_forward
+    assert "Recall:** 100%" in out_backward
+
+
+def test_cli_rejects_a_json_list_root_cleanly(room, capsys):
+    bad = room / "bad.json"
+    bad.write_text("[1, 2, 3]", encoding="utf-8")
+    code = main(["score", str(bad), "--room", str(room)])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.out == ""
+    assert "Traceback" not in captured.err
+
+
+def test_cli_rejects_an_empty_markdown_report_cleanly(room, capsys):
+    bad = room / "bad.md"
+    bad.write_text("", encoding="utf-8")
+    code = main(["score", str(bad), "--room", str(room)])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.out == ""
+    assert "Traceback" not in captured.err
