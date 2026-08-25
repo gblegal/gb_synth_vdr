@@ -7,7 +7,14 @@ from .leakage import (
     gate_12_key_containment,
     gate_14_unchecked_names,
 )
-from .structural import gate_01_index, gate_02_counts
+from .structural import (
+    gate_01_index,
+    gate_02_counts,
+    gate_06_dir_canon,
+    gate_07_twin_diff,
+    gate_08_carrier_census,
+    gate_09_xrefs,
+)
 
 ALL_GATES = [
     gate_01_index,
@@ -15,6 +22,10 @@ ALL_GATES = [
     gate_03_flag_leakage,
     gate_04_vocabulary,
     gate_05_index_vocabulary,
+    gate_06_dir_canon,
+    gate_07_twin_diff,
+    gate_08_carrier_census,
+    gate_09_xrefs,
     gate_12_key_containment,
     gate_14_unchecked_names,
 ]
