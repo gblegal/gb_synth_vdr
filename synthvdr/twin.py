@@ -7,14 +7,40 @@ annotation block. Nothing else may write under the flagged tree.
 
 from __future__ import annotations
 
-import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Mapping, Optional, Set, Tuple
 
-from .roomconf import RoomConf
+from .roomconf import (
+    PATH_KEYS,
+    RoomConf,
+    RoomConfError,
+    _is_inside,
+    _overlaps,
+    _same_file,
+    check_tree_identity,
+)
 from .schema import Finding, FindingSet
+
+# _is_inside / _overlaps / _same_file live in roomconf so that the
+# config-level and filesystem-level guards share one implementation of "are
+# these two paths the same tree?" — there is no second copy to drift out of
+# step. They are re-exported here because this module is where they get
+# applied to a destructive operation. _overlaps is not called by this module
+# itself; it is part of that shared vocabulary and is used by the tests that
+# prove the string-level comparison cannot see a same-inode alias.
+__all__ = [
+    "SUBJECT_KEY",
+    "TwinError",
+    "TwinReport",
+    "annotation_block",
+    "assert_safe_delete_target",
+    "build_flagged_tree",
+    "derive_twin",
+    "is_valid_twin",
+    "split_twin",
+]
 
 
 class TwinError(Exception):
@@ -74,55 +100,47 @@ def is_valid_twin(blind_text: str, flagged_text: str, flag_string: str) -> bool:
     return block is not None and body == blind_text
 
 
-def _casefolded_parts(path: Path) -> Tuple[str, ...]:
-    """`path`'s parts, casefolded for a case-insensitive comparison —
-    unconditionally, not just when the host filesystem happens to be
-    case-insensitive. See roomconf._segments for why: macOS and Windows
-    treat 'data-room' and 'DATA-ROOM' as the same directory regardless of
-    what OS this check runs on, so the comparison must too.
+SUBJECT_KEY = "FLAGGED_TREE"
+
+
+def assert_safe_delete_target(
+    subject: Path, resolved: Mapping[str, Path], subject_key: str = SUBJECT_KEY
+) -> None:
+    """The rmtree precondition: `subject` — the resolved flagged root about
+    to be deleted — must not equal, and must not contain, ANY other member
+    of `resolved`.
+
+    It iterates the resolved tree map rather than a fixed list of pairs, so
+    a path key added to roomconf.PATH_KEYS is protected here automatically.
+
+    Two clauses, neither subsuming the other. _is_inside covers "other is the
+    target, or sits under it" — equality included, since a path is a prefix
+    of itself — by casefolded path comparison. _same_file covers the roots
+    that are one directory on disk under two spellings a string comparison
+    cannot reconcile (Unicode normalisation, a hardlink, a bind mount).
+
+    Containment is checked in one direction only, and deliberately: a root
+    *inside* the delete target is destroyed by the delete, which is what this
+    guards. The subject being inside another root is not by itself a hazard —
+    that is the sanctioned FLAGGED_TREE-under-KEY_ROOT layout, and
+    check_tree_identity is what decides which nestings are legal.
     """
-    return tuple(part.casefold() for part in path.parts)
-
-
-def _is_inside(inner: Path, outer: Path) -> bool:
-    """True if `inner` is `outer` itself, or nested under it, comparing
-    case-insensitively (see _casefolded_parts). Both must already be
-    resolved (absolute, symlink-free) paths.
-    """
-    inner_parts = _casefolded_parts(inner)
-    outer_parts = _casefolded_parts(outer)
-    return inner_parts[: len(outer_parts)] == outer_parts
-
-
-def _overlaps(a: Path, b: Path) -> bool:
-    """True if `a` and `b` name the same directory (case-insensitively) or
-    one is nested under the other — i.e. they are not two genuinely
-    separate trees by path alone. This is a string-level check: it cannot
-    see a hardlink, bind mount, or symlink that makes two differently
-    *spelled* paths the same directory on disk without differing only in
-    case — that is what _same_file is for.
-    """
-    return _is_inside(a, b) or _is_inside(b, a)
-
-
-def _same_file(a: Path, b: Path) -> bool:
-    """True if `a` and `b` are the same file or directory on disk — same
-    device and inode, per os.path.samefile. This catches every aliasing
-    route a path-string comparison cannot see at all: case aliases on a
-    case-insensitive filesystem, hardlinks, bind mounts, and symlinks —
-    all without needing to know which of those is in play. False (not an
-    error) if either path doesn't exist yet: nothing can be aliased to a
-    path with nothing there.
-    """
-    try:
-        return os.path.samefile(a, b)
-    except OSError:
-        return False
+    for label, other in resolved.items():
+        if label == subject_key:
+            continue
+        if _same_file(subject, other):
+            raise TwinError(
+                f"refusing to delete {subject}: it is the same directory on "
+                f"disk as {label} ({other}), under a different spelling"
+            )
+        if _is_inside(other, subject):
+            raise TwinError(
+                f"refusing to delete {subject}: {label} ({other}) is that "
+                "directory or sits inside it, and would be destroyed with it"
+            )
 
 
 def build_flagged_tree(room: Path, conf: RoomConf, findings: FindingSet) -> TwinReport:
-    blind_root = room / conf.get("BLIND_TREE")
-    flagged_root = room / conf.get("FLAGGED_TREE")
     flag_string = conf.get("FLAG_STRING_1")
 
     carriers: Dict[str, List[Finding]] = {}
@@ -130,52 +148,25 @@ def build_flagged_tree(room: Path, conf: RoomConf, findings: FindingSet) -> Twin
         for rel in finding.evidence_paths():
             carriers.setdefault(rel, []).append(finding)
 
-    # Belt-and-braces backstop before the destructive call: load_room_conf
-    # already rejects an unsafe or overlapping FLAGGED_TREE, but a RoomConf
-    # can also be constructed by hand (bypassing that check), so refuse
-    # outright rather than deleting anything outside the room, the room
-    # root itself, or the blind tree.
-    room_resolved = room.resolve()
-    blind_resolved = blind_root.resolve()
-    flagged_resolved = flagged_root.resolve()
+    # Re-run the full config guard here, against the room this call was
+    # actually handed. Not merely belt-and-braces for a hand-built RoomConf:
+    # `room` need not be conf.path.parent, and a symlink planted after
+    # load_room_conf returned would make the load-time result stale. Property
+    # 1 (a tree resolves to its literal declared path) and Property 2 (every
+    # pair of configured trees is distinct and non-overlapping) are both
+    # re-established here, immediately before anything destructive.
+    try:
+        resolved = check_tree_identity(room, conf.values, PATH_KEYS, conf.path)
+    except RoomConfError as exc:
+        raise TwinError(str(exc)) from exc
 
-    if not _is_inside(flagged_resolved, room_resolved):
-        raise TwinError(
-            f"FLAGGED_TREE resolves outside the room root — refusing to delete "
-            f"{flagged_resolved} (room is {room_resolved})"
-        )
-    if _casefolded_parts(flagged_resolved) == _casefolded_parts(room_resolved):
-        raise TwinError(
-            f"FLAGGED_TREE resolves to the room root itself — refusing to "
-            f"delete {flagged_resolved}"
-        )
-    if _overlaps(flagged_resolved, blind_resolved):
-        raise TwinError(
-            f"FLAGGED_TREE resolves to or overlaps BLIND_TREE — refusing to "
-            f"delete {flagged_resolved}, which would destroy or leak into "
-            f"the blind room at {blind_resolved}"
-        )
-
-    # The checks above compare configured paths as strings (case-insensitively
-    # normalised). They cannot see two differently-spelled paths that the
-    # filesystem itself resolves to one physical directory by some other
-    # route — a hardlink, a bind mount, or a symlink — nor a case alias that
-    # somehow slipped past the string comparison. samefile compares device
-    # and inode, so it catches all of those in one check, for whichever of
-    # the three roots already exist. A root that doesn't exist yet can't be
-    # aliased to anything, so _same_file treats that as "not the same file"
-    # rather than raising.
-    for label, a, b in (
-        ("FLAGGED_TREE and the room root", flagged_resolved, room_resolved),
-        ("FLAGGED_TREE and BLIND_TREE", flagged_resolved, blind_resolved),
-        ("BLIND_TREE and the room root", blind_resolved, room_resolved),
-    ):
-        if _same_file(a, b):
-            raise TwinError(
-                f"{label} are the same file on disk (same device and inode) "
-                "even though their configured paths differ — refusing to "
-                f"delete {flagged_resolved}"
-            )
+    # Act on exactly the paths that were checked. Property 1 has just proved
+    # these are the same directories as `room / conf.get(...)`, so this is not
+    # a behaviour change — it removes the gap between the path validated and
+    # the path handed to rmtree.
+    blind_root = resolved["BLIND_TREE"]
+    flagged_root = resolved[SUBJECT_KEY]
+    assert_safe_delete_target(flagged_root, resolved)
 
     if flagged_root.exists():
         shutil.rmtree(flagged_root)

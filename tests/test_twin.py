@@ -1,15 +1,18 @@
 import re
+import unicodedata
 
 import pytest
 
-from synthvdr.roomconf import RoomConf, load_room_conf
+from synthvdr.roomconf import PATH_KEYS, ROOM_ROOT_LABEL, RoomConf, load_room_conf
 from synthvdr.schema import Finding, FindingSet
 from synthvdr.twin import (
+    SUBJECT_KEY,
     TwinError,
     _is_inside,
     _overlaps,
     _same_file,
     annotation_block,
+    assert_safe_delete_target,
     build_flagged_tree,
     derive_twin,
     is_valid_twin,
@@ -482,3 +485,180 @@ def test_overlaps_false_for_two_genuinely_separate_trees(tmp_path):
     b = tmp_path / "flagged"
     assert not _overlaps(a, b)
 
+
+# ---------------------------------------------------------------------------
+# The two live bypasses of the round-3 guard, each asserting the victim file
+# is STILL THERE afterwards — not merely that something raised.
+#
+# Both got through because the round-3 guard reasoned about a hardcoded list
+# of pairs: build_flagged_tree never read KEY_ROOT at all, and the samefile
+# backstop enumerated exactly three pairs. Property 1 (a tree resolves to its
+# literal declared path) and Property 2 (every pair of configured trees is
+# checked, generically) replace that reasoning; these tests pin the two
+# concrete exploits to it.
+# ---------------------------------------------------------------------------
+
+
+def test_build_flagged_tree_refuses_a_flagged_tree_behind_a_symlinked_ancestor(tmp_path):
+    # BLIND_TREE="data-room", KEY_ROOT="_key", FLAGGED_TREE="attack/subdir"
+    # with attack -> _key on disk. The string comparison sees 'attack/subdir'
+    # and '_key' as unrelated trees; the resolved path lands under _key,
+    # where the sanctioned FLAGGED_TREE-under-KEY_ROOT exception then
+    # permits it. Only Property 1 catches this.
+    room, conf = make_room(tmp_path)
+    write_blind(room, "01_corporate/1.1_articles/1.1.1_articles.md", "# Articles\n")
+    (room / "_key" / "subdir").mkdir(parents=True)
+    victim = room / "_key" / "subdir" / "precious.txt"
+    victim.write_text("answer-key material\n")
+    (room / "attack").symlink_to(room / "_key")
+
+    hostile = RoomConf(values={**conf.values, "FLAGGED_TREE": "attack/subdir"}, path=conf.path)
+    findings = FindingSet(findings=[], room="Project Testbed")
+
+    with pytest.raises(TwinError, match="does not resolve to where it says"):
+        build_flagged_tree(room, hostile, findings)
+
+    assert victim.read_text(encoding="utf-8") == "answer-key material\n"
+
+
+def test_build_flagged_tree_refuses_a_unicode_alias_between_key_root_and_flagged_tree(tmp_path):
+    # KEY_ROOT in NFC and FLAGGED_TREE in NFD: different byte strings that
+    # casefold() does not reconcile, the same directory on a normalising
+    # filesystem. Deleting FLAGGED_TREE wipes KEY_ROOT. Only the device/inode
+    # comparison, applied to the FLAGGED_TREE/KEY_ROOT pair the round-3 guard
+    # never looked at, catches this.
+    nfc = unicodedata.normalize("NFC", "café-key")
+    nfd = unicodedata.normalize("NFD", "café-key")
+    assert nfc != nfd, "test assumption broken: NFC and NFD must differ as plain strings"
+
+    room = tmp_path
+    conf_path = room / "room.conf"
+    conf_path.write_text(CONF_TEMPLATE.replace('KEY_ROOT="_key"', f'KEY_ROOT="{nfc}"'))
+    (room / "data-room").mkdir()
+    write_blind(room, "01_corporate/1.1_articles/1.1.1_articles.md", "# Articles\n")
+    (room / nfc).mkdir()
+    if not (room / nfd).exists():
+        pytest.skip("host filesystem does not alias Unicode NFC/NFD spellings")
+    victim = room / nfc / "findings.yaml"
+    victim.write_text("findings: []\n")
+
+    conf = load_room_conf(conf_path)
+    assert not _overlaps(room / nfd, room / nfc), (
+        "test assumption broken: the casefolded string check must not catch "
+        "this on its own, or the test isn't isolating the samefile comparison"
+    )
+    hostile = RoomConf(values={**conf.values, "FLAGGED_TREE": nfd}, path=conf.path)
+    findings = FindingSet(findings=[], room="Project Testbed")
+
+    with pytest.raises(TwinError, match="are the same directory"):
+        build_flagged_tree(room, hostile, findings)
+
+    assert victim.read_text(encoding="utf-8") == "findings: []\n"
+
+
+def test_build_flagged_tree_refuses_a_symlink_planted_after_the_config_was_loaded(tmp_path):
+    # The TOCTOU case, and the reason Property 1 is re-evaluated at build
+    # time rather than trusted from load_room_conf: this conf is entirely
+    # legitimate when it loads, and the redirect appears afterwards.
+    room = tmp_path
+    conf_path = room / "room.conf"
+    conf_path.write_text(CONF_TEMPLATE.replace('FLAGGED_TREE="_key/flagged"', 'FLAGGED_TREE="out/flagged"'))
+    (room / "data-room").mkdir()
+    write_blind(room, "01_corporate/1.1_articles/1.1.1_articles.md", "# Articles\n")
+    (room / "out").mkdir()
+
+    conf = load_room_conf(conf_path)  # clean at load time
+
+    (room / "out").rmdir()
+    (room / "_key" / "flagged").mkdir(parents=True)
+    victim = room / "_key" / "flagged" / "findings.yaml"
+    victim.write_text("findings: []\n")
+    (room / "out").symlink_to(room / "_key")
+
+    findings = FindingSet(findings=[], room="Project Testbed")
+    with pytest.raises(TwinError, match="does not resolve to where it says"):
+        build_flagged_tree(room, conf, findings)
+
+    assert victim.read_text(encoding="utf-8") == "findings: []\n"
+
+
+# ---------------------------------------------------------------------------
+# The rmtree precondition, in isolation. It iterates the resolved tree map
+# rather than a fixed list of pairs, so a path key added to PATH_KEYS is
+# covered here automatically — which is what the parametrisation asserts.
+# ---------------------------------------------------------------------------
+
+
+def _canonical_resolved(tmp_path):
+    return {
+        ROOM_ROOT_LABEL: tmp_path,
+        "BLIND_TREE": tmp_path / "data-room",
+        "FLAGGED_TREE": tmp_path / "_key" / "flagged",
+        "KEY_ROOT": tmp_path / "_key",
+    }
+
+
+def test_delete_precondition_accepts_the_canonical_layout(tmp_path):
+    resolved = _canonical_resolved(tmp_path)
+    assert assert_safe_delete_target(resolved[SUBJECT_KEY], resolved) is None
+
+
+@pytest.mark.parametrize(
+    "label", [k for k in PATH_KEYS if k != SUBJECT_KEY] + [ROOM_ROOT_LABEL]
+)
+def test_delete_precondition_refuses_when_any_other_root_sits_inside_the_target(tmp_path, label):
+    resolved = _canonical_resolved(tmp_path)
+    subject = resolved[SUBJECT_KEY]
+    hostile = {**resolved, label: subject / "victim"}
+    with pytest.raises(TwinError, match=re.escape(label)):
+        assert_safe_delete_target(subject, hostile)
+
+
+@pytest.mark.parametrize(
+    "label", [k for k in PATH_KEYS if k != SUBJECT_KEY] + [ROOM_ROOT_LABEL]
+)
+def test_delete_precondition_refuses_when_any_other_root_is_the_target(tmp_path, label):
+    resolved = _canonical_resolved(tmp_path)
+    subject = resolved[SUBJECT_KEY]
+    hostile = {**resolved, label: subject}
+    with pytest.raises(TwinError, match=re.escape(label)):
+        assert_safe_delete_target(subject, hostile)
+
+
+@pytest.mark.parametrize(
+    "label", [k for k in PATH_KEYS if k != SUBJECT_KEY] + [ROOM_ROOT_LABEL]
+)
+def test_delete_precondition_refuses_a_same_inode_alias_of_the_target(tmp_path, label):
+    # Isolates the device/inode clause from the path-prefix one: NFC and NFD
+    # spellings of one name share an inode but are not prefixes of each
+    # other, casefolded or otherwise, so _is_inside genuinely cannot see this.
+    nfc = unicodedata.normalize("NFC", "café-flagged")
+    nfd = unicodedata.normalize("NFD", "café-flagged")
+    assert nfc != nfd, "test assumption broken: NFC and NFD must differ as plain strings"
+    subject = tmp_path / nfc
+    subject.mkdir()
+    alias = tmp_path / nfd
+    if not alias.exists():
+        pytest.skip("host filesystem does not alias Unicode NFC/NFD spellings")
+
+    resolved = {**_canonical_resolved(tmp_path), SUBJECT_KEY: subject, label: alias}
+    assert not _is_inside(alias, subject), (
+        "test assumption broken: the path-prefix clause must not catch this "
+        "on its own, or the test isn't isolating the same-inode clause"
+    )
+    with pytest.raises(TwinError, match="same directory on disk"):
+        assert_safe_delete_target(subject, resolved)
+
+
+def test_build_flagged_tree_reports_a_missing_path_key_as_a_twin_error(tmp_path):
+    # A RoomConf built by hand can be missing a path key entirely. The guard
+    # must refuse cleanly rather than crashing with a KeyError from inside
+    # the resolver — an unhandled KeyError here would mean the delete is
+    # reached or not depending on where the crash lands.
+    room, conf = make_room(tmp_path)
+    write_blind(room, "01_corporate/1.1_articles/1.1.1_articles.md", "# Articles\n")
+    values = {k: v for k, v in conf.values.items() if k != "KEY_ROOT"}
+    incomplete = RoomConf(values=values, path=conf.path)
+
+    with pytest.raises(TwinError, match="missing key KEY_ROOT"):
+        build_flagged_tree(room, incomplete, FindingSet(findings=[], room="Project Testbed"))

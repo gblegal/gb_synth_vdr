@@ -1,6 +1,16 @@
+import itertools
+import unicodedata
+
 import pytest
 
-from synthvdr.roomconf import RoomConfError, load_room_conf
+from synthvdr.roomconf import (
+    PATH_KEYS,
+    ROOM_ROOT_LABEL,
+    RoomConfError,
+    _casefolded_parts,
+    load_room_conf,
+    resolve_tree_map,
+)
 
 SAMPLE = '''# a comment
 ROOM_CODENAME="Project Testbed"
@@ -213,11 +223,10 @@ def test_flagged_nested_inside_key_root_is_accepted(tmp_path):
 # 'data-room' and 'DATA-ROOM' as the same directory regardless of what OS
 # this check runs on, so the overlap comparison must be case-insensitive
 # unconditionally, not just when the host happens to be case-insensitive.
-# String comparison alone can't see every aliasing route (a hardlink, bind
-# mount, or symlink can also make two differently-spelled paths the same
-# directory) — that residual risk is covered by build_flagged_tree's
-# os.path.samefile backstop in synthvdr/twin.py, not here at the config
-# level, since load_room_conf never touches the filesystem.
+# These cases are load-time only — the directories are never created — so
+# os.path.samefile cannot fire for them, which is what makes them the
+# case-folded comparison's own coverage rather than a second route to the
+# same rejection.
 # ---------------------------------------------------------------------------
 
 
@@ -280,3 +289,198 @@ def test_get_relative_path_rejects_a_value_that_normalises_to_the_room_root(tmp_
     conf = load_room_conf(write(tmp_path, SAMPLE + f'SUBSET_OUT="{bad_value}"\n'))
     with pytest.raises(RoomConfError, match="normalises to the room root"):
         conf.get_relative_path("SUBSET_OUT")
+
+
+# ---------------------------------------------------------------------------
+# Property 1 — a configured tree must live exactly where it says it does.
+#
+#   (room / value).resolve() == room.resolve() / normalised(value)
+#
+# If any component of the path — the final one or any ancestor — is a symlink
+# that redirects, those two differ and the value is rejected. One rule kills
+# the whole symlink class, rather than enumerating the shapes it can take.
+#
+# Every case below points the symlink at a sibling that overlaps nothing, so
+# the pairwise checks in Property 2 have nothing to fire on and only Property
+# 1 can catch it. Both are parametrised over PATH_KEYS, so a path key added
+# later is exercised here automatically.
+# ---------------------------------------------------------------------------
+
+
+def _conf_text_with_key(key, value):
+    text = SAMPLE.replace(_ORIGINAL_PATH_LINE[key], f'{key}="{value}"')
+    assert text != SAMPLE, f"{key} line not found in SAMPLE — fixture out of date"
+    return text
+
+
+@pytest.mark.parametrize("key", PATH_KEYS)
+def test_a_path_key_reached_through_a_symlinked_ancestor_is_rejected(tmp_path, key):
+    # 'redirect' is an ancestor component, not the tree itself: the value
+    # 'redirect/inner' looks like a plain relative path and passes every
+    # string-level check, but lands on <room>/elsewhere/inner.
+    (tmp_path / "elsewhere" / "inner").mkdir(parents=True)
+    (tmp_path / "redirect").symlink_to(tmp_path / "elsewhere")
+
+    with pytest.raises(RoomConfError, match="does not resolve to where it says"):
+        load_room_conf(write(tmp_path, _conf_text_with_key(key, "redirect/inner")))
+
+
+@pytest.mark.parametrize("key", PATH_KEYS)
+def test_a_path_key_that_is_itself_a_symlink_is_rejected(tmp_path, key):
+    # The final component redirecting is the same defect as an ancestor
+    # redirecting, and is caught by the same rule — no special case for it.
+    (tmp_path / "elsewhere").mkdir()
+    (tmp_path / "redirect").symlink_to(tmp_path / "elsewhere")
+
+    with pytest.raises(RoomConfError, match="does not resolve to where it says"):
+        load_room_conf(write(tmp_path, _conf_text_with_key(key, "redirect")))
+
+
+@pytest.mark.parametrize("key", PATH_KEYS)
+def test_a_path_key_whose_symlink_leaves_the_room_is_rejected(tmp_path, key):
+    # The other half of Property 1: the resolved tree must be a proper
+    # subdirectory of the room. Stated on the RESOLVED path rather than on
+    # the spelling of the value, because "looks absolute" is host-specific —
+    # on Windows 'C:\\Windows' and a UNC path are absolute without starting
+    # with '/', so the string checks in _check_relative_path would pass them
+    # and the equality half of Property 1 would too (they resolve to
+    # themselves). Here the same rule is reached on POSIX via a symlink
+    # pointing out of the room.
+    room = tmp_path / "room"
+    room.mkdir()
+    (tmp_path / "outside").mkdir()
+    (room / "redirect").symlink_to(tmp_path / "outside")
+    conf_path = room / "room.conf"
+    conf_path.write_text(_conf_text_with_key(key, "redirect/inner"))
+
+    with pytest.raises(RoomConfError, match="resolves outside the room root"):
+        load_room_conf(conf_path)
+
+
+@pytest.mark.parametrize("key", PATH_KEYS)
+def test_a_path_key_that_symlinks_to_the_room_root_is_rejected(tmp_path, key):
+    room = tmp_path / "room"
+    room.mkdir()
+    (room / "redirect").symlink_to(room)
+    conf_path = room / "room.conf"
+    conf_path.write_text(_conf_text_with_key(key, "redirect"))
+
+    with pytest.raises(RoomConfError, match="room root itself"):
+        load_room_conf(conf_path)
+
+
+@pytest.mark.parametrize(
+    "bad_value, reason",
+    [
+        ("", "is empty"),
+        ("/tmp/x", "is an absolute path"),
+        ("../../escape", r"contains a '\.\.' segment"),
+        (".", "normalises to the room root itself"),
+    ],
+)
+def test_an_unsafe_path_value_is_reported_with_its_specific_reason(tmp_path, bad_value, reason):
+    # Property 1's containment rule would reject all four of these anyway,
+    # since none of them resolves to a proper subdirectory of the room — so
+    # without this test the cheap string checks in _check_relative_path look
+    # like dead code from load_room_conf's point of view. They are not: they
+    # are what turns "this landed somewhere unexpected" into a message naming
+    # the actual mistake, and they are the only validation get_relative_path
+    # has, since it never sees a room to resolve against.
+    conf_text = _conf_text_with_key("FLAGGED_TREE", bad_value)
+    with pytest.raises(RoomConfError, match=reason):
+        load_room_conf(write(tmp_path, conf_text))
+
+
+@pytest.mark.parametrize("key", PATH_KEYS)
+def test_a_path_key_on_a_plain_relative_path_survives_property_one(tmp_path, key):
+    # The positive control: Property 1 must not reject a tree that really
+    # does live where it says, whether or not the directory exists yet.
+    (tmp_path / "elsewhere").mkdir()
+    conf = load_room_conf(write(tmp_path, _conf_text_with_key(key, "elsewhere")))
+    assert conf.get(key) == "elsewhere"
+
+
+# ---------------------------------------------------------------------------
+# Property 2 — every pair of configured trees (plus the room root) must name
+# a distinct directory, checked generically over the key set.
+#
+# The Unicode case is the one that proves the device/inode comparison is
+# load-bearing: NFC 'café-key' and NFD 'café-key' are different byte strings
+# that casefold() does not reconcile (casefold does not normalise Unicode),
+# yet on a normalising filesystem they are one directory. Skipped via a real
+# capability probe — create the NFC name, look for the NFD one — not an
+# os.name guess.
+# ---------------------------------------------------------------------------
+
+
+def _unicode_alias_pair(tmp_path):
+    """(nfc, nfd) spellings of one name, with the NFC directory created.
+    Skips the calling test if this filesystem keeps the two apart."""
+    nfc = unicodedata.normalize("NFC", "café-key")
+    nfd = unicodedata.normalize("NFD", "café-key")
+    assert nfc != nfd, "test assumption broken: NFC and NFD must differ as plain strings"
+    (tmp_path / nfc).mkdir()
+    if not (tmp_path / nfd).exists():
+        pytest.skip("host filesystem does not alias Unicode NFC/NFD spellings")
+    return nfc, nfd
+
+
+def test_unicode_normalisation_alias_between_two_path_keys_is_rejected(tmp_path):
+    nfc, nfd = _unicode_alias_pair(tmp_path)
+    assert _casefolded_parts(tmp_path / nfc) != _casefolded_parts(tmp_path / nfd), (
+        "test assumption broken: the casefolded string comparison must not "
+        "catch this on its own, or the test isn't isolating the samefile check"
+    )
+    conf_text = _conf_text_with_trees("data-room", nfd, nfc)
+
+    with pytest.raises(RoomConfError, match="are the same directory"):
+        load_room_conf(write(tmp_path, conf_text))
+
+
+def test_unicode_alias_is_not_reported_for_two_genuinely_separate_trees(tmp_path):
+    # Positive control for the samefile check: the same filesystem, two
+    # accented names that are genuinely different directories, must load.
+    _unicode_alias_pair(tmp_path)
+    conf_text = _conf_text_with_trees("data-room", "café-flagged", "café-key")
+    conf = load_room_conf(write(tmp_path, conf_text))
+    assert conf.get("KEY_ROOT") == "café-key"
+
+
+# ---------------------------------------------------------------------------
+# Generality: the pairwise machinery must be driven by the key set, not by a
+# hardcoded list of pairs. These two tests read PATH_KEYS directly, so adding
+# a path key without teaching the checkers about it fails here rather than
+# shipping an unguarded key.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_tree_map_covers_every_path_key_and_the_room_root(tmp_path):
+    conf_path = write(tmp_path, SAMPLE)
+    resolved = resolve_tree_map(tmp_path, load_room_conf(conf_path).values)
+    assert set(resolved) == set(PATH_KEYS) | {ROOM_ROOT_LABEL}
+    assert resolved[ROOM_ROOT_LABEL] == tmp_path.resolve()
+
+
+@pytest.mark.parametrize("key_a, key_b", list(itertools.combinations(PATH_KEYS, 2)))
+def test_every_pair_of_path_keys_is_rejected_when_they_name_the_same_tree(
+    tmp_path, key_a, key_b
+):
+    # Built from the key set rather than by restating the pairs: every
+    # unordered pair of path keys is pointed at one shared directory, and
+    # every remaining path key at a tree of its own, so the only thing wrong
+    # with the layout is the pair under test.
+    lines = []
+    for line in SAMPLE.splitlines():
+        key = line.split("=", 1)[0]
+        if key in (key_a, key_b):
+            lines.append(f'{key}="shared-tree"')
+        elif key in PATH_KEYS:
+            lines.append(f'{key}="unrelated-{key.lower()}"')
+        else:
+            lines.append(line)
+    conf_text = "\n".join(lines) + "\n"
+
+    with pytest.raises(RoomConfError) as excinfo:
+        load_room_conf(write(tmp_path, conf_text))
+    message = str(excinfo.value)
+    assert key_a in message and key_b in message, message

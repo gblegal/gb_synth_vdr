@@ -5,11 +5,13 @@ Shell-sourceable KEY="VALUE" so tools/check.sh can source the same file.
 
 from __future__ import annotations
 
+import itertools
+import os
 import posixpath
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Mapping, Sequence, Tuple
 
 REQUIRED_KEYS = (
     "ROOM_CODENAME",
@@ -37,51 +39,74 @@ PATH_KEYS = (
     "KEY_ROOT",
 )
 
+# The room root is not a room.conf key, but it participates in every
+# pairwise comparison as a first-class member of the tree set: no configured
+# tree may BE the room, and every configured tree must live inside it.
+ROOM_ROOT_LABEL = "the room root"
+
+# The single sanctioned overlap between two configured trees, as
+# (inner_key, outer_key). FLAGGED_TREE nested inside KEY_ROOT is the
+# canonical, required layout (KEY_ROOT="_key", FLAGGED_TREE="_key/flagged"):
+# the flagged twin IS answer-key material, and answer-key material lives
+# under KEY_ROOT by this project's Global Constraints. It is safe only
+# because Property 1 (see resolve_tree_map) pins the flagged tree to the
+# literal declared path — it can be under KEY_ROOT, but nowhere else that a
+# symlink might reach. Every other overlap between two configured trees, in
+# either direction, is rejected.
+SANCTIONED_NESTING = ("FLAGGED_TREE", "KEY_ROOT")
+
 
 class RoomConfError(Exception):
     """room.conf is missing, malformed, or missing a required key."""
 
 
-def _segments(value: str) -> List[str]:
-    """The real path segments of `value`, casefolded for a case-insensitive
-    comparison, with '.' components normalised away. Returns [] if `value`
-    normalises to the room root itself (e.g. '.', './', './.'). Callers
-    must already have rejected an absolute value and a raw '..' segment —
-    normalising a value that still contains '..' would silently walk it
-    out of the room instead of catching it.
+def _casefolded_parts(path: Path) -> Tuple[str, ...]:
+    """`path`'s parts, casefolded — unconditionally, not gated on `os.name`
+    or a runtime probe of the host filesystem.
 
-    Casefolding is unconditional, not conditional on the host filesystem:
-    macOS and Windows are case-insensitive by default regardless of what OS
-    this check runs on, so 'data-room' and 'DATA-ROOM' are the same
-    directory there even though they're spelled differently in room.conf —
-    a pairwise-overlap check that compares raw strings would miss that
-    entirely. A room.conf must be rejected or accepted identically no
-    matter which of those filesystems it runs on. This is deliberately
-    over-strict on a case-sensitive filesystem, where two trees differing
-    only in case genuinely are separate — that's the safe direction, and
-    nothing this project generates ever relies on the distinction.
-
-    The returned segments are for structural comparison only (emptiness,
-    containment, equality) — callers needing the original spelling (e.g.
-    for an error message) must use the raw value, not this.
+    macOS and Windows treat 'data-room' and 'DATA-ROOM' as one directory,
+    and `Path.resolve()` does NOT rewrite either spelling to match what is
+    actually on disk, so a raw string comparison of two resolved paths sees
+    two unrelated trees where the filesystem sees one. Folding
+    unconditionally means the same room.conf is accepted or rejected
+    identically on a case-sensitive host and a case-insensitive one. That is
+    deliberately over-strict on Linux, where two trees differing only in
+    case genuinely are separate — the safe direction, and nothing this
+    project generates relies on the distinction.
     """
-    normalised = posixpath.normpath(value)
-    if normalised == ".":
-        return []
-    return [segment.casefold() for segment in normalised.split("/")]
+    return tuple(part.casefold() for part in path.parts)
 
 
-def _is_inside_or_equal(inner: List[str], outer: List[str]) -> bool:
-    """True if `inner` names the same tree as `outer`, or a tree nested
-    under it. Segments must already be casefolded (see _segments)."""
-    return inner[: len(outer)] == outer
+def _is_inside(inner: Path, outer: Path) -> bool:
+    """True if `inner` IS `outer`, or is nested under it, compared
+    case-insensitively (see _casefolded_parts). Both must already be
+    resolved — absolute and symlink-free."""
+    inner_parts = _casefolded_parts(inner)
+    outer_parts = _casefolded_parts(outer)
+    return inner_parts[: len(outer_parts)] == outer_parts
 
 
-def _overlaps(a: List[str], b: List[str]) -> bool:
-    """True if `a` and `b` name the same tree, or either is nested under
-    the other — in other words, they are not two genuinely separate trees.
-    Segments must already be casefolded (see _segments)."""
-    return _is_inside_or_equal(a, b) or _is_inside_or_equal(b, a)
+def _overlaps(a: Path, b: Path) -> bool:
+    """True if `a` and `b` name the same directory, or either is nested
+    under the other — they are not two genuinely separate trees by path
+    alone. This is a string comparison: it cannot see two differently
+    *spelled* paths that the filesystem itself resolves to one directory by
+    a route other than case (Unicode normalisation, a hardlink, a bind
+    mount). That is what _same_file is for."""
+    return _is_inside(a, b) or _is_inside(b, a)
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """True if `a` and `b` are the same directory entry on disk — same
+    device and inode, per os.path.samefile. Catches every aliasing route a
+    path-string comparison cannot see at all, without having to enumerate
+    which one is in play. False (not an error) if either path does not
+    exist: nothing can be aliased to a path with nothing there, and nothing
+    that does not exist can be destroyed."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
 
 
 def _check_relative_path(path: Path, key: str, value: str) -> None:
@@ -107,59 +132,129 @@ def _check_relative_path(path: Path, key: str, value: str) -> None:
             f"{path}: {key} {value!r} contains a '..' segment — "
             "it must stay inside the room root"
         )
-    if not _segments(value):
+    if posixpath.normpath(value) == ".":
         raise RoomConfError(
             f"{path}: {key} {value!r} normalises to the room root itself — "
             "it must name a real subdirectory of the room"
         )
 
 
-def _check_tree_layout(path: Path, values: Dict[str, str]) -> None:
-    """BLIND_TREE, FLAGGED_TREE and KEY_ROOT must sit far enough apart that
-    build_flagged_tree's delete-and-rebuild of FLAGGED_TREE can never
-    destroy or leak into the wrong tree.
+def resolve_tree_map(
+    room: Path,
+    values: Mapping[str, str],
+    keys: Sequence[str] = PATH_KEYS,
+    where: Path | None = None,
+) -> Dict[str, Path]:
+    """Property 1 — a configured tree must live exactly where it says it does.
 
-    BLIND_TREE must not equal, contain, or be contained by either of the
-    other two: overlapping with FLAGGED_TREE means rebuilding the flagged
-    tree could delete the blind room handed to the tool under test, or —
-    if FLAGGED_TREE is nested inside BLIND_TREE — plant answer-key
-    material inside it, which is a leak, not just a delete. Overlapping
-    with KEY_ROOT means rebuilding the flagged tree could delete other
-    answer-key material (findings.yaml, the subset manifest, ...) that
-    happens to live above it.
+    Returns {ROOM_ROOT_LABEL: <resolved room>, KEY: <resolved tree>, ...}
+    for every key in `keys`, having proved for each that
 
-    FLAGGED_TREE nested *inside* KEY_ROOT is the intended layout, not a
-    hazard — the flagged twin is answer-key material, and answer-key
-    material lives under KEY_ROOT by project convention (e.g.
-    KEY_ROOT="_key", FLAGGED_TREE="_key/flagged"). The dangerous direction
-    is the reverse: KEY_ROOT at or under FLAGGED_TREE, which would mean
-    rebuilding the flagged tree deletes KEY_ROOT — and everything else
-    under it — right along with it.
+        (room / value).resolve() is a proper subdirectory of room.resolve()
+        (room / value).resolve() == room.resolve() / normalised(value)
+
+    If any component of the configured path is a symlink that redirects —
+    the final component or any ancestor — those two differ, and the value is
+    rejected. That kills the whole symlink class in one rule rather than
+    enumerating the shapes it can take, and it needs no separate handling
+    for "the link points outside the room" versus "the link points at
+    another configured tree": either way the tree is not where it says it
+    is, so it is not usable.
+
+    The containment half is not implied by the string checks in
+    _check_relative_path, which are POSIX-shaped: on Windows a value like
+    'C:\\Windows' or a UNC path is absolute without starting with '/', so it
+    passes those and then resolves cleanly to itself — equal to its own
+    declared path, and nowhere near the room. Requiring containment of the
+    RESOLVED path states the rule in a way that does not depend on knowing
+    what an absolute path looks like on the host.
+
+    This is the only check here that touches the filesystem, and it is why
+    it must run at build time as well as at load time: a symlink planted
+    after load_room_conf returned would otherwise slip straight through.
     """
-    blind = _segments(values["BLIND_TREE"])
-    flagged = _segments(values["FLAGGED_TREE"])
-    key = _segments(values["KEY_ROOT"])
+    where = room if where is None else where
+    room_resolved = room.resolve()
+    resolved: Dict[str, Path] = {ROOM_ROOT_LABEL: room_resolved}
+    for key in keys:
+        if key not in values:
+            raise RoomConfError(f"{where}: missing key {key}")
+        value = values[key]
+        _check_relative_path(where, key, value)
+        declared = room_resolved.joinpath(*posixpath.normpath(value).split("/"))
+        actual = (room / value).resolve()
+        if not _is_inside(actual, room_resolved) or _casefolded_parts(actual) == _casefolded_parts(
+            room_resolved
+        ):
+            raise RoomConfError(
+                f"{where}: {key} {value!r} resolves outside the room root, or "
+                f"to the room root itself — it lands on {actual}, and the room "
+                f"is {room_resolved}. Every configured tree must be a proper "
+                "subdirectory of the room."
+            )
+        if actual != declared:
+            raise RoomConfError(
+                f"{where}: {key} {value!r} does not resolve to where it says "
+                f"it lives — it lands on {actual}, not {declared}. Some "
+                "component of the path is a symlink that redirects it; a "
+                "configured tree must be the literal relative path under the "
+                "room root, with no component redirected elsewhere."
+            )
+        resolved[key] = declared
+    return resolved
 
-    if _overlaps(blind, flagged):
+
+def check_tree_identity(
+    room: Path,
+    values: Mapping[str, str],
+    keys: Sequence[str] = PATH_KEYS,
+    where: Path | None = None,
+) -> Dict[str, Path]:
+    """Properties 1 and 2 together. Returns the resolved tree map.
+
+    Property 2 — every pair is checked, generically. The pairs come from
+    itertools.combinations over the resolved map, never from a hardcoded
+    list, so a path key added to PATH_KEYS participates in every comparison
+    automatically with no second place to remember to update:
+
+      * two trees that are the same directory — by casefolded path, or by
+        device and inode via os.path.samefile — are always rejected,
+        including a tree that is the room root itself;
+      * one tree nested inside another is rejected, EXCEPT where the outer
+        member is the room root (every tree must live in the room) or the
+        pair is SANCTIONED_NESTING (FLAGGED_TREE inside KEY_ROOT).
+
+    Overlap in either direction is destructive or leaky: build_flagged_tree
+    deletes and rebuilds FLAGGED_TREE, so a tree at or under it is destroyed,
+    and a tree above it has answer-key material planted inside it.
+    """
+    where = room if where is None else where
+    resolved = resolve_tree_map(room, values, keys, where)
+    for (label_a, path_a), (label_b, path_b) in itertools.combinations(resolved.items(), 2):
+        if _casefolded_parts(path_a) == _casefolded_parts(path_b) or _same_file(path_a, path_b):
+            raise RoomConfError(
+                f"{where}: {label_a} ({path_a}) and {label_b} ({path_b}) are "
+                "the same directory — every configured tree must be distinct "
+                "from every other and from the room root"
+            )
+        if _is_inside(path_a, path_b):
+            inner, outer = (label_a, path_a), (label_b, path_b)
+        elif _is_inside(path_b, path_a):
+            inner, outer = (label_b, path_b), (label_a, path_a)
+        else:
+            continue
+        if outer[0] == ROOM_ROOT_LABEL:
+            continue
+        if (inner[0], outer[0]) == SANCTIONED_NESTING:
+            continue
         raise RoomConfError(
-            f"{path}: BLIND_TREE {values['BLIND_TREE']!r} and FLAGGED_TREE "
-            f"{values['FLAGGED_TREE']!r} must be separate trees — neither "
-            "may equal, contain, or be contained by the other"
+            f"{where}: {inner[0]} ({inner[1]}) sits inside {outer[0]} "
+            f"({outer[1]}) — rebuilding the flagged tree deletes everything "
+            "under it and writes answer-key material above it, so no "
+            "configured tree may contain another (the one exception is "
+            f"{SANCTIONED_NESTING[0]} inside {SANCTIONED_NESTING[1]})"
         )
-    if _overlaps(blind, key):
-        raise RoomConfError(
-            f"{path}: BLIND_TREE {values['BLIND_TREE']!r} and KEY_ROOT "
-            f"{values['KEY_ROOT']!r} must be separate trees — neither may "
-            "equal, contain, or be contained by the other"
-        )
-    if _is_inside_or_equal(key, flagged):
-        raise RoomConfError(
-            f"{path}: KEY_ROOT {values['KEY_ROOT']!r} must not equal or sit "
-            f"inside FLAGGED_TREE {values['FLAGGED_TREE']!r} — rebuilding "
-            "the flagged tree would delete the rest of the room's "
-            "answer-key material along with it (FLAGGED_TREE nested inside "
-            "KEY_ROOT is fine; the reverse is not)"
-        )
+    return resolved
 
 
 def _parse_line(line: str) -> tuple[str, str] | None:
@@ -275,8 +370,11 @@ def load_room_conf(path: Path) -> RoomConf:
     if missing:
         raise RoomConfError(f"{path}: missing required keys: {', '.join(missing)}")
 
-    for key in PATH_KEYS:
-        _check_relative_path(path, key, values[key])
-    _check_tree_layout(path, values)
+    # Property 1 + Property 2 over every path-valued key at once. The room
+    # root is path.parent — room.conf sits at the top of the room it
+    # describes. This is a load-time snapshot: build_flagged_tree runs the
+    # identical check again against the room it is actually handed, because
+    # a symlink planted between the two would otherwise go unseen.
+    check_tree_identity(path.parent, values, PATH_KEYS, path)
 
     return RoomConf(values=values, path=path)
