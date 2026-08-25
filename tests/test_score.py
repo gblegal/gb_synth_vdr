@@ -33,14 +33,18 @@ import pytest
 from synthvdr.schema import SEVERITIES, Distractor, Finding, FindingSet
 from synthvdr.score import (
     Adjudication,
+    AdjudicationError,
     ProvenanceError,
     ToolFinding,
     ToolOutput,
     check_provenance,
+    load_adjudications,
+    load_adjudications_for_room,
     load_tool_output,
     prematch,
     render_scorecard,
     score,
+    validate_adjudications,
 )
 
 SRC = "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md"
@@ -392,3 +396,185 @@ def test_render_scorecard_is_byte_identical_across_processes_with_different_hash
     assert first == second
     assert "DX-1" in first and "DX-2" in first and "DX-3" in first
     assert "ENV-1" in first and "ENV-2" in first
+
+
+# --- adjudications: auto-load, validate, and take precedence -----------------
+
+
+def test_load_adjudications_parses_a_well_formed_file(tmp_path):
+    path = tmp_path / "adjudications.yaml"
+    path.write_text(
+        "adjudications:\n"
+        "  - tool_index: 4\n"
+        "    finding_id: EMP-2\n"
+        "    reason: \"clear\"\n"
+        "  - tool_index: 7\n"
+        "    finding_id: null\n"
+        "    reason: \"matches nothing\"\n",
+        encoding="utf-8",
+    )
+    loaded = load_adjudications(path)
+    assert loaded == [
+        Adjudication(4, "EMP-2", "clear"),
+        Adjudication(7, None, "matches nothing"),
+    ]
+
+
+def test_load_adjudications_rejects_invalid_yaml(tmp_path):
+    path = tmp_path / "adjudications.yaml"
+    path.write_text("adjudications: [this is not: a proper: mapping list\n", encoding="utf-8")
+    with pytest.raises(AdjudicationError):
+        load_adjudications(path)
+
+
+def test_load_adjudications_rejects_a_missing_top_level_key(tmp_path):
+    path = tmp_path / "adjudications.yaml"
+    path.write_text("not_adjudications: []\n", encoding="utf-8")
+    with pytest.raises(AdjudicationError):
+        load_adjudications(path)
+
+
+def test_load_adjudications_rejects_a_row_missing_finding_id(tmp_path):
+    path = tmp_path / "adjudications.yaml"
+    path.write_text(
+        "adjudications:\n  - tool_index: 0\n    reason: \"no finding_id key at all\"\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(AdjudicationError):
+        load_adjudications(path)
+
+
+def test_validate_adjudications_rejects_an_out_of_range_tool_index():
+    out = output(ToolFinding("Something", "high", [], "x"))
+    bad = [Adjudication(5, "EMP-2", "way out of range")]
+    with pytest.raises(AdjudicationError) as excinfo:
+        validate_adjudications(bad, out, findings())
+    assert "5" in str(excinfo.value)
+
+
+def test_validate_adjudications_rejects_an_unknown_finding_id():
+    out = output(ToolFinding("Something", "high", [], "x"))
+    bad = [Adjudication(0, "NOPE-9", "not a real finding id")]
+    with pytest.raises(AdjudicationError) as excinfo:
+        validate_adjudications(bad, out, findings())
+    assert "NOPE-9" in str(excinfo.value)
+
+
+def test_validate_adjudications_rejects_a_duplicate_tool_index():
+    out = output(
+        ToolFinding("Something", "high", [], "x"),
+    )
+    bad = [
+        Adjudication(0, "ENV-1", "first call"),
+        Adjudication(0, "EMP-2", "second call, contradicts the first"),
+    ]
+    with pytest.raises(AdjudicationError):
+        validate_adjudications(bad, out, findings())
+
+
+def test_validate_adjudications_accepts_a_well_formed_confirmed_non_match():
+    out = output(ToolFinding("Something", "high", [], "x"))
+    ok = [Adjudication(0, None, "matches nothing")]
+    validate_adjudications(ok, out, findings())  # must not raise
+
+
+def test_load_adjudications_for_room_reports_no_file_distinctly_from_zero_applied(tmp_path):
+    out = output(ToolFinding("Something", "high", [], "x"))
+    loaded, summary = load_adjudications_for_room(tmp_path, out, findings())
+    assert loaded == []
+    assert summary.applied == 0
+    assert "no" in summary.detail.lower()
+    assert "adjudications.yaml" in summary.detail
+
+
+def test_load_adjudications_for_room_reports_the_count_applied(tmp_path):
+    key = tmp_path / "_key"
+    key.mkdir()
+    (key / "adjudications.yaml").write_text(
+        "adjudications:\n  - tool_index: 0\n    finding_id: EMP-2\n    reason: \"clear\"\n",
+        encoding="utf-8",
+    )
+    out = output(ToolFinding("Something", "medium", [], "misclassified contractors"))
+    loaded, summary = load_adjudications_for_room(tmp_path, out, findings())
+    assert loaded == [Adjudication(0, "EMP-2", "clear")]
+    assert summary.applied == 1
+    assert "1" in summary.detail
+
+
+def test_load_adjudications_for_room_propagates_a_malformed_file_loudly(tmp_path):
+    key = tmp_path / "_key"
+    key.mkdir()
+    (key / "adjudications.yaml").write_text("not: [valid, adjudications, shape\n", encoding="utf-8")
+    out = output(ToolFinding("Something", "high", [], "x"))
+    with pytest.raises(AdjudicationError):
+        load_adjudications_for_room(tmp_path, out, findings())
+
+
+def test_load_adjudications_for_room_propagates_an_unreconcilable_entry_loudly(tmp_path):
+    key = tmp_path / "_key"
+    key.mkdir()
+    (key / "adjudications.yaml").write_text(
+        "adjudications:\n  - tool_index: 99\n    finding_id: EMP-2\n    reason: \"bad index\"\n",
+        encoding="utf-8",
+    )
+    out = output(ToolFinding("Something", "high", [], "x"))
+    with pytest.raises(AdjudicationError):
+        load_adjudications_for_room(tmp_path, out, findings())
+
+
+def test_adjudication_takes_precedence_over_a_conflicting_prematch():
+    # SRC would ordinarily prematch to ENV-1; an adjudicator overriding
+    # that call must win.
+    out = output(ToolFinding("Land issue", "critical", [SRC], "x"))
+    card = score(out, findings(), distractors(), adjudications=[Adjudication(0, "EMP-2", "corrected")])
+    assert card.hit_table == [("ENV-1", "critical", False), ("EMP-2", "medium", True)]
+
+
+def test_adjudication_of_none_removes_an_existing_prematch():
+    # An adjudicator can override a pre-match to say it is actually not a
+    # real match — this must remove the pre-match, not be ignored.
+    out = output(ToolFinding("Land issue", "critical", [SRC], "x"))
+    card = score(out, findings(), distractors(), adjudications=[Adjudication(0, None, "false positive")])
+    assert card.hit_table == [("ENV-1", "critical", False), ("EMP-2", "medium", False)]
+    assert card.recall == 0.0
+
+
+def test_scorecard_renders_the_adjudication_summary_when_supplied(tmp_path):
+    out = output(ToolFinding("Something", "medium", [], "misclassified contractors"))
+    adjudications = [Adjudication(0, "EMP-2", "clear")]
+    card = score(out, findings(), distractors(), adjudications=adjudications)
+    _, summary = load_adjudications_for_room(tmp_path, out, findings())  # no file: "0 applied"
+    text = render_scorecard(card, out, findings(), adjudication_summary=summary)
+    assert "Adjudications:" in text
+    assert "no" in text.lower()
+
+
+# --- a genuine zero recall must not read the same as "nothing could be matched" -
+
+
+def test_provisional_recall_is_marked_distinctly_from_a_confirmed_zero():
+    """This is the exact scenario the coordinator asked to confirm: when
+    prematch matches nothing and nothing has been adjudicated yet, recall
+    is 0.0 — but so is a fully-adjudicated run where every report was
+    positively confirmed to match nothing. Scorecard.unadjudicated is what
+    tells them apart, and render_scorecard must say so, not just carry the
+    field silently.
+    """
+    out = output(ToolFinding("Something", "high", [], "no documents cited"))
+
+    unresolved_card = score(out, findings(), distractors())
+    assert unresolved_card.recall == 0.0
+    assert unresolved_card.unadjudicated == [0]
+    unresolved_text = render_scorecard(unresolved_card, out, findings())
+    assert "provisional" in unresolved_text.lower()
+
+    confirmed_card = score(
+        out, findings(), distractors(), adjudications=[Adjudication(0, None, "confirmed non-match")]
+    )
+    assert confirmed_card.recall == 0.0
+    assert confirmed_card.unadjudicated == []
+    confirmed_text = render_scorecard(confirmed_card, out, findings())
+    assert "provisional" not in confirmed_text.lower()
+
+    # Same numeric recall, different rendered text — that is the point.
+    assert unresolved_text != confirmed_text

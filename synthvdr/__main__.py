@@ -8,14 +8,24 @@ package with its own `__main__.py`; this file only matters for `python -m
 synthvdr` directly. The two CLIs do not share process, argv, or exit-code
 conventions beyond the general shape borrowed below.
 
+`_key/adjudications.yaml` is auto-loaded from the room, the same way
+findings.yaml and distractors.yaml already are — there is no --adjudications
+flag, deliberately, so there is only one convention for how an answer-key
+artefact reaches this CLI. Applied only to the primary tool output being
+scored, never to --baseline: adjudications reference tool_index positions
+in one specific ToolOutput.findings list, and a baseline run is ordinarily a
+different tool output entirely.
+
 Exit codes: 0 on success — including a run whose provenance could not be
 verified, because the usual reason `_key/manifest.json` is missing is that
 this room has not been through /vdr-package yet, and that is reported
 plainly inside the rendered scorecard rather than being treated as a
 failure. 2 if room.conf or the answer key could not be loaded, if the tool
-output (or --baseline file) could not be read or parsed, or if the tool
+output (or --baseline file) could not be read or parsed, if the tool
 output's room_hash provably names a different room than the one being
-scored (synthvdr.score.ProvenanceError) — grouped with the other
+scored (synthvdr.score.ProvenanceError), or if `_key/adjudications.yaml`
+exists but is malformed or cannot be reconciled against this run
+(synthvdr.score.AdjudicationError) — grouped with the other
 could-not-even-run failures, not with a scoring result, because in every
 one of these cases no trustworthy scorecard was produced at all.
 """
@@ -29,10 +39,12 @@ from pathlib import Path
 from .roomconf import RoomConfError, load_room_conf
 from .schema import FindingSet, SchemaError, load_distractors, load_findings
 from .score import (
+    AdjudicationError,
     ProvenanceError,
     ToolOutput,
     check_provenance,
     diff_scorecards,
+    load_adjudications_for_room,
     load_tool_output,
     render_scorecard,
     score,
@@ -77,8 +89,18 @@ def _run_score(args: argparse.Namespace) -> int:
         print(f"synthvdr score: {exc}".replace("\n", " "), file=sys.stderr)
         return 2
 
-    card = score(output, findings, distractors)
-    print(render_scorecard(card, output, findings, provenance=provenance))
+    try:
+        adjudications, adjudication_summary = load_adjudications_for_room(args.room, output, findings)
+    except AdjudicationError as exc:
+        print(f"synthvdr score: {exc}".replace("\n", " "), file=sys.stderr)
+        return 2
+
+    card = score(output, findings, distractors, adjudications=adjudications)
+    print(
+        render_scorecard(
+            card, output, findings, provenance=provenance, adjudication_summary=adjudication_summary
+        )
+    )
 
     if args.baseline is not None:
         baseline_output, error = _load_output(args.baseline)

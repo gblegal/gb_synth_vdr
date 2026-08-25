@@ -16,6 +16,26 @@ NOT treated as a mismatch — /vdr-package, which writes the manifest, is a
 later step in this project's build order, so "no manifest yet" is the normal
 case today. That path scores normally but is reported UNVERIFIED, never
 silently as if it had been checked.
+
+Adjudications. `_key/adjudications.yaml` is auto-loaded from the room by the
+CLI when present — there is no flag for it, because every other answer-key
+artefact (findings.yaml, distractors.yaml) is read the same way. Absence is
+normal (adjudication is a later step in the pipeline) and is reported as "0
+adjudications applied", distinctly from a file that exists and applied N, so
+a silent zero is never mistaken for "there was nothing to load". A file that
+exists but fails to parse, or that names a tool_index outside the tool
+output or a finding_id absent from the answer key, is always an error
+(AdjudicationError) — never silently treated as empty or dropped, because a
+scorecard rendered without a real adjudication is missing a match it was
+supposed to have.
+
+A recall of 0.0 does not by itself mean "nothing could be matched" — it is
+also what a fully-adjudicated run reports when every report was positively
+confirmed to match nothing. Scorecard.unadjudicated is what tells the two
+apart: non-empty means some reports are still unresolved and could still
+raise recall once adjudicated, so render_scorecard marks the Recall line and
+the reported findings themselves as provisional in that case; empty means
+every report was resolved one way or the other, and the number is final.
 """
 
 from __future__ import annotations
@@ -25,6 +45,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
+
+import yaml
 
 from .schema import SEVERITIES, Distractor, FindingSet
 
@@ -143,6 +165,141 @@ def check_provenance(room: Path, output: ToolOutput) -> ProvenanceStatus:
     )
 
 
+class AdjudicationError(Exception):
+    """`_key/adjudications.yaml` is malformed, or an entry cannot be
+    reconciled against the tool output or the answer key it is meant to
+    apply to. Always raised, never swallowed into an empty adjudication
+    list — a malformed or unreconcilable file means the scorecard is
+    missing matches it was supposed to have, which is a worse failure mode
+    than refusing to score at all.
+    """
+
+
+@dataclass(frozen=True)
+class AdjudicationSummary:
+    """What auto-loading `_key/adjudications.yaml` did, for rendering.
+
+    applied is the number of adjudications actually passed to score() — 0
+    both when the file is absent and when it is present but empty, but
+    detail always distinguishes the two in words, so a silent zero is never
+    mistaken for "there was nothing to load".
+    """
+
+    applied: int
+    detail: str
+
+
+_ADJUDICATIONS_RELATIVE_PATH = Path("_key") / "adjudications.yaml"
+
+
+def load_adjudications(path: Path) -> List[Adjudication]:
+    """Parse `_key/adjudications.yaml`.
+
+    Raises AdjudicationError on anything that is not a well-formed list of
+    {tool_index, finding_id, reason} rows. A missing tool_index or reason,
+    or a tool_index/finding_id of the wrong type, is a shape error caught
+    here; whether tool_index and finding_id actually resolve against a
+    specific run is checked separately by validate_adjudications, since
+    that needs the ToolOutput and FindingSet this file is being applied to.
+    """
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise AdjudicationError(f"{path}: could not be read as YAML — {exc}") from exc
+    doc = raw or {}
+    if not isinstance(doc, dict) or "adjudications" not in doc:
+        raise AdjudicationError(f"{path}: missing required top-level key 'adjudications'")
+    rows = doc["adjudications"]
+    if not isinstance(rows, list):
+        raise AdjudicationError(f"{path}: 'adjudications' must be a list")
+
+    result: List[Adjudication] = []
+    for index, row in enumerate(rows):
+        context = f"{path}: adjudications[{index}]"
+        if not isinstance(row, dict):
+            raise AdjudicationError(f"{context} is not a mapping — got {type(row).__name__}")
+        if "tool_index" not in row:
+            raise AdjudicationError(f"{context}: missing required field 'tool_index'")
+        tool_index = row["tool_index"]
+        if not isinstance(tool_index, int) or isinstance(tool_index, bool):
+            raise AdjudicationError(f"{context}: tool_index must be an integer, got {tool_index!r}")
+        if "finding_id" not in row:
+            raise AdjudicationError(
+                f"{context}: missing required field 'finding_id' — use null for a confirmed "
+                "non-match, not an absent key"
+            )
+        finding_id = row["finding_id"]
+        if finding_id is not None and not isinstance(finding_id, str):
+            raise AdjudicationError(f"{context}: finding_id must be a string or null, got {finding_id!r}")
+        if "reason" not in row:
+            raise AdjudicationError(f"{context}: missing required field 'reason'")
+        result.append(Adjudication(tool_index=tool_index, finding_id=finding_id, reason=row["reason"]))
+    return result
+
+
+def validate_adjudications(
+    adjudications: Sequence[Adjudication],
+    output: ToolOutput,
+    findings: FindingSet,
+    source: str = "adjudications",
+) -> None:
+    """Cross-check every adjudication against the specific tool output and
+    answer key it is meant to score. A tool_index outside the reported
+    findings, a finding_id absent from the answer key, or two adjudications
+    naming the same tool_index (one would silently override the other in
+    score()) are all errors naming the offending entry — none of them may
+    be silently dropped, because a dropped adjudication is a silently
+    wrong score.
+    """
+    known_ids = set(findings.by_id)
+    seen: Dict[int, Optional[str]] = {}
+    for adjudication in adjudications:
+        if not (0 <= adjudication.tool_index < len(output.findings)):
+            raise AdjudicationError(
+                f"{source}: adjudication tool_index {adjudication.tool_index} is out of range — "
+                f"the tool output has {len(output.findings)} finding(s) "
+                f"(valid indices: 0..{len(output.findings) - 1})"
+            )
+        if adjudication.finding_id is not None and adjudication.finding_id not in known_ids:
+            raise AdjudicationError(
+                f"{source}: adjudication for tool_index {adjudication.tool_index} names "
+                f"finding_id {adjudication.finding_id!r}, which does not exist in the answer key"
+            )
+        if adjudication.tool_index in seen:
+            raise AdjudicationError(
+                f"{source}: tool_index {adjudication.tool_index} is adjudicated more than once "
+                f"({seen[adjudication.tool_index]!r} and {adjudication.finding_id!r}) — one of "
+                "these would silently override the other"
+            )
+        seen[adjudication.tool_index] = adjudication.finding_id
+
+
+def load_adjudications_for_room(
+    room: Path, output: ToolOutput, findings: FindingSet
+) -> Tuple[List[Adjudication], AdjudicationSummary]:
+    """Auto-load `_key/adjudications.yaml` from `room` if it exists.
+
+    No file is the normal case today (adjudication is a later step in the
+    pipeline) and is not a warning — it returns an empty adjudication list
+    with a summary that says plainly that there was no file to load, rather
+    than the same "0 applied" a present-but-empty file would also produce.
+    A present file that is malformed, or that cannot be reconciled against
+    `output`/`findings`, raises AdjudicationError; it is never silently
+    treated as "no adjudications".
+    """
+    path = room / _ADJUDICATIONS_RELATIVE_PATH
+    if not path.is_file():
+        return [], AdjudicationSummary(
+            0, f"no {_ADJUDICATIONS_RELATIVE_PATH} found in this room — 0 adjudications applied"
+        )
+    adjudications = load_adjudications(path)
+    validate_adjudications(adjudications, output, findings, source=str(path))
+    return adjudications, AdjudicationSummary(
+        len(adjudications),
+        f"{len(adjudications)} adjudication(s) applied from {_ADJUDICATIONS_RELATIVE_PATH}",
+    )
+
+
 _MD_FINDING = re.compile(r"^#{2,4}\s*(.+)$", re.MULTILINE)
 _MD_PATH = re.compile(r"`([\w./-]+\.(?:md|csv|pdf|docx))`")
 _MD_SEVERITY = re.compile(r"\b(critical|high|medium|low)\b", re.IGNORECASE)
@@ -215,9 +372,16 @@ def score(
 ) -> Scorecard:
     matched, unmatched = prematch(output, findings)
     adjudicated = {a.tool_index: a.finding_id for a in adjudications}
+    # Adjudications take precedence over the deterministic pre-match where
+    # both apply — in either direction. A finding_id assigns or reassigns
+    # the match for that index; None is a positive confirmation that the
+    # index matches nothing, which must be able to remove a pre-match too,
+    # not just decline to add one.
     for index, finding_id in adjudicated.items():
         if finding_id:
             matched[index] = finding_id
+        else:
+            matched.pop(index, None)
     still_unmatched = [i for i in unmatched if i not in adjudicated]
 
     distractor_docs = {d.location: d.id for d in distractors}
@@ -266,13 +430,18 @@ def render_scorecard(
     output: ToolOutput,
     findings: FindingSet,
     provenance: Optional[ProvenanceStatus] = None,
+    adjudication_summary: Optional[AdjudicationSummary] = None,
 ) -> str:
+    provisional = bool(card.unadjudicated)
     lines = [f"# Scorecard — {output.tool}", ""]
     if provenance is not None:
         marker = "verified" if provenance.verified else "UNVERIFIED"
         lines += [f"- **Provenance: {marker}** — {provenance.detail}", ""]
+    if adjudication_summary is not None:
+        lines += [f"- **Adjudications:** {adjudication_summary.detail}", ""]
     lines += [
-        f"- **Recall:** {card.recall:.0%} ({len(findings.findings) - len(card.misses)}/{len(findings.findings)})",
+        f"- **Recall:** {card.recall:.0%} ({len(findings.findings) - len(card.misses)}/{len(findings.findings)})"
+        + (" — provisional, pending adjudication" if provisional else ""),
         f"- **Precision:** {card.precision:.0%}",
         f"- **False alarms (distractors reported):** {len(card.false_alarms)}"
         + (f" — {', '.join(card.false_alarms)}" if card.false_alarms else ""),
@@ -290,11 +459,13 @@ def render_scorecard(
     lines += ["", "## Per-finding result", "", "| Finding | Severity | Result |", "|---|---|---|"]
     for finding_id, severity, hit in card.hit_table:
         lines.append(f"| {finding_id} | {severity} | {'hit' if hit else 'miss'} |")
-    if card.unadjudicated:
+    if provisional:
         lines += [
             "",
             f"**{len(card.unadjudicated)} reported findings cited no known document and were not "
-            "adjudicated.** They count against precision and are listed for review.",
+            "adjudicated.** They count against precision as reported, and could still raise "
+            "recall above if adjudicated to a currently-missed finding — the recall and "
+            "precision above are provisional until they are resolved, not a final score.",
         ]
     lines.append("")
     return "\n".join(lines)

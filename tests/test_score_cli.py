@@ -53,6 +53,14 @@ findings:
     source: {SRC}
     location: Table 4
     substance: estimate exceeds provision
+  - id: EMP-2
+    title: Contractors misclassified
+    severity: medium
+    workstream: employment
+    multi_document: false
+    source: 09_employment/9.1_contracts/9.1.4_consultancy.md
+    location: clause 3
+    substance: misclassification
 """
 
 DISTRACTORS_YAML = "distractors: []\n"
@@ -85,6 +93,15 @@ def write_output(room, name="out.json", room_hash="", documents=None, tool="acme
     return path
 
 
+def write_multi_output(room, name, findings_rows, room_hash="", tool="acme/1.0"):
+    """Like write_output, but for tests that need more than one reported
+    finding — e.g. so tool_index 1 exists for an adjudication to target.
+    """
+    path = room / name
+    path.write_text(json.dumps({"tool": tool, "room_hash": room_hash, "findings": findings_rows}), encoding="utf-8")
+    return path
+
+
 def write_manifest(room, content_hash):
     (room / "_key" / "manifest.json").write_text(
         json.dumps(
@@ -92,6 +109,10 @@ def write_manifest(room, content_hash):
         ),
         encoding="utf-8",
     )
+
+
+def write_adjudications(room, text):
+    (room / "_key" / "adjudications.yaml").write_text(text, encoding="utf-8")
 
 
 # --- provenance wired into the CLI --------------------------------------------
@@ -212,3 +233,72 @@ def test_python_dash_m_synthvdr_dot_qa_still_runs_the_qa_cli_unchanged(room):
     assert "Traceback" not in result.stderr
     assert "QA check" in result.stdout
     assert "Scorecard" not in result.stdout
+
+
+# --- adjudications: auto-loaded from the room, no flag ------------------------
+
+
+def test_cli_reports_no_adjudications_file_distinctly_from_zero_applied(room, capsys):
+    out_path = write_output(room, documents=[SRC])
+    code = main(["score", str(out_path), "--room", str(room)])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "Adjudications:" in captured.out
+    assert "no " in captured.out and "adjudications.yaml" in captured.out
+
+
+def test_cli_applies_adjudications_from_the_room_and_reports_the_count(room, capsys):
+    write_adjudications(
+        room,
+        "adjudications:\n  - tool_index: 1\n    finding_id: EMP-2\n    reason: \"clear\"\n",
+    )
+    out_path = write_multi_output(
+        room,
+        "out.json",
+        [
+            {"title": "t1", "severity": "critical", "documents": [SRC], "summary": "s"},
+            {"title": "t2", "severity": "medium", "documents": [], "summary": "misclassified contractors"},
+        ],
+    )
+    code = main(["score", str(out_path), "--room", str(room)])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "1 adjudication(s) applied" in captured.out
+    assert "| EMP-2 | medium | hit |" in captured.out
+
+
+def test_cli_refuses_an_adjudication_with_an_out_of_range_tool_index(room, capsys):
+    write_adjudications(
+        room,
+        "adjudications:\n  - tool_index: 5\n    finding_id: EMP-2\n    reason: \"bad index\"\n",
+    )
+    out_path = write_output(room, documents=[SRC])
+    code = main(["score", str(out_path), "--room", str(room)])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "5" in captured.err
+    assert captured.out == ""
+    assert "Traceback" not in captured.err
+
+
+def test_cli_refuses_an_adjudication_naming_an_unknown_finding_id(room, capsys):
+    write_adjudications(
+        room,
+        "adjudications:\n  - tool_index: 0\n    finding_id: NOPE-9\n    reason: \"unknown\"\n",
+    )
+    out_path = write_output(room, documents=[SRC])
+    code = main(["score", str(out_path), "--room", str(room)])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "NOPE-9" in captured.err
+    assert captured.out == ""
+
+
+def test_cli_refuses_a_malformed_adjudications_file(room, capsys):
+    write_adjudications(room, "not: [a, valid: shape\n")
+    out_path = write_output(room, documents=[SRC])
+    code = main(["score", str(out_path), "--room", str(room)])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.out == ""
+    assert "Traceback" not in captured.err
