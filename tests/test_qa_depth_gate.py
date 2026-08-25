@@ -62,34 +62,43 @@ def test_fail_detail_also_names_the_metric(room):
     assert "metric" in result.detail.lower()
 
 
-# The full table this gate must catch: the five original literals
-# ("todo", "tbd", "[insert", "xxx", "lorem ipsum"), the two literals added
-# for the enumeration fix ("fixme", "placeholder"), and two instances of
-# the bracket-idiom property ("[DRAFT]", "[TBC]") that no literal list
-# could name in advance. A previous round silently dropped the first five
-# by rewriting the list instead of extending it — parametrized so a future
-# edit that drops any one shape shows up as a single named failure rather
-# than a silent gap.
-PLACEHOLDER_MARKERS = [
-    "TODO: write this",
-    "tbd",
-    "XXX",
-    "[insert amount]",
-    "[DRAFT]",
-    "[TBC]",
-    "fixme",
-    "placeholder",
-    "Lorem Ipsum dolor",
+# One table, expected outcomes named explicitly, so a future edit that
+# widens or narrows PLACEHOLDER_TOKENS shows up as a single named failure
+# rather than a silent gap in either direction. Two earlier rounds each
+# got this wrong in opposite ways: one replaced the bracketed literals
+# with a "[BRACKETED ALL-CAPS]" property that failed ordinary defined
+# terms like "[BUYER]" in section 18's draft SPA; the next nearly dropped
+# the original five literals entirely while fixing that. This table
+# pins both halves: every literal shape must still FAIL, and every
+# ordinary bracketed defined term must still PASS.
+PLACEHOLDER_MARKER_OUTCOMES = [
+    ("TODO: write this", "FAIL"),
+    ("tbd", "FAIL"),
+    ("XXX", "FAIL"),
+    ("fixme", "FAIL"),
+    ("placeholder", "FAIL"),
+    ("Lorem Ipsum dolor", "FAIL"),
+    ("[INSERT DATE]", "FAIL"),
+    ("[TBC]", "FAIL"),
+    ("[TBC — pending]", "FAIL"),
+    ("[draft: not final]", "FAIL"),
+    ("[TBA]", "FAIL"),
+    ("[BUYER]", "PASS"),
+    ("[SELLER]", "PASS"),
+    ("[COMPANY]", "PASS"),
+    ("[TARGET]", "PASS"),
+    ("[PARENT GUARANTEE]", "PASS"),
 ]
 
 
-@pytest.mark.parametrize("marker", PLACEHOLDER_MARKERS)
-def test_fails_on_a_placeholder_marker(room, marker):
+@pytest.mark.parametrize("marker, expected", PLACEHOLDER_MARKER_OUTCOMES)
+def test_placeholder_marker_outcomes(room, marker, expected):
     p = room / "data-room/01_corporate/1.1_constitutional/1.1.1_articles.md"
     p.write_text(f"# Articles\n\n{marker}\n" + ("word " * 400))
     result = gate_10_depth(ctx_for(room))
-    assert result.status == "FAIL"
-    assert "placeholder" in result.detail.lower()
+    assert result.status == expected
+    if expected == "FAIL":
+        assert "placeholder" in result.detail.lower()
 
 
 @pytest.mark.parametrize("bad_tier", ["a", "f", "", "X"])

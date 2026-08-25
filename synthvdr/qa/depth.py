@@ -23,24 +23,42 @@ from ..domain import DEFAULT_DOMAIN_ROOT, DomainPack, load_domain
 from ..slots import read_anchors_csv
 from .runner import fail, ok, skip
 
-# Literal phrases that read as a placeholder regardless of case or
-# brackets. This list PINS THE KNOWN SHAPES (a prior round nearly dropped
-# "todo"/"tbd"/"[insert"/"xxx" here, mistaking the list itself for the
-# enumeration anti-pattern the bracket-idiom property below exists to
-# extend beyond — it does not replace them: TODO is the single most common
-# placeholder shape in generated text, and "[insert amount]" is exactly
-# what a half-finished contract leaves behind, and neither is catchable by
-# the all-caps bracket property below). The property adds coverage for
-# shapes this list cannot enumerate; it does not supersede the list.
-PLACEHOLDER_TOKENS = ("lorem ipsum", "todo", "tbd", "[insert", "xxx", "fixme", "placeholder")
-
-# The "[BRACKETED ALL-CAPS]" drafting idiom — [INSERT], [DRAFT], [TBC], and
-# any future marker of that shape, without naming each one here. Requires
-# at least two characters inside the brackets so genuine single-letter
-# schedule/appendix references ("Schedule [A]") don't false-positive, and
-# requires every character to be upper-case so a mixed-case cross-reference
-# like "[see clause 4.2]" or "[Note 3]" cannot match.
-_BRACKET_PLACEHOLDER = re.compile(r"\[[A-Z][A-Z0-9 _-]+\]")
+# Literal phrases and bracketed-instruction prefixes that read as a
+# placeholder regardless of case. A LIST, not a property — deliberately.
+#
+# A previous round replaced the bracketed markers here with a general
+# "[BRACKETED ALL-CAPS]" regex, on the reasoning that a property beats an
+# enumeration. That reasoning is right in general and wrong here, and the
+# difference is the SHAPE OF THE TWO SETS, not a preference for one
+# technique over the other. The target set — author instructions left
+# behind in a draft (INSERT, DRAFT, TBC, TBA, TODO, and the rest) — is
+# closed and small. The false-positive set for any bracket-shaped property
+# is NOT closed: this corpus generates a draft share purchase agreement in
+# section 18 BY DESIGN, and ordinary contract drafting is full of
+# legitimate bracketed defined terms — "[BUYER]", "[SELLER]", "[PARENT
+# GUARANTEE]" — that no shape-based rule can tell apart from a real
+# placeholder. A property that over-matches an open false-positive set is
+# worse than a list that covers a closed target set. (The reverse holds
+# where the TARGET set is open instead — e.g. any capitalised word before
+# an entity name, or any filesystem mechanism that aliases a path — and a
+# property is correct there because no list could enumerate it. This is
+# not that case: do not "improve" this back into a regex.)
+#
+# Each bracketed entry matches on the opening-bracket prefix, not a closed
+# form, so "[TBC]", "[TBC — pending]" and "[draft: not final]" all match
+# while "[BUYER]" does not — the prefix itself is the discriminator.
+PLACEHOLDER_TOKENS = (
+    "lorem ipsum",
+    "todo",
+    "tbd",
+    "xxx",
+    "fixme",
+    "placeholder",
+    "[insert",
+    "[draft",
+    "[tbc",
+    "[tba",
+)
 
 _CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿]")
 
@@ -64,14 +82,10 @@ def strip_annotation(text: str, flag_string: str) -> str:
 def _placeholder_hit(text: str) -> str | None:
     """The first placeholder marker in `text`, or None if there is none.
 
-    Run against the original-case text, not a lower-cased copy: lower-casing
-    first would destroy the "all-caps" signal the bracket check relies on.
-    The literal-token check still lower-cases its own copy, since those
-    phrases are placeholders regardless of case.
+    A plain substring scan of the lower-cased text against PLACEHOLDER_TOKENS
+    — see the comment above that tuple for why this is a closed list rather
+    than a shape-based property.
     """
-    bracket = _BRACKET_PLACEHOLDER.search(text)
-    if bracket:
-        return bracket.group(0)
     lowered = text.lower()
     return next((t for t in PLACEHOLDER_TOKENS if t in lowered), None)
 
