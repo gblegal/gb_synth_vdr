@@ -4,7 +4,7 @@ import unicodedata
 import pytest
 
 from synthvdr.roomconf import PATH_KEYS, ROOM_ROOT_LABEL, RoomConf, load_room_conf
-from synthvdr.schema import Finding, FindingSet
+from synthvdr.schema import Distractor, Finding, FindingSet
 from synthvdr.twin import (
     MARKER_NAME,
     MARKER_TEXT,
@@ -323,6 +323,69 @@ def test_build_flagged_tree_raises_for_a_finding_with_a_nonexistent_evidence_pat
 
     with pytest.raises(TwinError, match=re.escape(missing_path)):
         build_flagged_tree(room, conf, findings)
+
+
+# ---------------------------------------------------------------------------
+# Final review, F1 (CRITICAL): build_flagged_tree had no equivalent refusal
+# for a DISTRACTOR's location/resolution — only findings got a build-time
+# existence guard. A distractor planted against a path nobody ever authored
+# built a room silently; the flagged tree carries no trace of a distractor
+# either way (nothing ever annotates one), so this was the only build-time
+# opportunity to catch it before the gap became invisible.
+# ---------------------------------------------------------------------------
+
+
+def distractor(did="DX-1", location=None, resolution=None):
+    return Distractor(
+        id=did,
+        title="Alarming-looking notice, fully remediated",
+        location=location or "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md",
+        resolution=resolution or "01_corporate/1.1_articles/1.1.1_articles.md",
+    )
+
+
+def test_build_flagged_tree_raises_for_a_distractor_with_a_nonexistent_location(tmp_path):
+    room, conf = make_room(tmp_path)
+    write_blind(room, "01_corporate/1.1_articles/1.1.1_articles.md", "# Articles\n")
+    missing_path = "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md"
+    d = distractor(location=missing_path)
+
+    with pytest.raises(TwinError, match=re.escape(missing_path)) as excinfo:
+        build_flagged_tree(room, conf, FindingSet(findings=[], room="Project Testbed"), [d])
+    assert "DX-1" in str(excinfo.value)
+
+
+def test_build_flagged_tree_raises_for_a_distractor_with_a_nonexistent_resolution(tmp_path):
+    room, conf = make_room(tmp_path)
+    write_blind(room, "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md", "# Phase 2\n")
+    missing_path = "01_corporate/1.1_articles/1.1.1_articles.md"
+    d = distractor(resolution=missing_path)
+
+    with pytest.raises(TwinError, match=re.escape(missing_path)) as excinfo:
+        build_flagged_tree(room, conf, FindingSet(findings=[], room="Project Testbed"), [d])
+    assert "DX-1" in str(excinfo.value)
+    assert "resolution" in str(excinfo.value)
+
+
+def test_build_flagged_tree_succeeds_when_every_distractor_path_exists(tmp_path):
+    room, conf = make_room(tmp_path)
+    write_blind(room, "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md", "# Phase 2\n")
+    write_blind(room, "01_corporate/1.1_articles/1.1.1_articles.md", "# Articles\n")
+    d = distractor()
+
+    report = build_flagged_tree(room, conf, FindingSet(findings=[], room="Project Testbed"), [d])
+    assert report.written == 2
+
+
+def test_build_flagged_tree_defaults_to_no_distractors(tmp_path):
+    """The `distractors` parameter is optional so every pre-existing caller
+    that never dealt with distractors keeps working unchanged — omitting it
+    must never silently disable the check for a caller that DOES pass real
+    distractors elsewhere; it only means this particular call checked none."""
+    room, conf = make_room(tmp_path)
+    write_blind(room, "01_corporate/1.1_articles/1.1.1_articles.md", "# Articles\n")
+    report = build_flagged_tree(room, conf, FindingSet(findings=[], room="Project Testbed"))
+    assert report.written == 1
 
 
 # ---------------------------------------------------------------------------

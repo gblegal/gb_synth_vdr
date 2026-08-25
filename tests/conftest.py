@@ -7,7 +7,7 @@ from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
 from synthvdr.index_build import render_index, write_index_sources
 from synthvdr.qa.depth import floor_for
 from synthvdr.roomconf import load_room_conf
-from synthvdr.schema import load_findings
+from synthvdr.schema import load_distractors, load_findings
 from synthvdr.slots import SIZE_PRESETS, build_slot_manifest, write_anchors_csv
 from synthvdr.subset import build_subset
 from synthvdr.twin import build_flagged_tree
@@ -66,7 +66,8 @@ def build_fixture_room(dest: Path) -> Path:
         floor = floor_for(slot.slot_id, target.name, slot.tier, pack)
         target.write_text(f"# {heading}\n\n{_prose(floor + 60)}{extra}\n")
 
-    build_flagged_tree(dest, conf, findings)
+    distractors = load_distractors(dest / "_key" / "distractors.yaml")
+    build_flagged_tree(dest, conf, findings, distractors)
     build_subset(dest, conf, findings, total=10, out_dir=dest / "subset")
     return dest
 

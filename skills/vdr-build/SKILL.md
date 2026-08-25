@@ -254,12 +254,21 @@ produced touches it directly:
 python3 -c "
 from pathlib import Path
 from synthvdr.roomconf import load_room_conf
-from synthvdr.schema import load_findings
+from synthvdr.schema import load_distractors, load_findings
 from synthvdr.twin import build_flagged_tree
 conf = load_room_conf(Path('room.conf'))
-print(build_flagged_tree(Path('.'), conf, load_findings(Path('_key/findings.yaml'))))
+findings = load_findings(Path('_key/findings.yaml'))
+distractors = load_distractors(Path('_key/distractors.yaml'))
+print(build_flagged_tree(Path('.'), conf, findings, distractors))
 "
 ```
+
+Pass `distractors` here even though nothing in the flagged tree is ever annotated for one: this is the
+only build-time check that a distractor's `location` and `resolution` were actually authored.
+Nothing else in the harness opens either path — `synthvdr.score` only ever matches a *cited*
+document's path against `distractor.location` by string equality, so a distractor pointed at a
+document that was never written can never be flagged by scoring a tool's output; it can only be
+caught here, at build time, or by gate 8's carrier census afterwards.
 
 ### 6. Run the gates
 

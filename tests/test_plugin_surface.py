@@ -293,9 +293,13 @@ def assert_evidence_paths_resolve_under_blind_tree(
        evidence paths, for instance), which neither the schema check nor the oracle above
        would see.
 
-    `build_flagged_tree` has no notion of distractors at all (only finding evidence gets
-    annotated), so a distractor's `location`/`resolution` gets the oracle check and its own,
-    separate existence check against the same real tree.
+    Final review, F1: `build_flagged_tree` never annotates a distractor (only finding
+    evidence gets a block), but it does now refuse to build at all if a distractor's
+    `location`/`resolution` names no real file — the same existence obligation findings
+    already had. Passing `distractors` into the one `build_flagged_tree` call below, rather
+    than re-deriving a second existence check here, means this test exercises the exact
+    function `/vdr-build` calls instead of a parallel implementation of the same rule that
+    could silently drift from it.
     """
     finding_paths = []
     for finding in findings.findings:
@@ -321,13 +325,11 @@ def assert_evidence_paths_resolve_under_blind_tree(
 
     conf = load_room_conf(tmp_path / "room.conf")
     try:
-        build_flagged_tree(tmp_path, conf, findings)
+        build_flagged_tree(tmp_path, conf, findings, distractors)
     except TwinError as exc:
-        pytest.fail(f"a findings example's evidence paths do not resolve under BLIND_TREE — {exc}.")
-
-    for owner, field, rel in distractor_paths:
-        assert (blind_root / rel).is_file(), (
-            f"{owner}: {field} {rel!r} does not resolve under BLIND_TREE ({blind_root})"
+        pytest.fail(
+            "a findings/distractors example's evidence paths do not resolve under "
+            f"BLIND_TREE — {exc}."
         )
 
 

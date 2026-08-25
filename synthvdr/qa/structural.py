@@ -147,6 +147,22 @@ def gate_08_carrier_census(ctx):
          together as one suffix-conditioned check, and fixing the false
          fail this caused on legitimate CSV evidence silently dropped
          existence-checking for every non-markdown path along with it.
+
+    Obligation 1 also covers every DISTRACTOR's `location` and `resolution`
+    — not just finding evidence. A distractor never carries an annotation
+    block (obligation 2 is finding-only: nothing in synthvdr.twin ever
+    annotates a distractor), so a distractor's paths have no equivalent
+    "unexpected carrier" signal to fall back on if their existence goes
+    unchecked. Before this check existed, repointing every distractor in a
+    built room at a path that exists nowhere left all seventeen gates
+    PASSING: `synthvdr.score` matches a cited document's location against
+    `distractor.location` by string equality, so a location that exists
+    nowhere can never be cited by a tool under test, and the scorecard's
+    "false alarms" metric would silently and permanently read zero. Sharing
+    this gate — rather than adding a new one — keeps "every answer-key path
+    must exist under BLIND_TREE" as one invariant with one home, rather than
+    the same check maintained twice for two different answer-key artefacts
+    that both name paths into the same tree.
     """
     if not ctx.flagged_root.is_dir():
         return skip("8", "annotation-carrier census", f"{ctx.flagged_root} absent")
@@ -161,6 +177,22 @@ def gate_08_carrier_census(ctx):
         for rel in finding.evidence_paths():
             if rel not in existing_blind:
                 missing_evidence.setdefault(rel, set()).add(finding.id)
+
+    # Distractor half of obligation 1 — see the docstring above for why this
+    # lives here rather than in a second, near-identical gate. Recorded as
+    # (distractor id, field name) pairs, not just ids, because a distractor
+    # whose LOCATION is missing (the alarming document itself was never
+    # planted) and one whose RESOLUTION is missing (the benign explanation
+    # was never planted, so the trap can never be resolved) are different
+    # authoring mistakes and the failure message must say which.
+    missing_distractor_paths = {}
+    for distractor in ctx.distractors:
+        for field_name, rel in (
+            ("location", distractor.location),
+            ("resolution", distractor.resolution),
+        ):
+            if rel not in existing_blind:
+                missing_distractor_paths.setdefault(rel, []).append((distractor.id, field_name))
 
     # Obligation 2. A path already reported as missing under obligation 1
     # is skipped here — it cannot also be "expected to carry a block but
@@ -197,6 +229,14 @@ def gate_08_carrier_census(ctx):
     for rel in sorted(missing_evidence):
         problems.append(
             f"{rel}: names finding(s) {sorted(missing_evidence[rel])} but does not exist under "
+            f"{ctx.conf.get('BLIND_TREE')}"
+        )
+    for rel in sorted(missing_distractor_paths):
+        owners = ", ".join(
+            f"{did} ({field_name})" for did, field_name in missing_distractor_paths[rel]
+        )
+        problems.append(
+            f"{rel}: names distractor {owners} but does not exist under "
             f"{ctx.conf.get('BLIND_TREE')}"
         )
 

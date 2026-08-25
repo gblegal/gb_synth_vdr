@@ -22,7 +22,7 @@ from __future__ import annotations
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Set, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .ownership import NotOwnedError
 from .ownership import assert_target_is_ours as _assert_target_is_ours
@@ -36,7 +36,7 @@ from .roomconf import (
     _same_file,
     check_tree_identity,
 )
-from .schema import Finding, FindingSet
+from .schema import Distractor, Finding, FindingSet
 
 # _is_inside / _overlaps / _same_file live in roomconf so that the
 # config-level and filesystem-level guards share one implementation of "are
@@ -198,7 +198,12 @@ def assert_safe_delete_target(
             )
 
 
-def build_flagged_tree(room: Path, conf: RoomConf, findings: FindingSet) -> TwinReport:
+def build_flagged_tree(
+    room: Path,
+    conf: RoomConf,
+    findings: FindingSet,
+    distractors: Sequence[Distractor] = (),
+) -> TwinReport:
     flag_string = conf.get("FLAG_STRING_1")
 
     carriers: Dict[str, List[Finding]] = {}
@@ -270,10 +275,33 @@ def build_flagged_tree(room: Path, conf: RoomConf, findings: FindingSet) -> Twin
     # silent-failure shape as a stripped annotation block: catch it here
     # rather than let it surface later as an unexplained gap in the corpus.
     missing = sorted(set(carriers) - matched)
-    if missing:
-        raise TwinError(
-            "finding evidence path(s) not found under BLIND_TREE: "
-            + ", ".join(missing)
+
+    # Same failure shape for a distractor's `location`/`resolution` — see
+    # the final review's F1: a distractor's paths get no annotation and no
+    # other build-time check, so a distractor planted against a path that
+    # was never authored used to build a room silently, with the gap
+    # invisible until (and unless) someone thought to check it by hand.
+    # Named as (distractor id, field, path) so the error can point at the
+    # exact distractor and field, not just the dangling path.
+    missing_distractors = sorted(
+        (distractor.id, field_name, rel)
+        for distractor in distractors
+        for field_name, rel in (
+            ("location", distractor.location),
+            ("resolution", distractor.resolution),
         )
+        if rel not in matched
+    )
+
+    if missing or missing_distractors:
+        parts = []
+        if missing:
+            parts.append(
+                "finding evidence path(s) not found under BLIND_TREE: " + ", ".join(missing)
+            )
+        if missing_distractors:
+            named = ", ".join(f"{did} {field_name}={rel!r}" for did, field_name, rel in missing_distractors)
+            parts.append("distractor path(s) not found under BLIND_TREE: " + named)
+        raise TwinError("; ".join(parts))
 
     return TwinReport(written=written, carriers=carrier_count, identical=identical)

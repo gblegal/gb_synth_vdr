@@ -8,7 +8,7 @@ from synthvdr.qa.structural import (
     gate_09_xrefs,
 )
 from synthvdr.roomconf import load_room_conf
-from synthvdr.schema import Finding, FindingSet
+from synthvdr.schema import Distractor, Finding, FindingSet
 from synthvdr.twin import MARKER_NAME, MARKER_TEXT
 
 CONF = '''ROOM_CODENAME="Project Testbed"
@@ -55,12 +55,12 @@ def room(tmp_path):
     return tmp_path
 
 
-def ctx_for(room, findings=None):
+def ctx_for(room, findings=None, distractors=None):
     return GateContext(
         room=room,
         conf=load_room_conf(room / "room.conf"),
         findings=FindingSet(findings if findings is not None else [finding()], "Project Testbed"),
-        distractors=[],
+        distractors=distractors if distractors is not None else [],
     )
 
 
@@ -430,3 +430,70 @@ def test_gate_08_fails_on_existence_not_on_the_carrier_check_for_a_mixed_finding
     assert "does not exist" in result.detail
     assert result.detail.count("9.9.9_ghost.md") == 1
     assert "2.1.1_register.csv" in result.detail
+
+
+# ---------------------------------------------------------------------------
+# Final review, F1 (CRITICAL): a distractor's location/resolution had NO
+# existence check anywhere in the harness. Reproduced on a real built room:
+# repointing both distractors at a path that exists nowhere left all
+# seventeen gates PASSING, because synthvdr.twin never touches distractors
+# (nothing to annotate) and synthvdr.score matches a citation against
+# `distractor.location` by string equality — a location that exists nowhere
+# can never be cited, so "false alarms: 0" was silently permanent. These
+# tests hold the distractor half of obligation 1 as its own property,
+# mirroring the finding-evidence tests above.
+# ---------------------------------------------------------------------------
+
+
+def distractor(did="DX-1", location=None, resolution=None):
+    return Distractor(
+        id=did,
+        title="Alarming-looking notice, fully remediated",
+        location=location or "02_financial/2.1_statutory-accounts/9.9.9_ghost-notice.md",
+        resolution=resolution or "02_financial/2.1_statutory-accounts/9.9.9_ghost-closure.md",
+    )
+
+
+def test_gate_08_fails_when_a_distractor_location_does_not_exist(room):
+    ghost = "02_financial/2.1_statutory-accounts/9.9.9_ghost-notice.md"
+    real_resolution = "02_financial/2.1_statutory-accounts/2.1.1_accounts.md"
+    d = distractor(location=ghost, resolution=real_resolution)
+    result = gate_08_carrier_census(ctx_for(room, distractors=[d]))
+    assert result.status == "FAIL"
+    assert "DX-1" in result.detail
+    assert ghost in result.detail
+    assert "does not exist" in result.detail
+
+
+def test_gate_08_fails_when_a_distractor_resolution_does_not_exist(room):
+    real_location = "02_financial/2.1_statutory-accounts/2.1.1_accounts.md"
+    ghost = "02_financial/2.1_statutory-accounts/9.9.9_ghost-closure.md"
+    d = distractor(location=real_location, resolution=ghost)
+    result = gate_08_carrier_census(ctx_for(room, distractors=[d]))
+    assert result.status == "FAIL"
+    assert "DX-1" in result.detail
+    assert ghost in result.detail
+    assert "resolution" in result.detail
+
+
+def test_gate_08_names_both_missing_paths_of_a_wholly_unplanted_distractor(room):
+    """The exact reproduction from the final review: BOTH of a distractor's
+    paths repointed at nowhere. Confirms the failure names the distractor id
+    and each missing path — not a bare count, and not silence."""
+    d = distractor()
+    result = gate_08_carrier_census(ctx_for(room, distractors=[d]))
+    assert result.status == "FAIL"
+    assert result.detail.count("DX-1") == 2
+    assert "9.9.9_ghost-notice.md" in result.detail
+    assert "9.9.9_ghost-closure.md" in result.detail
+
+
+def test_gate_08_passes_when_every_distractor_path_exists(room):
+    location_rel = "02_financial/2.1_statutory-accounts/2.1.2_notice.md"
+    resolution_rel = "02_financial/2.1_statutory-accounts/2.1.3_closure.md"
+    for tree in ("data-room", "_key/flagged"):
+        (room / tree / location_rel).write_text("# Notice\n\nBody.\n")
+        (room / tree / resolution_rel).write_text("# Closure\n\nBody.\n")
+    d = distractor(location=location_rel, resolution=resolution_rel)
+    result = gate_08_carrier_census(ctx_for(room, distractors=[d]))
+    assert result.status == "PASS"
