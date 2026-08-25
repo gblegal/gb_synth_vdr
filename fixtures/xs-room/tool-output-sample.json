@@ -1,0 +1,30 @@
+{
+  "tool": "acme-diligence/1.0",
+  "room_hash": "",
+  "findings": [
+    {
+      "title": "Facility consent gap ahead of completion",
+      "severity": "critical",
+      "documents": ["01_corporate/1.1_constitutional/1.1.1_constitutional-01.md"],
+      "summary": "Board minutes show the change-of-control notice had not been served under the facility agreement."
+    },
+    {
+      "title": "Leverage understated by an off-balance-sheet drawdown",
+      "severity": "high",
+      "documents": ["02_financial/2.1_statutory-accounts/2.1.1_statutory-accounts-01.md"],
+      "summary": "Statutory accounts omit a drawn invoice-discounting facility from disclosed net debt."
+    },
+    {
+      "title": "Pricing term not mirrored upstream",
+      "severity": "medium",
+      "documents": ["05_commercial/5.1_customer-contracts/5.1.1_customer-contracts-01.md"],
+      "summary": "The customer agreement's pricing right has no equivalent step-down in the matching supplier agreement."
+    },
+    {
+      "title": "Historic tax enquiry needs revisiting",
+      "severity": "medium",
+      "documents": ["03_tax/3.1_corporation-tax/3.1.1_corporation-tax-01.md"],
+      "summary": "A tax correspondence file references an enquiry that appears unresolved."
+    }
+  ]
+}

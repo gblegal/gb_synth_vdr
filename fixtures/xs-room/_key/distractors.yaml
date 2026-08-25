@@ -1,0 +1,11 @@
+schema_version: 1
+distractors:
+  - id: "DX-1"
+    title: "Closed VAT enquiry referenced without a resolution note"
+    location: "03_tax/3.1_corporation-tax/3.1.1_corporation-tax-01.md"
+    resolution: "03_tax/3.2_vat/3.2.1_vat-01.md"
+    shape_matches: "FIN-1"
+  - id: "DX-2"
+    title: "Terminated legacy facility still listed in the security register"
+    location: "04_financing-banking/4.1_facilities/4.1.1_facilities-01.md"
+    resolution: "04_financing-banking/4.2_security/4.2.1_security-01.md"
