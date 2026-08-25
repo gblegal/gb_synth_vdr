@@ -7,6 +7,7 @@ annotation block. Nothing else may write under the flagged tree.
 
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -73,20 +74,50 @@ def is_valid_twin(blind_text: str, flagged_text: str, flag_string: str) -> bool:
     return block is not None and body == blind_text
 
 
+def _casefolded_parts(path: Path) -> Tuple[str, ...]:
+    """`path`'s parts, casefolded for a case-insensitive comparison —
+    unconditionally, not just when the host filesystem happens to be
+    case-insensitive. See roomconf._segments for why: macOS and Windows
+    treat 'data-room' and 'DATA-ROOM' as the same directory regardless of
+    what OS this check runs on, so the comparison must too.
+    """
+    return tuple(part.casefold() for part in path.parts)
+
+
 def _is_inside(inner: Path, outer: Path) -> bool:
-    """True if `inner` is `outer` itself, or nested under it. Both must
-    already be resolved (absolute, symlink-free) paths."""
-    try:
-        inner.relative_to(outer)
-        return True
-    except ValueError:
-        return False
+    """True if `inner` is `outer` itself, or nested under it, comparing
+    case-insensitively (see _casefolded_parts). Both must already be
+    resolved (absolute, symlink-free) paths.
+    """
+    inner_parts = _casefolded_parts(inner)
+    outer_parts = _casefolded_parts(outer)
+    return inner_parts[: len(outer_parts)] == outer_parts
 
 
 def _overlaps(a: Path, b: Path) -> bool:
-    """True if `a` and `b` are the same resolved path, or one is nested
-    under the other — i.e. they are not two genuinely separate trees."""
+    """True if `a` and `b` name the same directory (case-insensitively) or
+    one is nested under the other — i.e. they are not two genuinely
+    separate trees by path alone. This is a string-level check: it cannot
+    see a hardlink, bind mount, or symlink that makes two differently
+    *spelled* paths the same directory on disk without differing only in
+    case — that is what _same_file is for.
+    """
     return _is_inside(a, b) or _is_inside(b, a)
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """True if `a` and `b` are the same file or directory on disk — same
+    device and inode, per os.path.samefile. This catches every aliasing
+    route a path-string comparison cannot see at all: case aliases on a
+    case-insensitive filesystem, hardlinks, bind mounts, and symlinks —
+    all without needing to know which of those is in play. False (not an
+    error) if either path doesn't exist yet: nothing can be aliased to a
+    path with nothing there.
+    """
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
 
 
 def build_flagged_tree(room: Path, conf: RoomConf, findings: FindingSet) -> TwinReport:
@@ -113,7 +144,7 @@ def build_flagged_tree(room: Path, conf: RoomConf, findings: FindingSet) -> Twin
             f"FLAGGED_TREE resolves outside the room root — refusing to delete "
             f"{flagged_resolved} (room is {room_resolved})"
         )
-    if flagged_resolved == room_resolved:
+    if _casefolded_parts(flagged_resolved) == _casefolded_parts(room_resolved):
         raise TwinError(
             f"FLAGGED_TREE resolves to the room root itself — refusing to "
             f"delete {flagged_resolved}"
@@ -124,6 +155,27 @@ def build_flagged_tree(room: Path, conf: RoomConf, findings: FindingSet) -> Twin
             f"delete {flagged_resolved}, which would destroy or leak into "
             f"the blind room at {blind_resolved}"
         )
+
+    # The checks above compare configured paths as strings (case-insensitively
+    # normalised). They cannot see two differently-spelled paths that the
+    # filesystem itself resolves to one physical directory by some other
+    # route — a hardlink, a bind mount, or a symlink — nor a case alias that
+    # somehow slipped past the string comparison. samefile compares device
+    # and inode, so it catches all of those in one check, for whichever of
+    # the three roots already exist. A root that doesn't exist yet can't be
+    # aliased to anything, so _same_file treats that as "not the same file"
+    # rather than raising.
+    for label, a, b in (
+        ("FLAGGED_TREE and the room root", flagged_resolved, room_resolved),
+        ("FLAGGED_TREE and BLIND_TREE", flagged_resolved, blind_resolved),
+        ("BLIND_TREE and the room root", blind_resolved, room_resolved),
+    ):
+        if _same_file(a, b):
+            raise TwinError(
+                f"{label} are the same file on disk (same device and inode) "
+                "even though their configured paths differ — refusing to "
+                f"delete {flagged_resolved}"
+            )
 
     if flagged_root.exists():
         shutil.rmtree(flagged_root)

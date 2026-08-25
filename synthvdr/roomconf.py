@@ -43,28 +43,44 @@ class RoomConfError(Exception):
 
 
 def _segments(value: str) -> List[str]:
-    """The real path segments of `value`, with '.' components normalised
-    away. Returns [] if `value` normalises to the room root itself (e.g.
-    '.', './', './.'). Callers must already have rejected an absolute value
-    and a raw '..' segment — normalising a value that still contains '..'
-    would silently walk it out of the room instead of catching it.
+    """The real path segments of `value`, casefolded for a case-insensitive
+    comparison, with '.' components normalised away. Returns [] if `value`
+    normalises to the room root itself (e.g. '.', './', './.'). Callers
+    must already have rejected an absolute value and a raw '..' segment —
+    normalising a value that still contains '..' would silently walk it
+    out of the room instead of catching it.
+
+    Casefolding is unconditional, not conditional on the host filesystem:
+    macOS and Windows are case-insensitive by default regardless of what OS
+    this check runs on, so 'data-room' and 'DATA-ROOM' are the same
+    directory there even though they're spelled differently in room.conf —
+    a pairwise-overlap check that compares raw strings would miss that
+    entirely. A room.conf must be rejected or accepted identically no
+    matter which of those filesystems it runs on. This is deliberately
+    over-strict on a case-sensitive filesystem, where two trees differing
+    only in case genuinely are separate — that's the safe direction, and
+    nothing this project generates ever relies on the distinction.
+
+    The returned segments are for structural comparison only (emptiness,
+    containment, equality) — callers needing the original spelling (e.g.
+    for an error message) must use the raw value, not this.
     """
     normalised = posixpath.normpath(value)
     if normalised == ".":
         return []
-    return normalised.split("/")
+    return [segment.casefold() for segment in normalised.split("/")]
 
 
 def _is_inside_or_equal(inner: List[str], outer: List[str]) -> bool:
     """True if `inner` names the same tree as `outer`, or a tree nested
-    under it."""
+    under it. Segments must already be casefolded (see _segments)."""
     return inner[: len(outer)] == outer
 
 
 def _overlaps(a: List[str], b: List[str]) -> bool:
     """True if `a` and `b` name the same tree, or either is nested under
     the other — in other words, they are not two genuinely separate trees.
-    """
+    Segments must already be casefolded (see _segments)."""
     return _is_inside_or_equal(a, b) or _is_inside_or_equal(b, a)
 
 

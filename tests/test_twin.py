@@ -6,6 +6,9 @@ from synthvdr.roomconf import RoomConf, load_room_conf
 from synthvdr.schema import Finding, FindingSet
 from synthvdr.twin import (
     TwinError,
+    _is_inside,
+    _overlaps,
+    _same_file,
     annotation_block,
     build_flagged_tree,
     derive_twin,
@@ -309,4 +312,173 @@ def test_build_flagged_tree_raises_for_a_finding_with_a_nonexistent_evidence_pat
 
     with pytest.raises(TwinError, match=re.escape(missing_path)):
         build_flagged_tree(room, conf, findings)
+
+
+# ---------------------------------------------------------------------------
+# Case aliasing: on a case-insensitive filesystem (this sandbox included —
+# macOS/APFS is case-insensitive by default), 'data-room' and 'DATA-ROOM'
+# are the same physical directory even though Path.resolve() does NOT
+# normalise the case of either string, so a naive string-equality check
+# after resolve() would still see two different paths. Two independent
+# defences close this: the case-folded string comparison above (which,
+# for this exact scenario, already catches it — see the mutation note in
+# the report) and the os.path.samefile backstop, which compares device and
+# inode and so also catches aliasing routes no string comparison could
+# ever see (a hardlink, a bind mount, Unicode normalisation differences).
+# ---------------------------------------------------------------------------
+
+
+def test_build_flagged_tree_refuses_when_flagged_and_blind_are_the_same_directory_on_disk(tmp_path):
+    room, conf = make_room(tmp_path)
+    write_blind(room, "01_corporate/1.1_articles/1.1.1_articles.md", "# Articles\n")
+
+    # FLAGGED_TREE is a different *string* from BLIND_TREE, but on this
+    # case-insensitive filesystem it names the exact same on-disk directory.
+    # load_room_conf now rejects this at load time (case-folded comparison),
+    # so reaching build_flagged_tree's own backstop requires a hand-built
+    # RoomConf, as in the earlier bypass tests above.
+    escaping_conf = RoomConf(
+        values={**conf.values, "FLAGGED_TREE": "DATA-ROOM"},
+        path=conf.path,
+    )
+    findings = FindingSet(findings=[], room="Project Testbed")
+
+    with pytest.raises(TwinError):
+        build_flagged_tree(room, escaping_conf, findings)
+
+    assert (room / "data-room/01_corporate/1.1_articles/1.1.1_articles.md").read_text(
+        encoding="utf-8"
+    ) == "# Articles\n"
+
+
+def test_build_flagged_tree_refuses_an_alias_the_string_check_cannot_see(tmp_path):
+    # Isolates the samefile backstop's own necessity within build_flagged_tree,
+    # separately from _overlaps: BLIND_TREE and FLAGGED_TREE spelled with
+    # different Unicode normalisation forms of the same name ('café-room',
+    # NFC vs NFD). casefold() does not perform Unicode normalisation, so
+    # _overlaps genuinely does not fire for this pair — if the samefile
+    # loop were removed, nothing else in build_flagged_tree would catch it.
+    # Skipped on a filesystem that doesn't alias the two spellings.
+    import unicodedata
+
+    nfc = unicodedata.normalize("NFC", "café-room")
+    nfd = unicodedata.normalize("NFD", "café-room")
+    assert nfc != nfd, "test assumption broken: NFC and NFD must differ as plain strings"
+
+    room = tmp_path
+    conf_path = room / "room.conf"
+    conf_path.write_text(CONF_TEMPLATE.replace('BLIND_TREE="data-room"', f'BLIND_TREE="{nfc}"'))
+    blind_root = room / nfc
+    blind_root.mkdir()
+    if not (room / nfd).exists():
+        pytest.skip("host filesystem does not alias Unicode NFC/NFD spellings")
+    (blind_root / "articles.md").write_text("# Articles\n")
+
+    conf = load_room_conf(conf_path)
+    assert not _overlaps(room / nfd, blind_root), (
+        "test assumption broken: the string-level check must not catch this "
+        "on its own, or the test isn't isolating the samefile backstop"
+    )
+    escaping_conf = RoomConf(values={**conf.values, "FLAGGED_TREE": nfd}, path=conf.path)
+    findings = FindingSet(findings=[], room="Project Testbed")
+
+    with pytest.raises(TwinError):
+        build_flagged_tree(room, escaping_conf, findings)
+
+    assert (blind_root / "articles.md").read_text(encoding="utf-8") == "# Articles\n"
+
+
+def test_same_file_detects_a_case_alias_on_this_filesystem(tmp_path):
+    # A direct, isolated check on _same_file itself: True for a real
+    # on-disk alias, regardless of which (if any) earlier string-level
+    # check would also have caught this particular case.
+    real = tmp_path / "data-room"
+    real.mkdir()
+    alias = tmp_path / "DATA-ROOM"
+    assert str(alias.resolve()) != str(real.resolve()), (
+        "test assumption broken: resolve() must not itself normalise case, "
+        "or this isn't exercising the alias at all"
+    )
+    assert _same_file(alias, real)
+
+
+def test_same_file_is_false_for_genuinely_different_directories(tmp_path):
+    a = tmp_path / "one"
+    b = tmp_path / "two"
+    a.mkdir()
+    b.mkdir()
+    assert not _same_file(a, b)
+
+
+def test_same_file_is_false_rather_than_raising_when_a_path_does_not_exist(tmp_path):
+    real = tmp_path / "data-room"
+    real.mkdir()
+    missing = tmp_path / "does-not-exist"
+    assert not _same_file(missing, real)
+    assert not _same_file(real, missing)
+
+
+def test_same_file_detects_a_unicode_normalisation_alias_if_the_filesystem_has_one(tmp_path):
+    # A second, independent aliasing route from case-folding: some
+    # filesystems (macOS's default APFS/HFS+, this sandbox included)
+    # normalise Unicode differently on lookup, so a composed ('café', NFC)
+    # and a decomposed ('café', NFD — e + combining acute accent) spelling
+    # can be the same directory even though neither casefold() nor
+    # Path.resolve() treat them as equal strings — proving _same_file adds
+    # real, distinct coverage beyond the string-level checks, not just a
+    # second way of catching the same case-aliasing exploit. Skipped on a
+    # filesystem that doesn't alias the two spellings (most Linux
+    # filesystems), where they are genuinely different directories and
+    # there is nothing here to detect.
+    import unicodedata
+
+    nfc = unicodedata.normalize("NFC", "café")
+    nfd = unicodedata.normalize("NFD", "café")
+    assert nfc != nfd, "test assumption broken: NFC and NFD must differ as plain strings"
+    real = tmp_path / nfc
+    real.mkdir()
+    alias = tmp_path / nfd
+    if not alias.exists():
+        pytest.skip("host filesystem does not alias Unicode NFC/NFD spellings")
+    assert str(alias.resolve()) != str(real.resolve())
+    assert _same_file(alias, real)
+
+
+# ---------------------------------------------------------------------------
+# _is_inside / _overlaps in isolation: the string-level comparison that sits
+# alongside _same_file. Case-insensitive unconditionally (see
+# _casefolded_parts), independent of whether _same_file would also catch a
+# given scenario once the paths exist on disk.
+# ---------------------------------------------------------------------------
+
+
+def test_is_inside_is_case_insensitive(tmp_path):
+    outer = tmp_path / "data-room"
+    inner = tmp_path / "DATA-ROOM" / "sub"
+    assert _is_inside(inner, outer)
+
+
+def test_is_inside_true_for_equal_paths(tmp_path):
+    a = tmp_path / "data-room"
+    assert _is_inside(a, a)
+
+
+def test_is_inside_false_for_unrelated_paths(tmp_path):
+    a = tmp_path / "data-room"
+    b = tmp_path / "flagged"
+    assert not _is_inside(a, b)
+    assert not _is_inside(b, a)
+
+
+def test_overlaps_is_case_insensitive_in_either_direction(tmp_path):
+    a = tmp_path / "data-room"
+    b = tmp_path / "DATA-ROOM" / "sub"
+    assert _overlaps(a, b)
+    assert _overlaps(b, a)
+
+
+def test_overlaps_false_for_two_genuinely_separate_trees(tmp_path):
+    a = tmp_path / "data-room"
+    b = tmp_path / "flagged"
+    assert not _overlaps(a, b)
 

@@ -208,6 +208,53 @@ def test_flagged_nested_inside_key_root_is_accepted(tmp_path):
     assert conf.get("FLAGGED_TREE") == "_key/nested/flagged"
 
 
+# ---------------------------------------------------------------------------
+# Case-insensitivity: a case-insensitive filesystem (macOS, Windows) treats
+# 'data-room' and 'DATA-ROOM' as the same directory regardless of what OS
+# this check runs on, so the overlap comparison must be case-insensitive
+# unconditionally, not just when the host happens to be case-insensitive.
+# String comparison alone can't see every aliasing route (a hardlink, bind
+# mount, or symlink can also make two differently-spelled paths the same
+# directory) — that residual risk is covered by build_flagged_tree's
+# os.path.samefile backstop in synthvdr/twin.py, not here at the config
+# level, since load_room_conf never touches the filesystem.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "blind, flagged, key_root, expected_match",
+    [
+        ("data-room", "DATA-ROOM", "_key", "BLIND_TREE"),
+        ("data-room", "Data-Room", "_key", "BLIND_TREE"),
+        ("data-room", "data-ROOM", "_key", "BLIND_TREE"),
+        ("data-room", "_key/flagged", "DATA-ROOM", "BLIND_TREE"),
+        ("data-room", "_KEY", "_key/sub", "KEY_ROOT"),
+    ],
+    ids=[
+        "flagged=DATA-ROOM",
+        "flagged=Data-Room",
+        "flagged=data-ROOM",
+        "key=DATA-ROOM (aliases blind)",
+        "flagged=_KEY (key nested inside, case-aliased)",
+    ],
+)
+def test_pairwise_tree_overlap_is_rejected_case_insensitively(
+    tmp_path, blind, flagged, key_root, expected_match
+):
+    conf_text = _conf_text_with_trees(blind, flagged, key_root)
+    with pytest.raises(RoomConfError, match=expected_match):
+        load_room_conf(write(tmp_path, conf_text))
+
+
+def test_canonical_and_legitimate_layouts_still_load_under_case_folding(tmp_path):
+    # Regression guard: case-folding the comparison must not make any
+    # genuinely-separate, correctly-spelled layout look like an overlap.
+    conf = load_room_conf(write(tmp_path, SAMPLE))
+    assert conf.get("BLIND_TREE") == "data-room"
+    assert conf.get("FLAGGED_TREE") == "_key/flagged"
+    assert conf.get("KEY_ROOT") == "_key"
+
+
 def test_get_relative_path_validates_a_non_required_key_on_demand(tmp_path):
     conf = load_room_conf(write(tmp_path, SAMPLE + 'SUBSET_OUT="_key/subset"\n'))
     assert conf.get_relative_path("SUBSET_OUT") == "_key/subset"
