@@ -134,7 +134,7 @@ findings:
     severity: medium
     workstream: financial
     multi_document: false
-    source: 02_financial/2.6_completion-accounts/2.6.3_escrow-notice.md
+    source: 02_financial/2.1_statutory-accounts/2.1.3_escrow-notice.md
     location: "Clause 4.2"
     substance: >
       The escrow release notice references a completion accounts adjustment mechanism that
@@ -158,7 +158,7 @@ new_findings:
     severity: high
     workstream: environmental
     multi_document: false
-    source: 11_environmental-hs/11.4_permits/11.4.2_variation-notice.md
+    source: 11_environmental-hs/11.1_permits/11.1.2_variation-notice.md
     location: "Condition 7"
     substance: >
       A permit variation notice tightens a discharge limit the room's other environmental

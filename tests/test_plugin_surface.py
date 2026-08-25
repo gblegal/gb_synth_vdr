@@ -53,6 +53,7 @@ from synthvdr.score import (
     load_adjudications,
     validate_adjudications,
 )
+from synthvdr.slots import _subsection_name
 from synthvdr.twin import TwinError, build_flagged_tree
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -199,31 +200,67 @@ SECTION_DIRS="."
 """
 
 
-def _real_section_dirs() -> set:
-    """The one oracle an example cannot influence: the real section directory names the M&A
-    domain pack declares, read fresh via `synthvdr.domain.load_domain` — the same function
-    every real room-building step reads them through.
+def _domain_pack():
+    """The one oracle an example cannot influence: the real section/subsection taxonomy the
+    M&A domain pack declares, read fresh via `synthvdr.domain.load_domain` — the same
+    function every real room-building step reads it through.
 
     Fix round 2, coordinator ruling: fix round 1's semantic check built its throwaway blind
     tree FROM the example's own paths (stripping one hard-coded `data-room/` prefix), so it
     validated the example's self-consistency, not its correctness — any internally
     consistent path passed, and a peer session found a `blind/`-prefixed path and a
     `14_operations` section that does not exist at all (the real one is
-    `16_operations-quality`) both slipped through untouched. Neither is caught by asking
-    "does this path resolve in a world I built from itself" — only by asking a question the
-    example gets no say in: is this a real section?
+    `16_operations-quality`) both slipped through untouched.
+
+    Fix round 3, coordinator ruling: the section check alone is not enough either — it
+    caught the SECTION segment being wrong but not the SUBSECTION segment, and a peer
+    session found four wrong subsection numbers (`11.3_site-reports` when site-reports is
+    `11.2`, `11.5_hse` naming a subsection that does not exist at all, `11.4_permits` when
+    permits is `11.1`) that a section-only oracle cannot see. Both checks now read from this
+    one loaded pack, never from the example.
     """
-    return set(load_domain(DEFAULT_DOMAIN_ROOT).section_dirs())
+    return load_domain(DEFAULT_DOMAIN_ROOT)
 
 
-def _assert_first_segment_is_a_real_section(rel: str, owner: str, field: str) -> None:
-    real_dirs = _real_section_dirs()
-    first_segment = rel.split("/", 1)[0]
-    assert first_segment in real_dirs, (
-        f"{owner}: {field} {rel!r} starts with {first_segment!r}, which is not a real "
+def _valid_subsection_names(section) -> set:
+    """The exact set of subsection folder names `synthvdr.slots.build_slot_manifest` would
+    ever generate for `section` — by calling the SAME function it calls
+    (`synthvdr.slots._subsection_name`) rather than re-deriving the
+    "section.number.index+1_name" format here a second time.
+
+    Fix round 3, coordinator ruling: "reuse the existing slots machinery for the numbering —
+    do not re-derive it. A second implementation of a numbering rule is exactly how the last
+    three defects in this task started." (fix round 1's `data-room/` stripping, fix round
+    2's fixture-built-from-the-example, and this round's under-validated oracle were each a
+    parallel, ad hoc piece of logic standing in for something that already existed.)
+    """
+    return {_subsection_name(section, i) for i in range(len(section.subsections))}
+
+
+def _assert_path_matches_the_domain_pack(rel: str, owner: str, field: str) -> None:
+    """The section- and subsection-level oracle: `rel`'s first segment must be a real
+    section directory, and — if a second segment is present — it must be one of that
+    section's real subsection folder names, in the domain pack's own ordering. Neither fact
+    comes from the example; both come from `_domain_pack()` / `_valid_subsection_names()`.
+    """
+    pack = _domain_pack()
+    real_dirs = set(pack.section_dirs())
+    segments = rel.split("/")
+    section_dir = segments[0]
+    assert section_dir in real_dirs, (
+        f"{owner}: {field} {rel!r} starts with {section_dir!r}, which is not a real "
         f"section directory (domain/ma/sections.yaml declares: {sorted(real_dirs)}) — every "
         "source/corroboration/location/resolution path must start with one, never with "
         "BLIND_TREE's own name or any other invented segment"
+    )
+    if len(segments) < 2:
+        return
+    section = pack.section_by_dir(section_dir)
+    subsection = segments[1]
+    valid_subsections = _valid_subsection_names(section)
+    assert subsection in valid_subsections, (
+        f"{owner}: {field} {rel!r} names subsection {subsection!r}, which {section_dir} does "
+        f"not have — its real subsections, in order, are: {sorted(valid_subsections)}"
     )
 
 
@@ -239,13 +276,14 @@ def assert_evidence_paths_resolve_under_blind_tree(
     Two independent checks, deliberately kept separate because they catch different things
     (fix round 2, coordinator ruling):
 
-    1. **The oracle** (`_assert_first_segment_is_a_real_section`). Every `source`/
-       `corroboration`/`location`/`resolution` path's first segment must name a real section
-       directory from `synthvdr.domain.load_domain` — a fact the example cannot influence.
-       Fix round 1's check built its throwaway blind tree FROM the example's own paths
-       (stripping one hard-coded `data-room/` prefix) and so only ever validated the example
-       against itself; this is what catches a `blind/`-prefixed path and an invented section
-       name like `14_operations`, neither of which fix round 1 saw.
+    1. **The oracle** (`_assert_path_matches_the_domain_pack`). Every `source`/
+       `corroboration`/`location`/`resolution` path's SECTION and SUBSECTION segments
+       must both be real, in the domain pack's own ordering — a fact the example cannot
+       influence. Fix round 1's check built its throwaway blind tree FROM the example's
+       own paths and so only ever validated the example against itself, missing a
+       `blind/`-prefixed path and an invented section like `14_operations`. Checking the
+       section alone (fix round 2) still missed a wrong SUBSECTION number
+       (`11.3_site-reports` when site-reports is really `11.2`) — this checks both.
     2. **The twin derivation** (`build_flagged_tree`, kept from fix round 1, no longer doing
        any path correction). Once every path names a real section, a real file is created at
        each of the example's own, completely unmodified paths, and the real
@@ -272,7 +310,7 @@ def assert_evidence_paths_resolve_under_blind_tree(
     assert all_paths, "no evidence paths to verify — the example has no findings or distractors"
 
     for owner, field, rel in all_paths:
-        _assert_first_segment_is_a_real_section(rel, owner, field)
+        _assert_path_matches_the_domain_pack(rel, owner, field)
 
     (tmp_path / "room.conf").write_text(_SEMANTIC_ROOM_CONF, encoding="utf-8")
     blind_root = tmp_path / "data-room"
@@ -743,6 +781,41 @@ def test_manifest_example_in_package_skill_verifies_via_the_real_scorer(tmp_path
         check_provenance(tmp_path, mismatched_output)
 
 
+# Fix round 3, coordinator ruling: a FIXED fixture, declared once here, completely
+# independent of anything a `_key/adjudications.yaml` example says. This is deliberately
+# NOT derived from the example under test — ten tool reports (indices 0-9) and three
+# real-looking finding ids, chosen because they comfortably cover the shipped example's
+# actual content (tool_index up to 7; finding ids ENV-1/EMP-2/FIN-3), never because they
+# were read out of it. Sizing or naming this fixture FROM the example (as this test
+# previously did — `max(a.tool_index for a in adjudications)` for the report count, the
+# example's own finding_id values for the known-id set) makes any tool_index or finding_id
+# the example names trivially "in range" or "known": a mutated example
+# (`tool_index: 400, finding_id: TOTALLY-BOGUS-999`) sailed straight through 31/31 green.
+# validate_adjudications is meant to raise loudly on exactly those two cases; a fixture that
+# reshapes itself around the artefact it is checking cannot ever let it.
+_ADJUDICATION_FIXTURE_OUTPUT = ToolOutput(
+    tool="acme/1.0",
+    room_hash="",
+    findings=[ToolFinding(title="t", severity="medium", documents=[]) for _ in range(10)],
+)
+_ADJUDICATION_FIXTURE_FINDINGS = FindingSet(
+    findings=[
+        Finding(
+            id=finding_id,
+            title="t",
+            severity="medium",
+            workstream="w",
+            multi_document=False,
+            source="doc.md",
+            location="loc",
+            substance="s",
+        )
+        for finding_id in ("ENV-1", "EMP-2", "FIN-3")
+    ],
+    room="Test Room",
+)
+
+
 def test_adjudications_example_in_score_skill_loads_via_the_real_parser(tmp_path):
     """The `_key/adjudications.yaml` example `/vdr-score` tells an adjudicator to copy must
     itself load and reconcile through the real `synthvdr.score` functions — the same
@@ -751,6 +824,10 @@ def test_adjudications_example_in_score_skill_loads_via_the_real_parser(tmp_path
     copy kept here, so a future edit that drifts the shape (a `finding_id` type
     `load_adjudications` would reject, a `tool_index` out of range) is caught in the commit
     that drifts it rather than the first time a real adjudicator copies a now-broken example.
+
+    Reconciled against `_ADJUDICATION_FIXTURE_OUTPUT`/`_ADJUDICATION_FIXTURE_FINDINGS` — a
+    fixture declared independently above, not derived from the example itself (fix round 3;
+    see the module-level comment there for why that distinction is load-bearing).
     """
     path = ROOT / "skills" / "vdr-score" / "SKILL.md"
     adjudications_yaml = find_example_by_top_level_key(yaml_examples(path), "adjudications", path)
@@ -760,36 +837,7 @@ def test_adjudications_example_in_score_skill_loads_via_the_real_parser(tmp_path
     adjudications = load_adjudications(adjudications_path)
     assert adjudications, "the adjudications.yaml example in the skill has no rows"
 
-    max_index = max(a.tool_index for a in adjudications)
-    output = ToolOutput(
-        tool="acme/1.0",
-        room_hash="",
-        findings=[ToolFinding(title="t", severity="medium", documents=[]) for _ in range(max_index + 1)],
-    )
-    named_ids = set()
-    for adjudication in adjudications:
-        if adjudication.finding_id is None:
-            continue
-        if isinstance(adjudication.finding_id, str):
-            named_ids.add(adjudication.finding_id)
-        else:
-            named_ids.update(adjudication.finding_id)
-    findings = FindingSet(
-        findings=[
-            Finding(
-                id=finding_id,
-                title="t",
-                severity="medium",
-                workstream="w",
-                multi_document=False,
-                source="doc.md",
-                location="loc",
-                substance="s",
-            )
-            for finding_id in sorted(named_ids)
-        ],
-        room="Test Room",
-    )
-
-    # Must not raise: every tool_index is in range and every finding_id is known.
-    validate_adjudications(adjudications, output, findings)
+    # Must not raise: every tool_index is in range and every finding_id is known, checked
+    # against the fixed fixture above — never against anything sized or named from
+    # `adjudications` itself.
+    validate_adjudications(adjudications, _ADJUDICATION_FIXTURE_OUTPUT, _ADJUDICATION_FIXTURE_FINDINGS)
