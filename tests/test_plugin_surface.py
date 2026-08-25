@@ -35,11 +35,20 @@ import yaml
 import synthvdr
 from synthvdr.qa.structural import SLOT_REF, parse_gaps_allowlist
 from synthvdr.schema import (
+    Finding,
+    FindingSet,
     allocate_new_finding_ids,
     load_distractors,
     load_findings,
     render_findings_md,
     validate,
+)
+from synthvdr.score import (
+    ToolFinding,
+    ToolOutput,
+    check_provenance,
+    load_adjudications,
+    validate_adjudications,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -50,12 +59,13 @@ AGENT_NAMES = ("vdr-author", "vdr-auditor")
 # "/vdr-package", "/vdr-score"). Remove each name from here in the same commit that adds
 # its skill/agent file — leaving it in place after the file exists is a hard failure
 # (XPASS under strict=True), by design; see the module docstring.
-PENDING_SKILLS = ("vdr-qa", "vdr-package", "vdr-score")
+PENDING_SKILLS = ()
 PENDING_AGENTS = ()
 
 FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 FENCED_YAML = re.compile(r"```yaml\n(.*?)\n```", re.DOTALL)
 FENCED_MARKDOWN = re.compile(r"```markdown\n(.*?)\n```", re.DOTALL)
+FENCED_JSON = re.compile(r"```json\n(.*?)\n```", re.DOTALL)
 
 
 def _pending_param(name: str, pending: tuple) -> "pytest.param":
@@ -102,6 +112,16 @@ def yaml_examples(path: Path) -> List[str]:
     pdf.mjs rather than a Python re-implementation of it.
     """
     return FENCED_YAML.findall(_read(path))
+
+
+def json_examples(path: Path) -> List[str]:
+    """Every fenced ` ```json ` code block's raw text in a skill/agent markdown file.
+
+    The JSON counterpart to `yaml_examples()`/`markdown_examples()` above, for an artefact
+    that is JSON rather than YAML or prose — `_key/manifest.json` here in Task 19. Same rule:
+    a test checks this text as extracted from the shipped skill file, never a copy kept here.
+    """
+    return FENCED_JSON.findall(_read(path))
 
 
 def markdown_examples(path: Path) -> List[str]:
@@ -537,3 +557,107 @@ def test_build_status_example_new_findings_table_names_real_looking_ids():
         )
         assert FINAL_FINDING_ID.match(final_id), f"{final_id!r} is not a real PREFIX-<n> id"
         assert workstream, "every 'New findings this wave' row must name its workstream"
+
+
+def test_qa_skill_documents_strict_mode():
+    body = (ROOT / "skills" / "vdr-qa" / "SKILL.md").read_text().lower()
+    assert "--strict" in body
+    assert "skip" in body
+
+
+def test_package_skill_requires_strict_before_freezing():
+    body = (ROOT / "skills" / "vdr-package" / "SKILL.md").read_text().lower()
+    assert "--strict" in body
+    assert "manifest" in body
+
+
+def test_score_skill_records_adjudications_rather_than_re_deriving_them():
+    body = (ROOT / "skills" / "vdr-score" / "SKILL.md").read_text().lower()
+    assert "adjudicat" in body
+    assert "room_hash" in body
+
+
+def test_manifest_example_in_package_skill_verifies_via_the_real_scorer(tmp_path):
+    """Handoff Task 19, carried ruling 3: `/vdr-package` must write `content_hash` into
+    `_key/manifest.json` in the EXACT form `synthvdr.score.check_provenance` reads, or the
+    provenance check is permanently inert — a tool's output from one room could be scored
+    against a different room's answer key and produce a confident, meaningless number with
+    nothing able to catch it.
+
+    This does not just eyeball the skill's prose: it extracts the literal `_key/manifest.json`
+    example from the SHIPPED skill file, feeds it to a throwaway room, builds a ToolOutput
+    whose `room_hash` equals that example's `content_hash`, and runs it through the real
+    `check_provenance` — the exact function `python3 -m synthvdr score` calls. A skill that
+    documents a plausible-looking manifest shape the scorer does not actually read would pass
+    every prose-only check and fail only here.
+    """
+    path = ROOT / "skills" / "vdr-package" / "SKILL.md"
+    blocks = json_examples(path)
+    assert len(blocks) == 1, f"{path}: expected exactly one fenced ```json manifest example"
+    manifest_doc = json.loads(blocks[0])
+    for key in ("room", "content_hash", "documents", "findings", "built"):
+        assert key in manifest_doc, f"{path}: manifest.json example is missing {key!r}"
+
+    key_dir = tmp_path / "_key"
+    key_dir.mkdir()
+    (key_dir / "manifest.json").write_text(json.dumps(manifest_doc), encoding="utf-8")
+
+    matching_output = ToolOutput(tool="acme/1.0", room_hash=manifest_doc["content_hash"], findings=[])
+    status = check_provenance(tmp_path, matching_output)
+    assert status.verified is True, status.detail
+
+    mismatched_output = ToolOutput(tool="acme/1.0", room_hash="not-the-real-hash", findings=[])
+    with pytest.raises(Exception):
+        check_provenance(tmp_path, mismatched_output)
+
+
+def test_adjudications_example_in_score_skill_loads_via_the_real_parser(tmp_path):
+    """The `_key/adjudications.yaml` example `/vdr-score` tells an adjudicator to copy must
+    itself load and reconcile through the real `synthvdr.score` functions — the same
+    discipline Task 17's fix round established for findings.yaml/distractors.yaml, and Task 18
+    for incoming.yaml/new_findings.yaml. Read straight out of the shipped skill file, never a
+    copy kept here, so a future edit that drifts the shape (a `finding_id` type
+    `load_adjudications` would reject, a `tool_index` out of range) is caught in the commit
+    that drifts it rather than the first time a real adjudicator copies a now-broken example.
+    """
+    path = ROOT / "skills" / "vdr-score" / "SKILL.md"
+    adjudications_yaml = find_example_by_top_level_key(yaml_examples(path), "adjudications", path)
+
+    adjudications_path = tmp_path / "adjudications.yaml"
+    adjudications_path.write_text(adjudications_yaml, encoding="utf-8")
+    adjudications = load_adjudications(adjudications_path)
+    assert adjudications, "the adjudications.yaml example in the skill has no rows"
+
+    max_index = max(a.tool_index for a in adjudications)
+    output = ToolOutput(
+        tool="acme/1.0",
+        room_hash="",
+        findings=[ToolFinding(title="t", severity="medium", documents=[]) for _ in range(max_index + 1)],
+    )
+    named_ids = set()
+    for adjudication in adjudications:
+        if adjudication.finding_id is None:
+            continue
+        if isinstance(adjudication.finding_id, str):
+            named_ids.add(adjudication.finding_id)
+        else:
+            named_ids.update(adjudication.finding_id)
+    findings = FindingSet(
+        findings=[
+            Finding(
+                id=finding_id,
+                title="t",
+                severity="medium",
+                workstream="w",
+                multi_document=False,
+                source="doc.md",
+                location="loc",
+                substance="s",
+            )
+            for finding_id in sorted(named_ids)
+        ],
+        room="Test Room",
+    )
+
+    # Must not raise: every tool_index is in range and every finding_id is known.
+    validate_adjudications(adjudications, output, findings)
