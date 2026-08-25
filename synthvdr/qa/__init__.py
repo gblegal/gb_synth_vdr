@@ -1,7 +1,12 @@
 """The QA gate suite."""
 
 from .depth import gate_10_depth
-from .integrity import gate_11_subset, gate_13_fact_sheet, gate_15_discoverability
+from .integrity import (
+    gate_11_subset,
+    gate_13_fact_sheet,
+    gate_15_discoverability,
+    gate_17_answer_key_validation,
+)
 from .leakage import (
     gate_03_flag_leakage,
     gate_04_vocabulary,
@@ -36,6 +41,7 @@ ALL_GATES = [
     gate_14_unchecked_names,
     gate_15_discoverability,
     gate_16_render_parity,
+    gate_17_answer_key_validation,
 ]
 
 __all__ = ["ALL_GATES"]

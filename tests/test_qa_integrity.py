@@ -5,11 +5,12 @@ from synthvdr.qa.integrity import (
     _isolated_contains,
     gate_13_fact_sheet,
     gate_15_discoverability,
+    gate_17_answer_key_validation,
     parse_canonical_figures,
 )
 from synthvdr.qa.runner import GateContext
 from synthvdr.roomconf import load_room_conf
-from synthvdr.schema import Finding, FindingSet
+from synthvdr.schema import Distractor, Finding, FindingSet
 
 CONF = '''ROOM_CODENAME="Project Testbed"
 INDEX_TOTAL=1
@@ -434,3 +435,64 @@ def test_gate_13_skip_reason_matches_a_valid_header_with_no_data_rows(room):
     assert result.status == "SKIP"
     assert "no data rows" in result.detail.lower()
     assert "missing column" not in result.detail.lower()
+
+
+# ---------------------------------------------------------------------------
+# Task 20 fix round 1, D2 — synthvdr.schema.validate() was called nowhere in
+# synthvdr/: it existed only as a manual step documented in the
+# /vdr-findings skill, so a findings/distractors document that loaded
+# cleanly but failed validate()'s own internal-consistency checks (a
+# dangling cross_link, a multi_document/corroboration mismatch, a
+# distractor whose location/resolution doubles as real evidence, ...) could
+# ship through every other gate, /vdr-qa --strict and /vdr-package --strict
+# without ever being caught. gate_17_answer_key_validation closes that gap.
+# ---------------------------------------------------------------------------
+
+
+def ctx_with(room, findings, distractors=()):
+    return GateContext(
+        room=room,
+        conf=load_room_conf(room / "room.conf"),
+        findings=findings,
+        distractors=list(distractors),
+    )
+
+
+def test_gate_17_passes_on_a_consistent_answer_key(room):
+    result = gate_17_answer_key_validation(ctx_with(room, FindingSet([finding()], "Project Testbed")))
+    assert result.status == "PASS"
+    assert "1 finding(s)" in result.detail
+
+
+def test_gate_17_skips_when_there_is_nothing_to_validate(room):
+    result = gate_17_answer_key_validation(ctx_with(room, FindingSet([], "")))
+    assert result.status == "SKIP"
+
+
+def test_gate_17_fails_on_a_dangling_cross_link_and_names_it(room):
+    bad = Finding(
+        id="ENV-1", title="a", severity="critical", workstream="environmental",
+        multi_document=False, source="01_corporate/1.1_constitutional/1.1.1_articles.md",
+        location="x", substance="s", discoverable_from_blind=True,
+        audit_note="reachable from 1.1.1", cross_links=["NO-SUCH-ID"],
+    )
+    result = gate_17_answer_key_validation(ctx_with(room, FindingSet([bad], "Project Testbed")))
+    assert result.status == "FAIL"
+    # The failure output must name the SPECIFIC problem validate() returned,
+    # not a generic "the answer key is invalid".
+    assert "NO-SUCH-ID" in result.detail
+    assert "cross_link" in result.detail
+
+
+def test_gate_17_fails_when_a_distractors_location_is_also_real_evidence(room):
+    f = finding()
+    dx = Distractor(
+        id="DX-1", title="d",
+        location=f.source,  # same document as a finding's own evidence
+        resolution="01_corporate/1.1_constitutional/1.1.1_other.md",
+    )
+    result = gate_17_answer_key_validation(
+        ctx_with(room, FindingSet([f], "Project Testbed"), distractors=[dx])
+    )
+    assert result.status == "FAIL"
+    assert "DX-1" in result.detail

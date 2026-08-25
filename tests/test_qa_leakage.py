@@ -208,6 +208,38 @@ def test_entity_tokens_matches_suffixes_case_insensitively():
 
 
 # ---------------------------------------------------------------------------
+# Task 20 fix round 1, D1 — "SpA" is the one suffix in ENTITY_SUFFIXES whose
+# lower-case ("spa") and upper-case ("SPA") forms are ordinary English/business
+# words in their own right (a leisure spa; the M&A abbreviation for a Share
+# Purchase Agreement — this project's own domain pack has a subsection
+# literally named "draft-spa"). Matching it case-insensitively, like every
+# other suffix, false-flagged completely ordinary document headings and
+# prose on essentially every fresh room. Fix: "SpA" is matched in its exact
+# canonical case only; every other suffix stays case-insensitive (see the
+# test above and `test_entity_tokens_matches_suffixes_case_insensitively`,
+# which must keep passing unchanged).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The Draft spa was circulated on 3 March.",
+        "The Draft SPA was circulated on 3 March.",
+        "the spa was lovely",
+        "This is an SPA amendment",
+        "New SPA draft attached.",
+    ],
+)
+def test_entity_tokens_does_not_read_the_spa_abbreviation_as_a_suffix(text):
+    assert entity_tokens(text) == set()
+
+
+def test_entity_tokens_still_detects_the_real_suffix_in_its_canonical_case():
+    assert entity_tokens("Kessler Werke SpA supplies the group.") == {"Kessler Werke SpA"}
+
+
+# ---------------------------------------------------------------------------
 # Review finding D (reopened three times) — the OPERATION was the problem,
 # not the bound on it. Three rounds tried to extract a candidate from prose
 # and then ask "is this covered?": a determiner stoplist (handled "The",

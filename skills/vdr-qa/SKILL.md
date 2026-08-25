@@ -1,6 +1,6 @@
 ---
 name: vdr-qa
-description: Run the sixteen room QA gates — index regeneration, leakage sweeps, twin invariants, carrier census, cross-references, depth lint, subset and fact-sheet reconciliation, unchecked-name sweep, discoverability and render parity. Use --strict before any release.
+description: Run the seventeen room QA gates — index regeneration, leakage sweeps, twin invariants, carrier census, cross-references, depth lint, subset, fact-sheet and answer-key reconciliation, unchecked-name sweep, discoverability and render parity. Use --strict before any release.
 ---
 
 # Run the QA gates
@@ -12,7 +12,7 @@ python3 -m synthvdr.qa --room . --strict   # release mode
 
 `tools/check.sh` is a thin wrapper around the same command (`bash tools/check.sh .` and
 `bash tools/check.sh . --strict`) — use whichever is at hand, they run the identical
-sixteen gates.
+seventeen gates.
 
 ## Reading the output
 
@@ -36,7 +36,7 @@ could not even be loaded (missing or malformed `room.conf`, or a malformed answe
 distinct from `1` so you can tell "the checks found a problem" apart from "the checks
 never ran."
 
-## The sixteen gates, briefly
+## The seventeen gates, briefly
 
 | # | Gate | Checks |
 |---|---|---|
@@ -56,6 +56,7 @@ never ran."
 | 14 | Unchecked names | Every entity-shaped token in the room is in the fact-sheet cast list or already name-checked |
 | 15 | Discoverability audit | Every registered finding has a recorded `discoverable_from_blind` verdict |
 | 16 | Render parity | DOCX/PDF renders, if built, match the blind tree's structure and content |
+| 17 | Answer-key validation | `_key/findings.yaml`/`_key/distractors.yaml` pass `synthvdr.schema.validate()`'s own internal-consistency checks |
 
 ## Common failures and what they mean
 
@@ -81,6 +82,11 @@ never ran."
   `_key/findings.yaml`.
 - **Gate 16** — a render exists but no longer matches its blind source. Re-render; the
   renderer is non-destructive by design, so a stale render is never auto-corrected for you.
+- **Gate 17** — the answer key itself is internally inconsistent (a dangling `cross_links`
+  entry, a `multi_document`/`corroboration` mismatch, a distractor whose `location` or
+  `resolution` doubles as real evidence for a finding, ...). The FAIL detail names the exact
+  problem `synthvdr.schema.validate()` returned; fix `_key/findings.yaml` or
+  `_key/distractors.yaml` directly.
 
 ## Before release
 

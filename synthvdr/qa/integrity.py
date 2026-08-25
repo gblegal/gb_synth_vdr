@@ -1,4 +1,5 @@
-"""Integrity gates: subset reconciliation, fact-sheet reconciliation, discoverability."""
+"""Integrity gates: subset reconciliation, fact-sheet reconciliation, discoverability,
+answer-key validation."""
 
 from __future__ import annotations
 
@@ -6,6 +7,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import List
 
+from ..schema import validate as validate_answer_key
 from ..subset import check_subset
 from .runner import fail, ok, skip
 
@@ -263,3 +265,45 @@ def gate_15_discoverability(ctx):
             parts.append(f"not audited: {', '.join(unaudited[:5])} — run the vdr-auditor subagent")
         return fail("15", "discoverability audit", "; ".join(parts))
     return ok("15", "discoverability audit", f"{len(findings)} findings reachable from the blind room")
+
+
+def gate_17_answer_key_validation(ctx):
+    """`synthvdr.schema.validate()` — the answer key's own internal-consistency
+    check — wired into the gate suite so a malformed key can never reach
+    `/vdr-package` silently.
+
+    Before this gate existed, `validate()` was called nowhere in `synthvdr/`
+    at all: it appeared only as a manual step documented in the
+    `/vdr-findings` skill. `load_findings`/`load_distractors` only check
+    required fields, types and severities — they never ran a dangling
+    `cross_links` entry, a `multi_document`/`corroboration` mismatch, a
+    corroboration path that re-lists its own source, or a distractor whose
+    `location`/`resolution` doubles as real evidence for a finding, through
+    `validate()`'s own checks. A findings/distractors document with any of
+    those defects could load cleanly, pass every one of the other sixteen
+    gates, pass `/vdr-qa --strict` and pass `/vdr-package --strict`, and
+    ship with a silently broken answer key — precisely the failure class
+    this project's SKIP discipline exists to rule out, just for a check
+    nobody had ever wired to a gate. Made a gate, rather than called
+    directly from `/vdr-qa`'s or `/vdr-package`'s CLI, so it inherits SKIP
+    discipline and `--strict` the same way every other answer-key check in
+    this module already does, instead of being a second, differently-gated
+    mechanism.
+
+    SKIPs only when there is nothing at all to validate (no findings and no
+    distractors loaded) — the same convention gate 15 uses for an absent
+    findings file. `validate()`'s own return value is a list of
+    human-readable problem strings; they are passed straight through to
+    `detail`, never summarised down to "the answer key is invalid", so a
+    FAIL names the specific defect(s) the way every other gate here does.
+    """
+    if not ctx.findings.findings and not ctx.distractors:
+        return skip("17", "answer-key validation", "no findings or distractors to validate")
+    problems = validate_answer_key(ctx.findings, ctx.distractors)
+    if problems:
+        return fail("17", "answer-key validation", "; ".join(problems[:5]))
+    return ok(
+        "17",
+        "answer-key validation",
+        f"{len(ctx.findings.findings)} finding(s), {len(ctx.distractors)} distractor(s) internally consistent",
+    )

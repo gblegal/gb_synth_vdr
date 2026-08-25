@@ -58,7 +58,29 @@ ENTITY_SUFFIXES = (
     "GmbH", "AG", "SAS", "SARL", "SA", "BV", "NV", "AB", "Oy", "SpA", "KK",
 )
 
-_SUFFIX_ALTERNATION = "|".join(re.escape(s) for s in ENTITY_SUFFIXES)
+# "SpA" is matched in its exact canonical case ONLY — never case-insensitively
+# like every other entry above. Every other suffix's all-lower and all-upper
+# renderings ("gmbh"/"GMBH", "ltd"/"LTD", "sa"/"SA", "oy"/"OY", ...) are not
+# ordinary English words or business jargon, so reading them as a suffix
+# whatever their case is safe and is what Task 9 explicitly fixed this
+# function to do ("Kessler Werke GMBH" and "Ashfell Trading limited" must
+# both be detected). "SpA" is different: its lowercase form "spa" is an
+# ordinary English word (a leisure spa) and its upper-case form "SPA" is the
+# standard M&A abbreviation for a Share Purchase Agreement — this project's
+# own domain pack has a subsection literally named "draft-spa" for authoring
+# one, so a case-insensitive match here false-flags completely ordinary
+# document headings and prose ("Draft spa", "the SPA", "New SPA draft") on
+# every fresh room. Restricting to the one distinctive, cap-lower-cap
+# rendering "SpA" — how the Italian "società per azioni" suffix is actually
+# written — keeps real detections ("Kessler Werke SpA") while dropping the
+# false ones, without touching case-insensitivity for any other suffix.
+_CASE_SENSITIVE_SUFFIXES = ("SpA",)
+_CASE_INSENSITIVE_SUFFIXES = tuple(s for s in ENTITY_SUFFIXES if s not in _CASE_SENSITIVE_SUFFIXES)
+
+_SUFFIX_ALTERNATION = (
+    "(?:(?i:" + "|".join(re.escape(s) for s in _CASE_INSENSITIVE_SUFFIXES) + ")"
+    "|" + "|".join(re.escape(s) for s in _CASE_SENSITIVE_SUFFIXES) + ")"
+)
 _SUFFIXES_LOWER = frozenset(s.lower() for s in ENTITY_SUFFIXES)
 
 # Inter-word separation is spaces and tabs only, not \s — an entity name
@@ -66,7 +88,7 @@ _SUFFIXES_LOWER = frozenset(s.lower() for s in ENTITY_SUFFIXES)
 # (or any line break), joining a heading to the sentence below it into one
 # false candidate ("Supply\n\nSee Kessler Werke GmbH").
 _ENTITY = re.compile(
-    r"\b((?:[A-Z][\w&'’-]*[ \t]+){1,4}(?i:" + _SUFFIX_ALTERNATION + r"))\b"
+    r"\b((?:[A-Z][\w&'’-]*[ \t]+){1,4}" + _SUFFIX_ALTERNATION + r")\b"
 )
 
 
@@ -83,7 +105,11 @@ def entity_tokens(text: str) -> Set[str]:
     the names they already know with `mask_cast_names` BEFORE calling this,
     rather than asking this function to guess; it stays a plain,
     context-free matcher. The suffix is matched case-insensitively
-    (Limited/limited, GmbH/GMBH all count).
+    (Limited/limited, GmbH/GMBH all count) EXCEPT "SpA", which is matched
+    only in its exact canonical case — see the module-level comment above
+    `_CASE_SENSITIVE_SUFFIXES` for why: unlike every other suffix here, its
+    lower- and upper-case forms ("spa", "SPA") are ordinary English/business
+    words in their own right.
     """
     return {match.group(1).strip() for match in _ENTITY.finditer(text)}
 

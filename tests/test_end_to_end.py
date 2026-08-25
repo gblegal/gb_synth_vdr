@@ -127,6 +127,20 @@ def test_a_superseded_figure_fails_gate_13(xs_room):
     assert gate_13_fact_sheet(ctx_for(xs_room)).status == "FAIL"
 
 
+def test_a_dangling_cross_link_fails_gate_17(xs_room):
+    # Task 20 fix round 1, D2: synthvdr.schema.validate() used to run nowhere
+    # in the pipeline, only as a manual /vdr-findings step — a findings.yaml
+    # with a cross_links entry pointing nowhere loaded and passed every other
+    # gate cleanly. gate_17_answer_key_validation closes that gap.
+    import yaml
+
+    path = xs_room / "_key" / "findings.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["findings"][0]["cross_links"] = ["NO-SUCH-FINDING"]
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    assert run_gates(ctx_for(xs_room), ALL_GATES) == 1
+
+
 def test_an_unaudited_finding_fails_gate_15(xs_room):
     import yaml
 

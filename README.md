@@ -28,7 +28,7 @@ Six `/vdr-*` skills, run in this order, each gated on the previous one closing o
    document, one `vdr-auditor` confirming each finding is reachable without the key),
    consolidating any mid-authoring discoveries and running the QA gates after every wave.
    Resumable: re-running continues from `_key/build-status.md` rather than starting over.
-4. **`/vdr-qa`** — runs the sixteen QA gates (`python3 -m synthvdr.qa --room .`) that hold
+4. **`/vdr-qa`** — runs the seventeen QA gates (`python3 -m synthvdr.qa --room .`) that hold
    the room together: index regeneration, leakage sweeps, twin invariants, carrier census,
    cross-references, depth lint, subset and fact-sheet reconciliation, the unchecked-name
    sweep, discoverability and render parity.
@@ -122,10 +122,14 @@ only ever prove a *hit* — that a search returned something. **A search returni
 not proof that no such company, brand, product, site or domain exists**: dormant companies,
 recently deregistered entities and non-English-language markets will not reliably surface in
 a web search, and gate 14's entity-suffix pattern can also both miss a genuine unchecked name
-with an unlisted suffix and flag ordinary text that happens to end in a recognised one (this
-project's own XS fixture hits exactly that case — an M&A document heading containing "draft
-SPA" collides with the Italian "S.p.A." corporate-suffix pattern, and has to be checked and
-cleared by hand in `_key/name-check.md`, the same as a real invented name would be). Treat a
+with an unlisted suffix, and — for any suffix whose own upper- or lower-case spelling happens
+to coincide with an ordinary English or business word — flag ordinary prose that never named a
+company at all (this project's own domain pack tripped exactly that case during Task 20's
+first end-to-end run: a document heading containing "draft SPA", the standard M&A shorthand
+for a Share Purchase Agreement, was read as the Italian "S.p.A." corporate suffix. Fixed by
+matching that one suffix in its exact canonical case only, `synthvdr.names.ENTITY_SUFFIXES`
+still carries a small, closed list of corporate-suffix tokens, and any future addition to it
+should be checked against the same question before being matched case-insensitively). Treat a
 clean check as lowered risk, never as a guarantee.
 
 **Determinism is a claim about structure, not about prose.** Every *structural* artefact this

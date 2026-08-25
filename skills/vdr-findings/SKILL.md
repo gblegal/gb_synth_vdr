@@ -190,7 +190,9 @@ Path("_key/findings.md").write_text(render_findings_md(f, room_codename))
 
 Fix every error `validate` reports before proceeding — do not hand-wave past one because it
 looks cosmetic; each one corresponds to a real downstream gate that would otherwise fail
-much later, with far less context about why.
+much later, with far less context about why. `/vdr-qa`'s gate 17 runs this exact check again
+as an automated backstop, so an error left unfixed here does not ship silently — but a real
+error is far cheaper to fix now, before a single document exists, than after a full build.
 
 Then set `EXPECTED_KDP_CARRIERS` in `room.conf` to `len(f.all_evidence_paths())` — the
 number of *distinct* documents named across every finding's `source` and `corroboration`

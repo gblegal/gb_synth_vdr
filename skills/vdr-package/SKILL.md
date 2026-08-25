@@ -19,7 +19,7 @@ python3 -m synthvdr.qa --room . --strict
 
 **Do not package a room with any failure or any skip.** `--strict` turns every skip into a
 hard failure — that is deliberate here, not incidental. A room you are handing to someone
-else must have had every one of the sixteen gates actually run, never quietly skipped because
+else must have had every one of the seventeen gates actually run, never quietly skipped because
 a render tree or a subset directory happened not to exist yet. If a gate fails or skips, fix
 it or build the missing input (see `/vdr-qa`'s "Common failures" section) and re-run this
 step until it is clean before doing anything else in this skill.

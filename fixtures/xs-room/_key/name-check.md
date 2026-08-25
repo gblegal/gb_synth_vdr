@@ -16,5 +16,4 @@ does not eliminate it.
 | halsteadfasteners.example | domain | clear | 2026-08-20 | Domain unregistered. |
 | Priya Nandan | person | clear | 2026-08-20 | Not a public figure. |
 | Owen Kasprzak | person | clear | 2026-08-20 | Not a public figure. |
-| Draft spa | entity | clear | 2026-08-20 | Not a company. The 18.2_draft-spa slot's heading text collides with the Italian "S.p.A." corporate-suffix pattern in synthvdr.names.ENTITY_SUFFIXES; checked and confirmed no entity is referenced. |
 
