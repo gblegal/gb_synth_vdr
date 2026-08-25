@@ -342,3 +342,45 @@ def test_cli_rejects_an_empty_markdown_report_cleanly(room, capsys):
     assert code == 2
     assert captured.out == ""
     assert "Traceback" not in captured.err
+
+
+# --- F1/F2 wired end-to-end through the CLI -----------------------------------
+
+
+def test_cli_shows_a_visible_correction_when_an_adjudication_overrides_a_prematch(room, capsys):
+    out_path = write_output(room, documents=[SRC])  # prematches to ENV-1
+    write_adjudications(
+        room,
+        "adjudications:\n  - tool_index: 0\n    finding_id: EMP-2\n    reason: \"actually this one\"\n",
+    )
+    code = main(["score", str(out_path), "--room", str(room)])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "Adjudications that overrode a pre-match" in captured.out
+    assert "| 0 | ENV-1 | EMP-2 |" in captured.out
+
+
+def test_cli_shows_distractor_citations_bundled_with_a_real_finding(room, capsys):
+    (room / "_key" / "distractors.yaml").write_text(
+        "distractors:\n  - id: DX-1\n    title: Trap\n    location: 11_environmental-hs/11.4_hse-notices/11.4.1_notice.md\n"
+        "    resolution: 11_environmental-hs/11.4_hse-notices/11.4.2_resolved.md\n",
+        encoding="utf-8",
+    )
+    out_path = write_multi_output(
+        room,
+        "out.json",
+        [
+            {
+                "title": "bundled",
+                "severity": "high",
+                "documents": [SRC, "11_environmental-hs/11.4_hse-notices/11.4.1_notice.md"],
+                "summary": "s",
+            }
+        ],
+    )
+    code = main(["score", str(out_path), "--room", str(room)])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "Distractor citations inside otherwise-matched reports:** 1" in captured.out
+    assert "DX-1" in captured.out
+    assert "False alarms (distractors reported):** 0" in captured.out

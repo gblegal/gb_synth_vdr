@@ -96,6 +96,23 @@ class ToolOutput:
 
 @dataclass(frozen=True)
 class Adjudication:
+    """One adjudicator judgement for one reported finding.
+
+    finding_id is the COMPLETE set of findings tool_index should be
+    credited with — not an addition to whatever prematch already found.
+    score() always overwrites, never merges, because overwrite is the
+    primitive a correction needs: `finding_id: null` (or an empty list,
+    the same thing) removes a wrong pre-match, and an additive merge would
+    make that unexpressible. In the normal workflow the adjudicator is
+    only ever shown reports prematch could not resolve at all, so naming a
+    tool_index prematch DID already resolve is, by definition, a
+    correction, not an addition — score() records it as one in
+    Scorecard.corrections (before -> after) precisely so that is visible
+    rather than inferred, and an adjudicator who intended to add credit on
+    top of an existing match sees immediately that they replaced it
+    instead.
+    """
+
     tool_index: int
     finding_id: Optional[Union[str, List[str]]]
     reason: str
@@ -107,10 +124,12 @@ class Scorecard:
     recall: float
     precision: float
     false_alarms: List[str]
+    distractor_citations: List[str]
     partial_trails: List[str]
     misses: List[str]
     hit_table: List[Tuple[str, str, bool]]
     unadjudicated: List[int]
+    corrections: List[Tuple[int, List[str], List[str]]]
 
 
 class ProvenanceError(Exception):
@@ -480,23 +499,42 @@ def score(
     # reassigns the match for that index; an empty one (from finding_id
     # None, or an explicit empty list) is a positive confirmation that the
     # index matches nothing, which must be able to remove a pre-match too,
-    # not just decline to add one.
+    # not just decline to add one. In the normal workflow the adjudicator is
+    # only ever shown reports prematch left unmatched, so an adjudication
+    # naming an index prematch already resolved is, by definition, a
+    # correction — recorded here (before -> after) so overwriting a
+    # pre-match is always visible on the scorecard, never silent.
+    corrections: List[Tuple[int, List[str], List[str]]] = []
     for index, ids in adjudicated.items():
+        before = matched.get(index)
+        if before is not None:
+            corrections.append((index, before, ids))
         if ids:
             matched[index] = ids
         else:
             matched.pop(index, None)
     still_unmatched = [i for i in unmatched if i not in adjudicated]
+    corrections.sort(key=lambda c: c[0])
 
+    # A distractor cited inside an otherwise-matched report is not a false
+    # alarm — the report also cites real evidence, so the tool made a
+    # genuine find — but it should not vanish either, since it shows the
+    # trap partly worked. false_alarms keeps its existing meaning (a
+    # distractor cited by a report matching nothing); distractor_citations
+    # is the separate, explicitly-labelled record of the bundled case, so
+    # precision and false_alarms are never corrupted by it while the fact
+    # is still visible on the scorecard.
     distractor_docs = {d.location: d.id for d in distractors}
     false_alarms: List[str] = []
+    distractor_citations: List[str] = []
     for index, reported in enumerate(output.findings):
-        if index in matched:
+        distractor_id = next((distractor_docs[d] for d in reported.documents if d in distractor_docs), None)
+        if distractor_id is None:
             continue
-        for document in reported.documents:
-            if document in distractor_docs:
-                false_alarms.append(distractor_docs[document])
-                break
+        if index in matched:
+            distractor_citations.append(distractor_id)
+        else:
+            false_alarms.append(distractor_id)
 
     # Recall counts distinct findings matched by anything, across every
     # report — a finding hit by two reports is still one finding found.
@@ -541,10 +579,12 @@ def score(
         recall=recall,
         precision=precision,
         false_alarms=sorted(set(false_alarms)),
+        distractor_citations=sorted(set(distractor_citations)),
         partial_trails=sorted(set(partial)),
         misses=sorted(f.id for f in findings.findings if f.id not in found_ids),
         hit_table=[(f.id, f.severity, f.id in found_ids) for f in findings.findings],
         unadjudicated=still_unmatched,
+        corrections=corrections,
     )
 
 
@@ -568,6 +608,14 @@ def render_scorecard(
         f"- **Precision:** {card.precision:.0%}",
         f"- **False alarms (distractors reported):** {len(card.false_alarms)}"
         + (f" — {', '.join(card.false_alarms)}" if card.false_alarms else ""),
+        f"- **Distractor citations inside otherwise-matched reports:** {len(card.distractor_citations)}"
+        + (f" — {', '.join(card.distractor_citations)}" if card.distractor_citations else "")
+        + (
+            " (a genuine find that also fell for part of a trap — not a false alarm, "
+            "since the report matched a real finding, but the trap partly worked)"
+            if card.distractor_citations
+            else ""
+        ),
         f"- **Partial trails (multi-document findings cited incompletely):** {len(card.partial_trails)}"
         + (f" — {', '.join(card.partial_trails)}" if card.partial_trails else ""),
         "",
@@ -582,6 +630,23 @@ def render_scorecard(
     lines += ["", "## Per-finding result", "", "| Finding | Severity | Result |", "|---|---|---|"]
     for finding_id, severity, hit in card.hit_table:
         lines.append(f"| {finding_id} | {severity} | {'hit' if hit else 'miss'} |")
+    if card.corrections:
+        lines += [
+            "",
+            "## Adjudications that overrode a pre-match",
+            "",
+            "The adjudicator is only ever shown reports the deterministic pre-match left "
+            "unmatched, so each row below named an index pre-match had already resolved — "
+            "these are corrections, not additions, and replace rather than add to the "
+            "pre-match credit shown in \"before\".",
+            "",
+            "| Tool index | Pre-match (before) | Adjudicated to (after) |",
+            "|---|---|---|",
+        ]
+        for index, before, after in card.corrections:
+            before_text = ", ".join(before) if before else "—"
+            after_text = ", ".join(after) if after else "(none — removed)"
+            lines.append(f"| {index} | {before_text} | {after_text} |")
     if provisional:
         lines += [
             "",

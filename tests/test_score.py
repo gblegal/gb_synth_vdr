@@ -38,6 +38,7 @@ from synthvdr.score import (
     ToolFinding,
     ToolOutput,
     ToolOutputError,
+    _normalize_finding_ids,
     check_provenance,
     load_adjudications,
     load_adjudications_for_room,
@@ -357,6 +358,8 @@ _SUBPROCESS_SCRIPT = textwrap.dedent(
         Distractor(id="DX-1", title="a", location="dx1.md", resolution="r1.md"),
         Distractor(id="DX-2", title="b", location="dx2.md", resolution="r2.md"),
         Distractor(id="DX-3", title="c", location="dx3.md", resolution="r3.md"),
+        Distractor(id="DX-4", title="d", location="dx4.md", resolution="r4.md"),
+        Distractor(id="DX-5", title="e", location="dx5.md", resolution="r5.md"),
     ]
     output = ToolOutput(
         tool="acme/1.0",
@@ -369,6 +372,19 @@ _SUBPROCESS_SCRIPT = textwrap.dedent(
             ToolFinding("t5", "low", ["dx3.md"], "s"),
             ToolFinding("t6", "high", [], "s"),
             ToolFinding("t7", "high", [], "s"),
+            # A single report evidencing two findings at once — the new
+            # many-to-many code path this test exists to cover. Built from
+            # a set and sorted before rendering, so which order the two
+            # source documents are listed in here must not matter, and
+            # neither should PYTHONHASHSEED.
+            ToolFinding("t8", "medium", ["src3.md", "src4.md"], "s"),
+            # A distractor bundled with a real citation: a genuine find
+            # that also cites a trap, which must land in
+            # distractor_citations, not false_alarms — two of these, so
+            # that set (like false_alarms and partial_trails above) has
+            # >=2 entries for a missing sorted() to disagree about.
+            ToolFinding("t9", "high", ["src1.md", "dx4.md"], "s"),
+            ToolFinding("t10", "medium", ["src2.md", "dx5.md"], "s"),
         ],
     )
     card = score(output, findings, distractors)
@@ -391,13 +407,18 @@ def test_render_scorecard_is_byte_identical_across_processes_with_different_hash
     the life of one process — two calls in it agree even when the
     underlying ordering is not truly stable. This fixture deliberately
     carries >=2 entries in every set-derived collection (false_alarms,
-    partial_trails) so a missing sorted() has something to disagree about.
+    partial_trails, distractor_citations) so a missing sorted() has
+    something to disagree about, AND a report (t8) that matches two
+    findings at once, so prematch's set-built, sorted match list is
+    exercised here too — reversing internal set iteration order must not
+    change which findings a many-to-many report is credited with.
     """
     first = _render_in_subprocess("1")
     second = _render_in_subprocess("4242")
     assert first == second
     assert "DX-1" in first and "DX-2" in first and "DX-3" in first
     assert "ENV-1" in first and "ENV-2" in first
+    assert "FIN-2" in first and "FIN-3" in first
 
 
 # --- adjudications: auto-load, validate, and take precedence -----------------
@@ -783,3 +804,117 @@ def test_load_tool_output_accepts_a_markdown_report_with_findings(tmp_path):
     loaded = load_tool_output(path)
     assert len(loaded.findings) == 1
     assert loaded.findings[0].documents == [SRC]
+
+
+# --- F1: an adjudication overriding a pre-match must be a visible correction -
+
+
+def test_normalize_finding_ids_deduplicates_and_sorts():
+    # F3: the claim the docstring makes but nothing verified.
+    assert _normalize_finding_ids(["ENV-1", "ENV-1", "EMP-2"]) == ["EMP-2", "ENV-1"]
+
+
+def test_normalize_finding_ids_treats_none_and_empty_list_identically():
+    assert _normalize_finding_ids(None) == _normalize_finding_ids([]) == []
+
+
+def test_adjudication_overriding_a_two_finding_prematch_is_a_visible_correction():
+    """The exact bug from review: a report pre-matched to two findings via
+    citations, then adjudicated to a third. Overwrite is kept (that is the
+    correction primitive) but the loss of the first two findings' credit
+    must be visible on the scorecard, not silent — the previous test only
+    ever exercised a one-element pre-match, which is why this slipped
+    through.
+    """
+    fin_src = "02_financial/2.1_provisions/2.1.1_x.md"
+    key = FindingSet(
+        [
+            Finding(id="ENV-1", title="a", severity="critical", workstream="environmental",
+                    multi_document=False, source=SRC, location="x", substance="s"),
+            Finding(id="EMP-2", title="b", severity="medium", workstream="employment",
+                    multi_document=False,
+                    source="09_employment/9.1_contracts/9.1.4_consultancy.md",
+                    location="y", substance="s"),
+            Finding(id="FIN-3", title="c", severity="high", workstream="financial",
+                    multi_document=False, source=fin_src, location="z", substance="s"),
+        ],
+        "Three Findings",
+    )
+    emp_src = "09_employment/9.1_contracts/9.1.4_consultancy.md"
+    out = output(ToolFinding("both", "high", [SRC, emp_src], "x"))
+
+    before_card = score(out, key, [])
+    assert before_card.recall == pytest.approx(2 / 3)
+    assert before_card.misses == ["FIN-3"]
+    assert before_card.corrections == []
+
+    after_card = score(out, key, [], adjudications=[Adjudication(0, "FIN-3", "actually this one")])
+    assert after_card.recall == pytest.approx(1 / 3)
+    assert after_card.misses == ["EMP-2", "ENV-1"]
+    assert after_card.corrections == [(0, ["EMP-2", "ENV-1"], ["FIN-3"])]
+
+    text = render_scorecard(after_card, out, key)
+    assert "Adjudications that overrode a pre-match" in text
+    assert "| 0 | EMP-2, ENV-1 | FIN-3 |" in text
+
+
+def test_adjudication_with_an_empty_list_removes_a_prematch_like_null():
+    out = output(ToolFinding("Land issue", "critical", [SRC], "x"))
+    card_null = score(out, findings(), distractors(), adjudications=[Adjudication(0, None, "false positive")])
+    card_empty_list = score(
+        out, findings(), distractors(), adjudications=[Adjudication(0, [], "false positive")]
+    )
+    assert card_null.hit_table == card_empty_list.hit_table
+    assert card_null.hit_table == [("ENV-1", "critical", False), ("EMP-2", "medium", False)]
+    assert card_null.corrections == card_empty_list.corrections == [(0, ["ENV-1"], [])]
+
+
+def test_adjudication_with_a_duplicate_id_in_the_list_is_deduplicated():
+    out = output(ToolFinding("Land issue", "critical", [SRC], "x"))
+    card = score(
+        out, findings(), distractors(), adjudications=[Adjudication(0, ["EMP-2", "EMP-2"], "dup")]
+    )
+    assert card.corrections == [(0, ["ENV-1"], ["EMP-2"])]
+    assert card.hit_table == [("ENV-1", "critical", False), ("EMP-2", "medium", True)]
+
+
+def test_an_adjudication_that_does_not_override_a_prematch_is_not_a_correction():
+    # The normal case — adjudicating a report prematch left unmatched —
+    # must not show up in corrections at all.
+    out = output(ToolFinding("Something", "medium", [], "misclassified contractors"))
+    card = score(out, findings(), distractors(), adjudications=[Adjudication(0, "EMP-2", "clear")])
+    assert card.corrections == []
+
+
+# --- F2: a distractor bundled with a real citation is not a false alarm -----
+
+
+def test_distractor_cited_alongside_a_real_finding_is_not_a_false_alarm():
+    out = output(ToolFinding("bundled", "high", [SRC, DX_DOC], "x"))
+    card = score(out, findings(), distractors())
+    assert card.false_alarms == []
+    assert card.precision == 1.0
+    assert card.distractor_citations == ["DX-1"]
+
+
+def test_the_same_distractor_cited_alone_is_still_a_false_alarm():
+    out = output(ToolFinding("alone", "high", [DX_DOC], "x"))
+    card = score(out, findings(), distractors())
+    assert card.false_alarms == ["DX-1"]
+    assert card.precision == 0.0
+    assert card.distractor_citations == []
+
+
+def test_render_scorecard_shows_distractor_citations_as_their_own_line():
+    out = output(ToolFinding("bundled", "high", [SRC, DX_DOC], "x"))
+    card = score(out, findings(), distractors())
+    text = render_scorecard(card, out, findings())
+    assert "Distractor citations inside otherwise-matched reports:** 1" in text
+    assert "DX-1" in text
+
+
+def test_render_scorecard_omits_distractor_citation_caveat_when_none_occurred():
+    out = output(ToolFinding("Land issue", "critical", [SRC], "x"))
+    card = score(out, findings(), distractors())
+    text = render_scorecard(card, out, findings())
+    assert "Distractor citations inside otherwise-matched reports:** 0" in text
