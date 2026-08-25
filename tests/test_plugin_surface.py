@@ -34,7 +34,13 @@ import yaml
 
 import synthvdr
 from synthvdr.qa.structural import SLOT_REF, parse_gaps_allowlist
-from synthvdr.schema import load_distractors, load_findings, render_findings_md, validate
+from synthvdr.schema import (
+    allocate_new_finding_ids,
+    load_distractors,
+    load_findings,
+    render_findings_md,
+    validate,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 SKILL_NAMES = ("vdr-scope", "vdr-findings", "vdr-build", "vdr-qa", "vdr-package", "vdr-score")
@@ -324,6 +330,77 @@ def test_incoming_example_in_build_skill_validates_as_findings(tmp_path):
     assert errors == [], f"the skill's own incoming.yaml example fails validate(): {errors}"
 
 
+NEW_FINDING_ID = re.compile(r"\A(?P<label>.+)-NEW-\d+\Z")
+
+
+def test_new_findings_example_in_build_skill_has_full_finding_shape(tmp_path):
+    """A `new_findings:` row (Task 18 fix round 1 — design spec §5.1: a finding discovered
+    during authoring, not part of the Gate-B registry) carries a *provisional* id instead of
+    a real one, but every other field is exactly the `findings.yaml` shape — it must load and
+    validate the same way a real finding would once its id is swapped for a real one, or an
+    author copying this example would produce a row `/vdr-build`'s consolidation step chokes
+    on before it ever reaches `allocate_new_finding_ids`.
+    """
+    path = ROOT / "skills" / "vdr-build" / "SKILL.md"
+    new_findings_yaml = find_example_by_top_level_key(yaml_examples(path), "new_findings", path)
+    doc = yaml.safe_load(new_findings_yaml)
+    rows = doc["new_findings"]
+    assert rows, "the new_findings.yaml example in the skill has no rows"
+
+    for row in rows:
+        match = NEW_FINDING_ID.match(row["id"])
+        assert match, f"{row['id']!r} is not a <label>-NEW-<n> provisional id"
+
+    # Swap each provisional id for a placeholder real one — the shape check is about every
+    # OTHER field, not the id itself, which is deliberately not real-finding-shaped yet.
+    findings_doc = {
+        "findings": [{**row, "id": f"PLACEHOLDER-{i}"} for i, row in enumerate(rows, start=1)]
+    }
+    findings_path = tmp_path / "new-findings-example.yaml"
+    findings_path.write_text(yaml.safe_dump(findings_doc), encoding="utf-8")
+
+    findings = load_findings(findings_path)
+    errors = validate(findings, [])
+    assert errors == [], f"the skill's own new_findings.yaml example fails validate(): {errors}"
+
+
+def test_new_findings_example_in_build_skill_allocates_deterministically_across_two_agents():
+    """The `new_findings:` example must survive the exact allocation `/vdr-build`'s
+    consolidation step performs (`synthvdr.schema.allocate_new_finding_ids`), and that
+    allocation must give the same answer regardless of which order two parallel authors'
+    incoming files were read in (Task 18 fix round 1 — an author never picks its own real
+    finding id, because two authors racing for the same workstream would collide). Paired
+    here with a second discovery in the SAME workstream from the same label (the case that
+    actually depends on sort order — two discoveries in different workstreams never collide
+    regardless of order, so a test using only those would pass even with the sort removed)
+    and a third, independently labelled discovery for a different workstream, to exercise the
+    actual multi-author scenario `/vdr-build` fans a wave out into. The shipped row supplies
+    one discovery; the other two are synthetic, but only because the shipped example, by
+    design, shows a single author's file with a single discovery, not a whole wave's.
+    """
+    path = ROOT / "skills" / "vdr-build" / "SKILL.md"
+    new_findings_yaml = find_example_by_top_level_key(yaml_examples(path), "new_findings", path)
+    row = yaml.safe_load(new_findings_yaml)["new_findings"][0]
+    label = NEW_FINDING_ID.match(row["id"]).group("label")
+
+    prefix_for_workstream = {row["workstream"]: "ENV", "operations": "OPS"}
+    discoveries = [
+        (label, row["id"], row["workstream"]),
+        (label, f"{label}-NEW-2", row["workstream"]),
+        ("wave2-batch-b", "wave2-batch-b-NEW-1", "operations"),
+    ]
+    existing_ids = {"ENV-1"}
+
+    forward = allocate_new_finding_ids(existing_ids, prefix_for_workstream, discoveries)
+    backward = allocate_new_finding_ids(
+        existing_ids, prefix_for_workstream, list(reversed(discoveries))
+    )
+    assert forward == backward, "allocation must not depend on the order intakes were read in"
+    assert forward[row["id"]] == "ENV-2"
+    assert forward[f"{label}-NEW-2"] == "ENV-3"
+    assert forward["wave2-batch-b-NEW-1"] == "OPS-1"
+
+
 BUILD_STATUS_WAVE_ROW = re.compile(
     r"^\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(PASS|FAIL)\s*\|\s*$", re.MULTILINE
 )
@@ -362,3 +439,29 @@ def test_build_status_example_in_build_skill_proves_the_resume_contract():
         "'Next wave' in the build-status.md example must name exactly one more than the "
         "last completed wave"
     )
+
+
+FINAL_FINDING_ID = re.compile(r"\A[A-Z]+-\d+\Z")
+BUILD_STATUS_NEW_FINDING_ROW = re.compile(
+    r"^\|\s*([\w-]+)\s*\|\s*([A-Z]+-\d+)\s*\|\s*(\w+)\s*\|\s*$", re.MULTILINE
+)
+
+
+def test_build_status_example_new_findings_table_names_real_looking_ids():
+    """`_key/build-status.md`'s "New findings this wave" section (Task 18 fix round 1) is
+    the permanent record design spec §5.1 requires a mid-authoring discovery to be "declared
+    in" — the provisional -> final id mapping `allocate_new_finding_ids` produced. Checked
+    mechanically: every provisional id is `<label>-NEW-<n>` shaped (the only shape an author
+    is ever allowed to write) and every final id is `PREFIX-<n>` shaped (a real, allocated
+    finding id, never a provisional one left unresolved in the permanent record).
+    """
+    path = ROOT / "skills" / "vdr-build" / "SKILL.md"
+    block = find_example_by_marker(markdown_examples(path), "# Build status", path)
+    rows = BUILD_STATUS_NEW_FINDING_ROW.findall(block)
+    assert rows, f"{path}: build-status.md example has no 'New findings this wave' rows"
+    for provisional_id, final_id, workstream in rows:
+        assert NEW_FINDING_ID.match(provisional_id), (
+            f"{provisional_id!r} is not a <label>-NEW-<n> provisional id"
+        )
+        assert FINAL_FINDING_ID.match(final_id), f"{final_id!r} is not a real PREFIX-<n> id"
+        assert workstream, "every 'New findings this wave' row must name its workstream"

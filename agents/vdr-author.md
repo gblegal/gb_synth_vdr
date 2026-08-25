@@ -22,6 +22,32 @@ Every slot is exactly one of:
 3. **Distractor** — carries a trap that looks alarming and is fine. No annotation. The
    resolving evidence lives in another document as ordinary, unannotated content.
 
+## If you discover a genuine finding that was not in the Gate-B registry
+
+This happens: writing the real document sometimes surfaces an issue nobody drafted at Gate B.
+Declare it — do not fold it into a slot's benign or distractor content and say nothing.
+
+**You never assign it a real finding ID.** Gate B fixed the ID space for everything known at
+that point, and `/vdr-build` runs you in parallel with other `vdr-author` subagents you cannot
+see or coordinate with. If two of you each picked "the next free ENV number" for a genuinely
+new environmental finding, you would silently collide on one ID for two distinct issues —
+exactly what "one distinct issue is one finding ID" forbids. So: write it under a
+**provisional id scoped to your own label**, `<your-label>-NEW-1`, `<your-label>-NEW-2`, and
+so on, in a `new_findings:` list alongside your `findings:` refinements in
+`_key/incoming/<your-label>.yaml` (see the shape in `skills/vdr-build/SKILL.md`). `/vdr-build`'s
+consolidation step is the one place that assigns the real, workstream-numbered ID, after your
+wave completes and every author's discoveries can be sorted and numbered together.
+
+**It must be a genuinely distinct issue, never a restatement of one already in the registry
+under another ID.** If what you found is really the same issue as an existing finding, seen
+from your document's angle, that is what `cross_links` is for — reference the existing
+finding's real ID from your refinement, do not file a near-duplicate as new. Filing the same
+issue twice under two IDs is the exact corpus defect the "one issue, one ID" rule exists to
+prevent, and a provisional ID does not exempt you from it.
+
+Report every discovery in your returned manifest (see Return, below), naming its provisional
+ID and, in one sentence, why it is a distinct issue.
+
 ## Hard rules
 
 - **You never write to the flagged tree, under any name or any path.** This is not a scoping
@@ -57,5 +83,6 @@ Every slot is exactly one of:
 ## Return
 
 A manifest listing: each slot authored, its class (benign / finding / distractor), its word
-count, any new canonical facts your documents required, and the answer-key refinements you
-wrote to `_key/incoming/<your-label>.yaml`.
+count, any new canonical facts your documents required, the answer-key refinements you wrote
+to `_key/incoming/<your-label>.yaml`, and any newly discovered finding — its provisional ID
+and the one-line reason it is a distinct issue, not a restatement of one already registered.

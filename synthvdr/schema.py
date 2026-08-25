@@ -263,3 +263,62 @@ def render_findings_md(findings: FindingSet, room_codename: str) -> str:
             "",
         ]
     return "\n".join(lines)
+
+
+def allocate_new_finding_ids(
+    existing_ids,
+    prefix_for_workstream,
+    discoveries,
+):
+    """Deterministically assign real finding IDs to findings discovered mid-authoring.
+
+    Gate B fixes IDs and severities for everything known at that point (`## 5.1` of the
+    design spec). A finding an author genuinely discovers while writing a document is
+    appended with "the next free number in the owning workstream" — but `/vdr-build` fans a
+    wave out across several `vdr-author` subagents running in parallel, with no channel
+    between them, so "the next free number" cannot be something each one picks for itself:
+    two authors racing for the same workstream would silently collide on one number for two
+    distinct issues, which is exactly what the "one distinct issue is one finding ID" rule
+    exists to prevent. So allocation is split from discovery: an author only ever proposes a
+    *provisional* id scoped to its own wave-and-batch label (`<label>-NEW-1`, `<label>-NEW-2`,
+    ...) and never writes a real finding id. This function is the single place, run once by
+    `/vdr-build`'s consolidation step after a wave completes, that turns those proposals into
+    real ids.
+
+    `discoveries` is an iterable of `(label, provisional_id, workstream)` triples — one per
+    `new_findings` row across every `_key/incoming/*.yaml` file the wave produced.
+    `prefix_for_workstream` is the workstream -> finding-id-prefix mapping declared in
+    `room.conf`'s `FINDING_PREFIXES` (this module has no opinion on room.conf, so the caller
+    resolves it once and passes it in). Raises `SchemaError` naming any workstream with no
+    entry there, rather than silently inventing a prefix.
+
+    Returns `{provisional_id: final_id}`.
+
+    Determinism is why allocation is sorted rather than processed in whatever order the
+    incoming files were read: two runs over the *same* intake — the same set of discoveries —
+    must produce the same ids, and dict/glob/filesystem order is not guaranteed stable across
+    a rerun, a different machine, or a different Python version. Sorting by
+    `(label, provisional_id)` before allocating is what makes the numbering reproducible
+    regardless of which subagent happened to finish first or which order its file was read in;
+    it also makes the allocation reviewable, since the mapping the wave manifest declares is
+    exactly the order this function will always produce for that intake.
+    """
+    discoveries = list(discoveries)
+    unknown = sorted({w for _, _, w in discoveries if w not in prefix_for_workstream})
+    if unknown:
+        raise SchemaError(
+            f"no FINDING_PREFIXES entry for workstream(s): {', '.join(unknown)}"
+        )
+
+    next_number: Dict[str, int] = {}
+    for fid in existing_ids:
+        prefix, _, number = fid.rpartition("-")
+        if prefix and number.isdigit():
+            next_number[prefix] = max(next_number.get(prefix, 0), int(number))
+
+    mapping: Dict[str, str] = {}
+    for label, provisional_id, workstream in sorted(discoveries):
+        prefix = prefix_for_workstream[workstream]
+        next_number[prefix] = next_number.get(prefix, 0) + 1
+        mapping[provisional_id] = f"{prefix}-{next_number[prefix]}"
+    return mapping

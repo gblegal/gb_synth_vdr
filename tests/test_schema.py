@@ -4,6 +4,7 @@ import pytest
 
 from synthvdr.schema import (
     SchemaError,
+    allocate_new_finding_ids,
     load_distractors,
     load_findings,
     render_findings_md,
@@ -334,3 +335,70 @@ def test_non_mapping_row_raises_schema_error(tmp_path, loader, top_key):
     path = write(tmp_path, "bad.yaml", text)
     with pytest.raises(SchemaError):
         loader(path)
+
+
+# ---------------------------------------------------------------------------
+# allocate_new_finding_ids — deterministic mid-authoring ID assignment (Task 18 fix round 1:
+# spec section 5.1 requires findings discovered during authoring to be appended with "the
+# next free number in the owning workstream," but /vdr-build fans a wave out across parallel
+# authors with no channel between them, so the allocation itself must be a single, sorted,
+# deterministic pass — never something an author picks for itself.
+# ---------------------------------------------------------------------------
+
+PREFIX_FOR_WORKSTREAM = {"environmental": "ENV", "operations": "OPS", "financial": "FIN"}
+
+
+def test_allocate_new_finding_ids_continues_from_the_highest_existing_number():
+    mapping = allocate_new_finding_ids(
+        existing_ids={"ENV-1", "ENV-2", "FIN-1"},
+        prefix_for_workstream=PREFIX_FOR_WORKSTREAM,
+        discoveries=[("wave2-batch-a", "wave2-batch-a-NEW-1", "environmental")],
+    )
+    assert mapping == {"wave2-batch-a-NEW-1": "ENV-3"}
+
+
+def test_allocate_new_finding_ids_orders_by_label_then_provisional_id():
+    discoveries = [
+        ("wave2-batch-a", "wave2-batch-a-NEW-2", "environmental"),
+        ("wave2-batch-a", "wave2-batch-a-NEW-1", "environmental"),
+    ]
+    mapping = allocate_new_finding_ids(
+        existing_ids=set(), prefix_for_workstream=PREFIX_FOR_WORKSTREAM, discoveries=discoveries
+    )
+    # NEW-1 sorts before NEW-2 within the same label, so it must claim the lower number
+    # regardless of the order the two rows were passed in.
+    assert mapping["wave2-batch-a-NEW-1"] == "ENV-1"
+    assert mapping["wave2-batch-a-NEW-2"] == "ENV-2"
+
+
+def test_allocate_new_finding_ids_is_order_independent_across_reruns():
+    """Two runs over the SAME intake — the same set of discoveries, gathered from two
+    parallel authors' incoming files — must produce the same ids no matter which order the
+    files happened to be read in. Simulated here by reversing the input list, which is the
+    cheapest proxy for "a rerun that globbed the incoming directory in a different order."
+    """
+    discoveries = [
+        ("wave2-batch-b", "wave2-batch-b-NEW-1", "operations"),
+        ("wave2-batch-a", "wave2-batch-a-NEW-1", "environmental"),
+        ("wave2-batch-a", "wave2-batch-a-NEW-2", "environmental"),
+    ]
+    existing_ids = {"ENV-1", "ENV-2", "OPS-3"}
+    forward = allocate_new_finding_ids(existing_ids, PREFIX_FOR_WORKSTREAM, discoveries)
+    backward = allocate_new_finding_ids(
+        existing_ids, PREFIX_FOR_WORKSTREAM, list(reversed(discoveries))
+    )
+    assert forward == backward
+    assert forward == {
+        "wave2-batch-a-NEW-1": "ENV-3",
+        "wave2-batch-a-NEW-2": "ENV-4",
+        "wave2-batch-b-NEW-1": "OPS-4",
+    }
+
+
+def test_allocate_new_finding_ids_raises_on_unknown_workstream():
+    with pytest.raises(SchemaError):
+        allocate_new_finding_ids(
+            existing_ids=set(),
+            prefix_for_workstream=PREFIX_FOR_WORKSTREAM,
+            discoveries=[("wave1-batch-a", "wave1-batch-a-NEW-1", "esg")],
+        )

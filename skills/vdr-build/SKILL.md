@@ -46,6 +46,13 @@ this table until its own gate run above (Step 6) has come back all-PASS):
 | 1 | 45 | PASS |
 | 2 | 45 | PASS |
 
+## New findings this wave
+
+| Provisional id | Final id | Workstream |
+|---|---|---|
+| wave2-batch-a-NEW-1 | ENV-2 | environmental |
+| wave2-batch-b-NEW-1 | OPS-1 | operations |
+
 ## Next wave
 
 Wave 3, slots 91-140 (filler). Not yet started.
@@ -54,6 +61,11 @@ Wave 3, slots 91-140 (filler). Not yet started.
 
 Not started — runs once authoring is complete.
 ```
+
+"New findings this wave" is the permanent record of every provisional -> final ID mapping
+Step 3's consolidation produced for that wave — the wave manifest the design spec requires a
+mid-authoring discovery to be "declared in." An empty wave (nothing discovered) omits the
+section entirely rather than leaving it with no rows.
 
 A wave is only added to the "Waves completed" table once its gate run is clean; a wave that
 failed its gate stays the "Next wave" entry, re-run rather than duplicated, until it passes.
@@ -81,17 +93,29 @@ load-bearing, not just tidy scoping.
 
 ### 3. Consolidate the answer-key refinements
 
-Consolidate `_key/incoming/*.yaml` into `_key/findings.yaml`. Every finding ID inside an
-incoming file must already exist in the Gate-B registry — this step **upserts** the author's
-finalised `location` and `substance` wording (settled only once the real document exists to
-point at) onto the matching finding; it never introduces a finding after Gate B has closed. A
-finding ID with no match in the master registry is a defect in the batch this wave was given,
-not a new finding — stop and fix the batch rather than silently adding it.
+Consolidate `_key/incoming/*.yaml` into `_key/findings.yaml`. Each file carries two different
+things, handled two different ways:
+
+- **`findings:`** — refinements of finding IDs that already exist in the Gate-B registry.
+  This is an **upsert**: the author's finalised `location` and `substance` wording (settled
+  only once the real document exists to point at) overwrites those fields on the matching
+  finding. A `findings:` row whose ID has no match in the master registry is a defect in the
+  batch this wave was given, not a new finding — stop and fix the batch rather than silently
+  adding it.
+- **`new_findings:`** — findings an author genuinely discovered that were not in the Gate-B
+  registry at all (design spec §5.1: "findings discovered during authoring are appended with
+  the next free number in the owning workstream and declared in the wave manifest"). Every row
+  here carries a **provisional ID** (`<label>-NEW-1`, scoped to the author's own label) instead
+  of a real one — an author never assigns itself a real finding ID, because `/vdr-build` runs
+  several authors in parallel with no channel between them, and two authors independently
+  claiming "the next free ENV number" would collide silently on one ID for two distinct
+  issues. Allocating the real ID is this consolidation step's job, done once, after the wave,
+  over every author's discoveries together — never the author's.
 
 The shape each `vdr-author` writes to `_key/incoming/<label>.yaml` (`<label>` is that
 subagent's wave-and-batch identifier, e.g. `wave1-batch-a.yaml`) — copy and adapt, do not
-reconstruct it from memory, since it is exactly `synthvdr.schema`'s `findings.yaml` shape and
-is loaded and validated the same way:
+reconstruct it from memory, since `findings:` is exactly `synthvdr.schema`'s `findings.yaml`
+shape and `new_findings:` rows carry the same required fields, just with a provisional ID:
 
 ```yaml
 findings:
@@ -118,24 +142,65 @@ findings:
       One supplier accounts for the majority of a key input's annual spend, and the master
       supply agreement contains no minimum-volume or exclusivity carve-out addressing that
       concentration.
+new_findings:
+  - id: wave2-batch-a-NEW-1
+    title: Undisclosed related-party balance surfaced in the intercompany schedule
+    severity: high
+    workstream: environmental
+    multi_document: false
+    source: data-room/11_environmental-hs/11.4_permits/11.4.2_variation-notice.md
+    location: "Condition 7"
+    substance: >
+      A permit variation notice tightens a discharge limit the room's other environmental
+      documents never mention meeting or missing — a genuinely new issue, not a restatement
+      of an existing finding.
 ```
 
-Consolidate with an upsert-by-id merge, then re-run `synthvdr.schema.validate` over the
-merged result before writing it back:
+Consolidate with an upsert-by-id merge for `findings:`, then allocate real IDs for every
+`new_findings:` row across *all* of this wave's incoming files together — never per file, or
+two files' provisional IDs could be numbered as if the other did not exist — using
+`synthvdr.schema.allocate_new_finding_ids`. Sorting the discoveries by `(label,
+provisional_id)` before allocating, which that function does internally, is what makes the
+result **deterministic**: the same set of discoveries numbers the same way on a rerun no
+matter which order the incoming files were read in, because nothing here depends on
+filesystem or dict iteration order. `prefix_for_workstream` is built once from `room.conf`'s
+`FINDING_PREFIXES`, in the same workstream order the domain pack declares them:
 
 ```python
 import yaml
 from pathlib import Path
-from synthvdr.schema import load_findings, load_distractors, validate
+from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
+from synthvdr.roomconf import load_room_conf
+from synthvdr.schema import allocate_new_finding_ids, load_findings, load_distractors, validate
+
+conf = load_room_conf(Path("room.conf"))
+pack = load_domain(DEFAULT_DOMAIN_ROOT)
+# FINDING_PREFIXES is one token per workstream, in the same order vdr-scope declared them:
+# the domain pack's own finding_archetypes order (its dict preserves the YAML file's order).
+prefix_for_workstream = dict(zip(pack.finding_archetypes, conf.get("FINDING_PREFIXES").split("|")))
 
 master = yaml.safe_load(Path("_key/findings.yaml").read_text()) or {"findings": []}
 by_id = {row["id"]: row for row in master["findings"]}
+
+discoveries = []          # (label, provisional_id, workstream)
+new_rows_by_provisional = {}
 for incoming_path in sorted(Path("_key/incoming").glob("*.yaml")):
+    label = incoming_path.stem
     incoming = yaml.safe_load(incoming_path.read_text()) or {}
     for row in incoming.get("findings") or []:
         if row["id"] not in by_id:
             raise SystemExit(f"{incoming_path}: {row['id']} is not in the Gate B registry")
         by_id[row["id"]].update(row)
+    for row in incoming.get("new_findings") or []:
+        discoveries.append((label, row["id"], row["workstream"]))
+        new_rows_by_provisional[row["id"]] = row
+
+mapping = allocate_new_finding_ids(set(by_id), prefix_for_workstream, discoveries)
+for provisional_id, final_id in mapping.items():
+    row = dict(new_rows_by_provisional[provisional_id])
+    row["id"] = final_id
+    by_id[final_id] = row
+
 master["findings"] = list(by_id.values())
 Path("_key/findings.yaml").write_text(yaml.safe_dump(master, sort_keys=False))
 
@@ -144,6 +209,11 @@ d = load_distractors(Path("_key/distractors.yaml"))
 errors = validate(f, d)
 assert not errors, errors
 ```
+
+Record `mapping` (provisional ID -> final ID) in `_key/build-status.md`'s "New findings this
+wave" section (see the literal shape in "Resume" above) — this is the wave manifest's permanent record
+that the spec requires, and it is what lets anyone reconstruct, after the fact, which
+document actually surfaced which finding.
 
 ### 4. Reconcile new canonical facts
 
@@ -174,9 +244,11 @@ print(build_flagged_tree(Path('.'), conf, load_findings(Path('_key/findings.yaml
 ### 7. Update the build status
 
 Update `_key/build-status.md`: append this wave's number, the slots it authored, and the gate
-result to the "Waves completed" table, then rewrite "Next wave" to name exactly one more than
-the wave you just appended (see the literal shape above) — never leave the file pointing at a
-wave number that has already run, and never skip a number.
+result to the "Waves completed" table, add a row to "New findings this wave" for every
+provisional -> final ID Step 3 just allocated (omit the section if this wave discovered
+nothing), then rewrite "Next wave" to name exactly one more than the wave you just appended
+(see the literal shape above) — never leave the file pointing at a wave number that has
+already run, and never skip a number.
 
 Do not start the next wave while any gate is failing. A wave whose gate run failed is not
 recorded in "Waves completed" at all; it stays the resume target until it passes.
