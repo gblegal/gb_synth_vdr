@@ -4,7 +4,14 @@ from pathlib import Path
 import pytest
 
 from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
-from synthvdr.index_build import _titleise, count_slots, render_index, write_index_sources
+from synthvdr.index_build import (
+    INDEX_SRC_MARKER_NAME,
+    IndexBuildError,
+    _titleise,
+    count_slots,
+    render_index,
+    write_index_sources,
+)
 from synthvdr.slots import SIZE_PRESETS, build_slot_manifest
 
 
@@ -14,6 +21,105 @@ def sources(tmp_path, preset="S"):
     src = tmp_path / "_key" / "index-src"
     write_index_sources(slots, pack, src)
     return pack, slots, src
+
+
+def _pack_and_slots(preset="S"):
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    slots = build_slot_manifest(pack, SIZE_PRESETS[preset])
+    return pack, slots
+
+
+# ---------------------------------------------------------------------------
+# Ownership guard (reused from synthvdr.ownership, not re-derived here)
+# ---------------------------------------------------------------------------
+
+
+def test_refuses_foreign_directory_and_leaves_victim_files_intact(tmp_path):
+    """A non-empty directory without the marker must be refused, and refused
+    BEFORE anything is deleted. Assert the victim file's content survives,
+    not merely that an exception was raised — a test that only checks for
+    the exception would still pass against code that deletes first and
+    raises afterwards."""
+    foreign = tmp_path / "notes"
+    foreign.mkdir()
+    (foreign / "keep.txt").write_text("do not touch", encoding="utf-8")
+    (foreign / "meeting-notes.md").write_text("agenda for Tuesday", encoding="utf-8")
+    (foreign / "todo.md").write_text("buy milk", encoding="utf-8")
+
+    pack, slots = _pack_and_slots()
+    with pytest.raises(IndexBuildError):
+        write_index_sources(slots, pack, foreign)
+
+    assert (foreign / "keep.txt").read_text(encoding="utf-8") == "do not touch"
+    assert (foreign / "meeting-notes.md").read_text(encoding="utf-8") == "agenda for Tuesday"
+    assert (foreign / "todo.md").read_text(encoding="utf-8") == "buy milk"
+
+
+def test_proceeds_on_empty_directory(tmp_path):
+    empty = tmp_path / "index-src"
+    empty.mkdir()
+    pack, slots = _pack_and_slots()
+    write_index_sources(slots, pack, empty)
+    assert (empty / "00_preamble.txt").exists()
+
+
+def test_proceeds_on_nonexistent_directory(tmp_path):
+    missing = tmp_path / "does" / "not" / "exist"
+    pack, slots = _pack_and_slots()
+    write_index_sources(slots, pack, missing)
+    assert (missing / "00_preamble.txt").exists()
+
+
+def test_proceeds_on_directory_already_carrying_the_marker(tmp_path):
+    marked = tmp_path / "index-src"
+    marked.mkdir()
+    (marked / INDEX_SRC_MARKER_NAME).write_text("anything", encoding="utf-8")
+    (marked / "stale.md").write_text("old content", encoding="utf-8")
+    pack, slots = _pack_and_slots()
+    write_index_sources(slots, pack, marked)
+    assert (marked / "00_preamble.txt").exists()
+    assert not (marked / "stale.md").exists()
+
+
+def test_two_consecutive_calls_succeed_without_lockout(tmp_path):
+    """The marker written on the first call must not lock the second call
+    out of the directory it created."""
+    src = tmp_path / "index-src"
+    pack, slots = _pack_and_slots()
+    write_index_sources(slots, pack, src)
+    write_index_sources(slots, pack, src)  # must not raise
+    assert (src / INDEX_SRC_MARKER_NAME).exists()
+
+
+def test_marker_is_invisible_to_render_index(tmp_path):
+    """The marker is a dotfile: render_index() only reads 00_preamble.txt by
+    name and globs *.md, so the marker must not appear in, or disturb, the
+    generated index text."""
+    _, _, src = sources(tmp_path)
+    assert (src / INDEX_SRC_MARKER_NAME).exists()
+
+    text_with_marker = render_index(src)
+    (src / INDEX_SRC_MARKER_NAME).unlink()
+    text_without_marker = render_index(src)
+
+    assert INDEX_SRC_MARKER_NAME not in text_with_marker
+    assert text_with_marker == text_without_marker
+
+
+def test_stale_md_files_are_still_cleared_on_regeneration(tmp_path):
+    """Regression guard for the reason the delete loop exists at all: a
+    stale section file left over from a previous, larger build must not
+    survive into the regenerated index-src."""
+    src = tmp_path / "index-src"
+    pack, slots = _pack_and_slots()
+    write_index_sources(slots, pack, src)
+
+    stale = src / "99_now_removed_section.md"
+    stale.write_text("this section no longer exists", encoding="utf-8")
+
+    write_index_sources(slots, pack, src)
+
+    assert not stale.exists()
 
 
 def test_index_lists_every_slot_exactly_once(tmp_path):
