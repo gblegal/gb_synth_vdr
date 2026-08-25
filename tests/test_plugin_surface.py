@@ -1186,3 +1186,46 @@ def test_adjudications_example_in_score_skill_loads_via_the_real_parser(tmp_path
     # against the fixed fixture above — never against anything sized or named from
     # `adjudications` itself.
     validate_adjudications(adjudications, _ADJUDICATION_FIXTURE_OUTPUT, _ADJUDICATION_FIXTURE_FINDINGS)
+
+
+def test_pyproject_declares_its_own_packages():
+    """`pip install -e .` — the first command in TECHNICAL-NOTES §1 — must actually work.
+
+    This repository is a flat layout: `synthvdr/` sits beside `agents/`, `skills/`,
+    `domain/`, `schemas/`, `fixtures/`, `tests/` and `tools/`. Given more than one
+    top-level candidate and no explicit declaration, setuptools refuses to build at all
+    ("Multiple top-level packages discovered in a flat-layout"), and every documented
+    install command fails.
+
+    Nothing else in this suite catches that, because pytest imports `synthvdr` from the
+    repo root — the tested path and the *documented* path are disjoint, which is exactly
+    how the defect this test guards reached master. Assert the declaration is present and
+    still resolves to the Python package alone.
+    """
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert "[build-system]" in text, "pyproject.toml declares no build backend"
+    assert "[tool.setuptools.packages.find]" in text, (
+        "pyproject.toml does not declare its packages, so setuptools falls back to "
+        "flat-layout auto-discovery and refuses to build"
+    )
+
+    # Every importable package in the repo, discovered the way setuptools would, but
+    # without importing setuptools — a bare venv on 3.12+ no longer ships it, and this
+    # test must not need a build backend installed to say whether one is configured.
+    packages = {
+        ".".join(d.relative_to(ROOT).parts)
+        for d in ROOT.rglob("__init__.py")
+        for d in [d.parent]
+        if ".venv" not in d.parts and "build" not in d.parts
+    }
+    assert packages == {"synthvdr", "synthvdr.qa", "synthvdr.render", "tests"}, packages
+
+    # Everything the wheel must carry is matched by the declared `synthvdr*` glob; `tests`
+    # is the one package outside it and is deliberately not shipped.
+    assert {p for p in packages if p.startswith("synthvdr")} == packages - {"tests"}
+
+    # The stanza is only necessary because discovery is genuinely ambiguous here. If this
+    # ever stops being true the repo has been restructured, and the reasoning above —
+    # and the comment in pyproject.toml — needs revisiting rather than silently holding.
+    top_level = {p.name for p in ROOT.iterdir() if p.is_dir() and not p.name.startswith(".")}
+    assert len(top_level) > 1, top_level

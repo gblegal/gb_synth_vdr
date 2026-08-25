@@ -225,7 +225,9 @@ to coincide with an ordinary English or business word — flag ordinary prose th
 a company at all. This project's own domain pack tripped exactly that case during the first
 end-to-end run: a document heading containing "draft SPA", the standard M&A shorthand for a
 Share Purchase Agreement, was read as the Italian "S.p.A." corporate suffix. It was fixed by
-matching that one suffix in its exact canonical case only; `synthvdr.names.ENTITY_SUFFIXES`
+matching that one suffix in its exact canonical case only — which carries its own cost: the
+list holds `SpA` undotted, so the dotted **`S.p.A.`**, which is how an Italian company most
+often writes it, matches nothing and passes gate 14 unflagged. `synthvdr.names.ENTITY_SUFFIXES`
 still carries a small, closed list of corporate-suffix tokens, and any future addition to it
 should be checked against the same question before being matched case-insensitively. Treat a
 clean check as lowered risk, never as a guarantee.

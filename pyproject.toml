@@ -5,9 +5,24 @@ description = "Synthetic M&A data room generator with a verified ground-truth an
 requires-python = ">=3.9"
 dependencies = ["PyYAML>=6.0"]
 
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [project.optional-dependencies]
 docx = ["python-docx>=1.1"]
 dev = ["pytest>=8.0"]
+
+# Without this, setuptools' flat-layout auto-discovery sees agents/, skills/,
+# domain/, schemas/ and fixtures/ alongside synthvdr/ and refuses to build at
+# all ("Multiple top-level packages discovered in a flat-layout"). Only the
+# Python package ships; the plugin's data directories are read from the
+# checkout, which is why the install is documented as editable.
+[tool.setuptools.packages.find]
+include = ["synthvdr*"]
+
+[tool.setuptools.package-data]
+"synthvdr.render" = ["pdf.mjs"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
