@@ -9,6 +9,7 @@ from .leakage import (
     gate_12_key_containment,
     gate_14_unchecked_names,
 )
+from .renders import gate_16_render_parity
 from .structural import (
     gate_01_index,
     gate_02_counts,
@@ -34,6 +35,7 @@ ALL_GATES = [
     gate_13_fact_sheet,
     gate_14_unchecked_names,
     gate_15_discoverability,
+    gate_16_render_parity,
 ]
 
 __all__ = ["ALL_GATES"]
