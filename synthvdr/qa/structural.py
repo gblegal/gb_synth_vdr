@@ -127,22 +127,52 @@ def gate_08_carrier_census(ctx):
     key wins on any conflict, because the key is the ground truth and
     room.conf is a hand-maintained convenience.
 
-    Only MARKDOWN evidence is expected to carry a block: synthvdr.twin
-    never annotates non-.md evidence (a CSV register, say) — it is copied
-    byte-for-byte, by design, because there is nowhere in a CSV to append a
-    prose annotation. A non-markdown evidence path is therefore reported
-    separately, below, as INFORMATIONAL — real evidence for a real finding
-    that this gate cannot and does not expect to see annotated — never as a
-    missing or destroyed carrier.
+    Every evidence path — whatever its suffix — is subject to TWO separate
+    obligations, checked independently rather than as one suffix-threaded
+    check:
+
+      1. It must EXIST under BLIND_TREE. A path naming no file is
+         answer-key corruption regardless of whether it could ever carry a
+         block — build_flagged_tree refuses to build a room in that state,
+         but a room can still be QA'd after the answer key was edited
+         without a rebuild, and that drift is exactly what this gate exists
+         to catch.
+      2. If it is MARKDOWN, it must additionally carry a block naming its
+         finding(s). synthvdr.twin never annotates non-.md evidence (a CSV
+         register, say) — it is copied byte-for-byte, by design, because
+         there is nowhere in a CSV to append prose — so non-markdown
+         evidence is exempt from this second obligation only, and is noted
+         separately, below, as INFORMATIONAL. It is NOT exempt from
+         obligation 1: an earlier version of this gate tangled the two
+         together as one suffix-conditioned check, and fixing the false
+         fail this caused on legitimate CSV evidence silently dropped
+         existence-checking for every non-markdown path along with it.
     """
     if not ctx.flagged_root.is_dir():
         return skip("8", "annotation-carrier census", f"{ctx.flagged_root} absent")
     flag_string = ctx.conf.get("FLAG_STRING_1")
 
+    # Obligation 1, checked first and independently of obligation 2 below —
+    # see the docstring for why these must never be re-merged into one
+    # suffix-conditioned check.
+    existing_blind = {p.relative_to(ctx.blind_root).as_posix() for p in ctx.blind_files()}
+    missing_evidence = {}
+    for finding in ctx.findings.findings:
+        for rel in finding.evidence_paths():
+            if rel not in existing_blind:
+                missing_evidence.setdefault(rel, set()).add(finding.id)
+
+    # Obligation 2. A path already reported as missing under obligation 1
+    # is skipped here — it cannot also be "expected to carry a block but
+    # carries none", because it names nothing that could carry one, and
+    # reporting the same broken path under both obligations would obscure
+    # which of the two is actually true of it.
     expected_ids_by_path = {}
     non_markdown_evidence = {}
     for finding in ctx.findings.findings:
         for rel in finding.evidence_paths():
+            if rel in missing_evidence:
+                continue
             if rel.endswith(".md"):
                 expected_ids_by_path.setdefault(rel, set()).add(finding.id)
             else:
@@ -159,6 +189,19 @@ def gate_08_carrier_census(ctx):
     actual_carriers = set(actual_ids_by_path)
 
     problems = []
+
+    # Obligation 1 failures, reported first: a nonexistent evidence path is
+    # a more fundamental corruption than a carrier mismatch, and a distinct
+    # message ("does not exist") tells a reader which of the two problems
+    # they are looking at, rather than folding it into "carries no block".
+    for rel in sorted(missing_evidence):
+        problems.append(
+            f"{rel}: names finding(s) {sorted(missing_evidence[rel])} but does not exist under "
+            f"{ctx.conf.get('BLIND_TREE')}"
+        )
+
+    # Obligation 2's three checks, unchanged in shape from before — but now
+    # operating only over evidence paths already confirmed to exist.
 
     # Expected but not actually carrying a block: destroyed outright, or
     # moved elsewhere (its own disappearance is a problem regardless of

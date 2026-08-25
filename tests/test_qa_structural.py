@@ -342,3 +342,91 @@ def test_gate_08_expects_a_carrier_only_for_the_markdown_evidence_path(room):
     result = gate_08_carrier_census(ctx_for(room, findings=[mixed]))
     assert result.status == "PASS"
     assert "2.1.1_register.csv" in result.detail
+
+
+# ---------------------------------------------------------------------------
+# Round 2 exempted non-markdown evidence from the BLOCK requirement, and in
+# doing so accidentally exempted it from the EXISTENCE requirement too — an
+# evidence path naming no real file, of any suffix, used to fall out of
+# expected_carriers silently once round 2 filtered by ".md" before ever
+# recording it as expected. build_flagged_tree refuses to build a room with
+# a nonexistent evidence path, but a room can be QA'd after findings.yaml is
+# edited without a rebuild — exactly the key-versus-room drift this gate
+# exists to catch. These tests hold the two obligations (must exist; if
+# markdown, must carry a block) as separately testable properties.
+# ---------------------------------------------------------------------------
+
+
+def test_gate_08_fails_when_evidence_names_a_document_that_does_not_exist(room):
+    ghost_md = "02_financial/2.1_statutory-accounts/9.9.9_ghost.md"
+    ghost_csv = "02_financial/2.1_statutory-accounts/9.9.9_ghost.csv"
+    findings = [
+        finding(),  # a real, correctly-annotated carrier stays in the mix
+        Finding(
+            id="FIN-1",
+            title="Ghost markdown evidence",
+            severity="high",
+            workstream="financial",
+            multi_document=False,
+            source=ghost_md,
+            location="n/a",
+            substance="evidence names a markdown document that was never created",
+        ),
+        Finding(
+            id="FIN-2",
+            title="Ghost CSV evidence",
+            severity="high",
+            workstream="financial",
+            multi_document=False,
+            source=ghost_csv,
+            location="n/a",
+            substance="evidence names a CSV register that was never created",
+        ),
+        Finding(
+            id="FIN-3",
+            title="Empty evidence path",
+            severity="high",
+            workstream="financial",
+            multi_document=False,
+            source="",
+            location="n/a",
+            substance="evidence path is empty",
+        ),
+    ]
+    result = gate_08_carrier_census(ctx_for(room, findings=findings))
+    assert result.status == "FAIL"
+    assert "9.9.9_ghost.md" in result.detail
+    assert "9.9.9_ghost.csv" in result.detail
+    assert "does not exist" in result.detail
+
+
+def test_gate_08_fails_on_existence_not_on_the_carrier_check_for_a_mixed_finding(room):
+    """A mixed finding whose CSV evidence exists but whose markdown evidence
+    does not: the ghost markdown path must be reported once, as a missing
+    document, never a second time as a missing carrier — the two
+    obligations must not double-report, or silently swap which one fires."""
+    csv_rel = "02_financial/2.1_statutory-accounts/2.1.1_register.csv"
+    for tree in ("data-room", "_key/flagged"):
+        (room / tree / csv_rel).write_text("id,value\n1,10\n")
+    ghost_md = "02_financial/2.1_statutory-accounts/9.9.9_ghost.md"
+    mixed = Finding(
+        id="FIN-3",
+        title="Real CSV, ghost markdown",
+        severity="high",
+        workstream="financial",
+        multi_document=True,
+        source=ghost_md,
+        corroboration=[csv_rel],
+        location="n/a",
+        substance="the markdown source was never written",
+    )
+    # ENV-1 (the fixture's real, correctly-annotated carrier) is kept in
+    # play so the ONLY problem gate 8 has to report is the ghost markdown
+    # path — otherwise articles.md would also flag as an unexpected
+    # carrier (evidence for nothing in a findings list that omitted ENV-1),
+    # which would muddy "fails on existence, not on the carrier check".
+    result = gate_08_carrier_census(ctx_for(room, findings=[finding(), mixed]))
+    assert result.status == "FAIL"
+    assert "does not exist" in result.detail
+    assert result.detail.count("9.9.9_ghost.md") == 1
+    assert "2.1.1_register.csv" in result.detail
