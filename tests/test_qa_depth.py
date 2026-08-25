@@ -1,5 +1,7 @@
-from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
-from synthvdr.qa.depth import classify_archetype, floor_for, strip_annotation, wordcount
+import pytest
+
+from synthvdr.domain import Archetype, DEFAULT_DOMAIN_ROOT, DomainPack, load_domain
+from synthvdr.qa.depth import DepthLintError, classify_archetype, floor_for, strip_annotation, wordcount
 
 PACK = load_domain(DEFAULT_DOMAIN_ROOT)
 
@@ -52,9 +54,54 @@ def test_classify_archetype_takes_the_longest_matching_pattern():
     assert classify_archetype("13.1.1_trust-deed-01.md", PACK) == "longform"
 
 
+def test_classify_archetype_equal_length_collision_resolves_to_the_higher_floor():
+    # "letter" (shortform, floor 500) and "policy" (standard, floor 1200)
+    # are both length-6 matches in this filename. The longest-match rule
+    # says nothing about a tie, so the higher floor must win — the safe
+    # direction — rather than whichever archetype happens to be declared
+    # first in archetypes.yaml.
+    assert classify_archetype("10.1.1_cover-letter-policy-note.md", PACK) == "standard"
+
+
+def test_classify_archetype_equal_length_tie_break_is_order_independent():
+    # Same collision as above, reproduced on a synthetic pack with the two
+    # colliding archetypes declared in each order, to prove the rule is
+    # "higher floor wins" and not an accident of dict iteration order.
+    letter = Archetype(name="shortform", floor=500, filename_patterns=["letter"])
+    policy = Archetype(name="standard", floor=1200, filename_patterns=["policy"])
+    filename = "10.1.1_cover-letter-policy-note.md"
+
+    def pack_with(archetypes):
+        return DomainPack(
+            sections=[],
+            archetypes=archetypes,
+            default_archetype="standard",
+            tier_f_floor=350,
+            finding_archetypes={},
+        )
+
+    forward = pack_with({"shortform": letter, "standard": policy})
+    backward = pack_with({"standard": policy, "shortform": letter})
+    assert classify_archetype(filename, forward) == classify_archetype(filename, backward) == "standard"
+
+
 def test_tier_f_uses_the_flat_floor_regardless_of_archetype():
     assert floor_for("5.1.1", "5.1.1_supply-agreement.md", "F", PACK) == PACK.tier_f_floor
 
 
 def test_tier_a_uses_the_archetype_floor():
     assert floor_for("5.1.1", "5.1.1_supply-agreement.md", "A", PACK) == PACK.archetypes["standard"].floor
+
+
+@pytest.mark.parametrize("bad_tier", ["a", "f", "", "X", "AF", " A"])
+def test_floor_for_rejects_any_tier_that_is_not_a_or_f(bad_tier):
+    with pytest.raises(DepthLintError):
+        floor_for("5.1.1", "5.1.1_supply-agreement.md", bad_tier, PACK)
+
+
+def test_every_archetype_floor_is_at_least_the_tier_f_floor():
+    # Belt and braces alongside load_domain's own runtime check (domain.py):
+    # a correctly tagged tier-A anchor must never be held to a lower depth
+    # standard than tier-F filler. Checked over every archetype, not just
+    # register, so a future edit to any one floor can't reintroduce this.
+    assert all(a.floor >= PACK.tier_f_floor for a in PACK.archetypes.values())

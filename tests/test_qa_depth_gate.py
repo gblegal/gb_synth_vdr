@@ -49,12 +49,34 @@ def test_fails_below_the_floor(room):
     assert gate_10_depth(ctx_for(room)).status == "FAIL"
 
 
-def test_fails_on_a_placeholder_token(room):
+def test_fail_detail_also_names_the_metric(room):
+    # PASS already named the counting metric; a reader who hits a FAIL and
+    # wants to argue with the number needs to see it too.
     p = room / "data-room/01_corporate/1.1_constitutional/1.1.1_articles.md"
-    p.write_text("# Articles\n\nTODO: write this.\n" + ("word " * 400))
+    p.write_text("# Articles\n\n" + ("word " * 20))
+    result = gate_10_depth(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "metric" in result.detail.lower()
+
+
+@pytest.mark.parametrize("marker", ["[DRAFT]", "[TBC]", "fixme", "placeholder"])
+def test_fails_on_a_placeholder_marker(room, marker):
+    p = room / "data-room/01_corporate/1.1_constitutional/1.1.1_articles.md"
+    p.write_text(f"# Articles\n\n{marker}\n" + ("word " * 400))
     result = gate_10_depth(ctx_for(room))
     assert result.status == "FAIL"
     assert "placeholder" in result.detail.lower()
+
+
+@pytest.mark.parametrize("bad_tier", ["a", "f", "", "X"])
+def test_an_invalid_tier_is_a_hard_failure_naming_the_slot_and_value(room, bad_tier):
+    (room / "_key" / "anchors.csv").write_text(
+        f"slot_id,tier,rel_path\n1.1.1,{bad_tier},01_corporate/1.1_constitutional/1.1.1_articles.md\n"
+    )
+    result = gate_10_depth(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "1.1.1" in result.detail
+    assert repr(bad_tier) in result.detail
 
 
 def test_a_slot_missing_from_the_manifest_is_a_failure(room):

@@ -71,6 +71,21 @@ def load_domain(root: Path) -> DomainPack:
     if abs(total_weight - 1.0) > 1e-6:
         raise DomainError(f"{root}: section weights sum to {total_weight}, expected 1.0")
 
+    # A tier-A anchor carries planted evidence; tier-F filler carries none.
+    # If any archetype's floor sits below the flat tier-F floor, a
+    # correctly tagged anchor could be held to a LOWER depth standard than
+    # generic filler — backwards for the property this domain pack exists
+    # to encode. Checked here, once, at load time, so a future edit to
+    # either number can never silently regress it.
+    tier_f_floor = arch_doc["tier_f_floor"]
+    under_floor = sorted(name for name, a in archetypes.items() if a.floor < tier_f_floor)
+    if under_floor:
+        raise DomainError(
+            f"{root}: archetype floor(s) {under_floor} are below tier_f_floor "
+            f"({tier_f_floor}) — a tier-A anchor must never be held to a lower "
+            "depth standard than tier-F filler"
+        )
+
     return DomainPack(
         sections=sections,
         archetypes=archetypes,
