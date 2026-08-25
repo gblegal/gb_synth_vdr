@@ -7,7 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from synthvdr.render.docx import RenderUnavailable, render_tree_docx, rotation_for, scanned_slots
+from synthvdr.render.docx import (
+    _ATX_HEADING,
+    RenderUnavailable,
+    render_tree_docx,
+    rotation_for,
+    scanned_slots,
+)
 from synthvdr.schema import Finding, FindingSet
 
 PDF_MJS = Path(__file__).resolve().parent.parent / "synthvdr" / "render" / "pdf.mjs"
@@ -373,3 +379,207 @@ def test_scanned_slots_golden_order_is_hash_driven_not_alphabetical():
         "Project Testbed",
     )
     assert scanned_slots(fs, count=4) == expected_hash_order
+
+
+# --- F1 (round 3): the ATX separator is space-and-tab, not \s -------------
+
+
+# \x/\u escapes throughout, never literal characters, so the offending
+# bytes are visible in a diff rather than invisible in the source. NBSP is
+# the realistic case -- it survives copy-paste from word processors and
+# web pages constantly -- and IDEOGRAPHIC SPACE matters because this
+# harness already contemplates CJK documents elsewhere (the depth gate).
+_NBSP = "\xa0"
+_VERTICAL_TAB = "\x0b"
+_FORM_FEED = "\x0c"
+_EN_SPACE = "\u2002"
+_IDEOGRAPHIC_SPACE = "\u3000"
+
+
+def test_heading_separator_excludes_vertical_tab_and_form_feed():
+    """Vertical tab and form feed are ASCII control characters that OOXML's
+    XML backing store refuses outright -- writing either one into ANY
+    .docx paragraph (heading or plain) raises from lxml before this
+    module's heading logic even runs (verified by hand: python-docx's
+    `run.text` setter hits lxml's "All strings must be XML compatible: ...
+    no NULL bytes or control characters"). That is a real, but genuinely
+    separate, defect -- control-character sanitisation for DOCX output,
+    not ATX heading detection -- and out of scope for this fix. What IS in
+    scope is the regex itself never treating either character as an ATX
+    separator, checked directly here since round-tripping raw control
+    bytes through a real .docx is not possible at all, for any line type.
+    """
+    assert _ATX_HEADING.match(f"#{_VERTICAL_TAB}Vertical tab heading attempt") is None
+    assert _ATX_HEADING.match(f"#{_FORM_FEED}Form feed heading attempt") is None
+
+
+def test_heading_separator_is_exactly_space_and_tab(tmp_path):
+    """`\\s` is Unicode-wide and matches NBSP, EN SPACE and IDEOGRAPHIC
+    SPACE -- under it, a hash followed by e.g. a non-breaking space
+    silently became a heading, the same corruption class the round-2
+    heading fix was written to close, reopened one character class wider.
+    CommonMark's ATX separator set is exactly space and tab; verify these
+    three legal-but-wide Unicode whitespace characters stay paragraphs
+    (round-tripped through a real .docx, unlike the two ASCII control
+    characters covered separately above, which cannot be), and that plain
+    space and tab still work as real separators."""
+    lines = [
+        f"#{_NBSP}NBSP heading attempt",
+        f"#{_EN_SPACE}EN SPACE heading attempt",
+        f"#{_IDEOGRAPHIC_SPACE}Ideographic space heading attempt",
+        "# Real space heading",
+        "#\tReal tab heading",
+    ]
+    src = tmp_path / "data-room" / "01_corporate"
+    src.mkdir(parents=True)
+    (src / "1.1.1_ws.md").write_text("\n".join(lines) + "\n")
+    out = tmp_path / "data-room-docx"
+
+    render_tree_docx(tmp_path / "data-room", out)
+
+    document = docx_module.Document(str(out / "01_corporate" / "1.1.1_ws.docx"))
+    by_text = {p.text: p.style.name for p in document.paragraphs}
+
+    def is_heading(style_name):
+        return style_name.lower().startswith("heading") or style_name.lower() == "title"
+
+    # Each of these three lines is untouched: still one paragraph, whole
+    # line intact, hash included, not restyled as a heading.
+    for line in lines[:3]:
+        assert not is_heading(by_text[line]), line
+
+    # Real separators still produce real headings.
+    assert is_heading(by_text["Real space heading"])
+    assert is_heading(by_text["Real tab heading"])
+
+
+# --- F2: fenced code blocks must not leak into heading detection ---------
+
+
+def test_fenced_code_block_lines_are_never_headings(tmp_path):
+    """Inside a fence, '# a shell comment' is the single most common line
+    in any shell or Python snippet -- it must never become a heading, and
+    the fence markers themselves must survive the render (content survives
+    the render; it is not this task's job to prettify output by dropping
+    lines). Covers a backtick fence, a real heading immediately after the
+    fence closes (to prove fence state actually clears), and an unclosed
+    fence that must swallow the rest of the document."""
+    lines = [
+        "# Real heading before the fence",
+        "```bash",
+        "# a shell comment",
+        "echo hello",
+        "```",
+        "# Real heading after the fence",
+        "~~~",
+        "# unclosed fence swallows this",
+    ]
+    src = tmp_path / "data-room" / "01_corporate"
+    src.mkdir(parents=True)
+    (src / "1.1.1_fenced.md").write_text("\n".join(lines) + "\n")
+    out = tmp_path / "data-room-docx"
+
+    render_tree_docx(tmp_path / "data-room", out)
+
+    document = docx_module.Document(str(out / "01_corporate" / "1.1.1_fenced.docx"))
+    paragraphs = [(p.text, p.style.name) for p in document.paragraphs]
+    by_text = dict(paragraphs)
+
+    def is_heading(style_name):
+        return style_name.lower().startswith("heading") or style_name.lower() == "title"
+
+    assert is_heading(by_text["Real heading before the fence"])
+    assert is_heading(by_text["Real heading after the fence"])
+
+    # Fence markers themselves survive as visible paragraphs -- not dropped.
+    assert by_text["```bash"] == "Normal"
+    assert by_text["```"] == "Normal"
+    assert by_text["~~~"] == "Normal"
+
+    # The shell comment inside the fence is a paragraph, not a heading --
+    # the entire point of this fix.
+    assert not is_heading(by_text["# a shell comment"])
+    assert by_text["echo hello"] == "Normal"
+
+    # An unclosed fence swallows the rest of the document: this line starts
+    # with '#' and would ordinarily be a heading, but the fence never
+    # closed before EOF.
+    assert not is_heading(by_text["# unclosed fence swallows this"])
+
+    # No content was silently dropped, and line order/count is preserved
+    # 1:1. Headings strip their leading '#' run and separator by design
+    # (the level moves into the style, not the text) -- compare those
+    # against the matched title, not the raw line; every other line must
+    # be verbatim.
+    assert len(paragraphs) == len(lines)
+    for (text, style), original in zip(paragraphs, lines):
+        if is_heading(style):
+            match = _ATX_HEADING.match(original)
+            assert match is not None, original
+            assert text == match.group(2)
+        else:
+            assert text == original
+
+
+def test_fence_of_one_character_does_not_close_a_fence_of_the_other(tmp_path):
+    """A ~~~ line inside a ``` fence does not close it (different fence
+    character), and vice versa -- only a matching fence character closes."""
+    lines = [
+        "```",
+        "~~~ this looks like a fence but is not the same character",
+        "# still fenced, still not a heading",
+        "```",
+        "# real heading, fence is closed",
+    ]
+    src = tmp_path / "data-room" / "01_corporate"
+    src.mkdir(parents=True)
+    (src / "1.1.1_mixed_fence.md").write_text("\n".join(lines) + "\n")
+    out = tmp_path / "data-room-docx"
+
+    render_tree_docx(tmp_path / "data-room", out)
+
+    document = docx_module.Document(str(out / "01_corporate" / "1.1.1_mixed_fence.docx"))
+    by_text = {p.text: p.style.name for p in document.paragraphs}
+
+    def is_heading(style_name):
+        return style_name.lower().startswith("heading") or style_name.lower() == "title"
+
+    assert not is_heading(by_text["# still fenced, still not a heading"])
+    assert is_heading(by_text["real heading, fence is closed"])
+
+
+# --- F3: heading level must map # through ###### correctly, with a clamp -
+
+
+def test_heading_levels_map_correctly_and_clamp_at_four(tmp_path):
+    """docx.py hard-codes `level = min(len(hashes), 4)` -- pin every level
+    from h1 through h6 (the clamp applies from h4 upward) so a
+    hard-coded `level = 1` (which left every prior test green) is caught."""
+    lines = [
+        "# H1 title",
+        "## H2 title",
+        "### H3 title",
+        "#### H4 title",
+        "##### H5 title",
+        "###### H6 title",
+    ]
+    src = tmp_path / "data-room" / "01_corporate"
+    src.mkdir(parents=True)
+    (src / "1.1.1_levels.md").write_text("\n".join(lines) + "\n")
+    out = tmp_path / "data-room-docx"
+
+    render_tree_docx(tmp_path / "data-room", out)
+
+    document = docx_module.Document(str(out / "01_corporate" / "1.1.1_levels.docx"))
+    style_by_text = {p.text: p.style.name for p in document.paragraphs}
+
+    expected_levels = {
+        "H1 title": 1,
+        "H2 title": 2,
+        "H3 title": 3,
+        "H4 title": 4,
+        "H5 title": 4,  # clamped
+        "H6 title": 4,  # clamped
+    }
+    for text, level in expected_levels.items():
+        assert style_by_text[text] == f"Heading {level}", (text, style_by_text[text])

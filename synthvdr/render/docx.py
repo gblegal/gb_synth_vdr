@@ -37,7 +37,32 @@ class RenderUnavailable(Exception):
 # priority") lost that leading character too. Bounded at 6 hashes, per
 # CommonMark ATX headings — a 7th leading '#' means the line has no opening
 # sequence at all, and stays a plain paragraph, hashes and all.
-_ATX_HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
+#
+# The separator is `[ \t]+` — ASCII space and tab, EXACTLY the two
+# characters CommonMark's ATX heading spec names — not `\s+`. `\s` is
+# Unicode-wide: it also matches NBSP (U+00A0, which copy-pasted prose
+# carries constantly), vertical tab, form feed, EN SPACE (U+2002) and
+# IDEOGRAPHIC SPACE (U+3000, live in a corpus that already contemplates CJK
+# documents elsewhere in this harness). Under `\s+`, "#\xa0Title" silently
+# became a heading — the exact corruption class this whole heading fix
+# exists to close, reopened one character class wider. This has now gone
+# wrong twice in this function alone (`startswith("#")` too loose one way,
+# `\s` too loose another): name the exact separator set the spec names,
+# never the one that merely reads naturally.
+_ATX_HEADING = re.compile(r"^(#{1,6})[ \t]+(.*)$")
+
+# A fenced code block (``` or ~~~, CommonMark's two fence characters) is
+# tracked across lines so nothing inside it is ever mistaken for a heading
+# — "# a shell comment" is the single most common line in any shell or
+# Python snippet, and it is not a heading just because it starts a fresh
+# line inside a fence. Every line inside a fence, including the fence
+# markers themselves, is rendered as a verbatim paragraph: this project's
+# rule is that content survives the render, and dropping the fence marker
+# lines to make the output prettier is exactly the trade this task exists
+# to refuse. An unclosed fence (no matching closing marker before EOF)
+# falls out of the same state machine for free: every remaining line stays
+# in fenced mode through to the end of the document.
+_FENCE = re.compile(r"^(`{3,}|~{3,})")
 
 
 def rotation_for(slot_id: str, page: int) -> float:
@@ -93,8 +118,29 @@ def render_tree_docx(src: Path, out: Path) -> int:
         target = out / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         document = Document()
+        in_fence = False
+        fence_char = None
         for line in path.read_text(encoding="utf-8").splitlines():
             stripped = line.rstrip()
+
+            if in_fence:
+                # Verbatim, no exceptions — including a line that would
+                # otherwise look like a heading. The opening fence marker
+                # went through this same append on the way in.
+                document.add_paragraph(stripped)
+                closing = _FENCE.match(stripped)
+                if closing and closing.group(1)[0] == fence_char:
+                    in_fence = False
+                    fence_char = None
+                continue
+
+            fence = _FENCE.match(stripped)
+            if fence:
+                in_fence = True
+                fence_char = fence.group(1)[0]
+                document.add_paragraph(stripped)
+                continue
+
             heading = _ATX_HEADING.match(stripped)
             if heading:
                 # group(1) is exactly the matched hashes (1-6 of them, by
