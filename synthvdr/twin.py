@@ -127,6 +127,15 @@ SUBJECT_KEY = "FLAGGED_TREE"
 # '_key/index-src', 'scratch', a mount point holding another volume. The
 # marker turns "we delete where you told us" into "we only delete what we
 # made", which is the contract this needs on a stranger's machine.
+#
+# "Presence" means a REAL file, checked case-sensitively, at exactly this
+# name — never a symlink at this name (which could point at any unrelated
+# file and read as "present"), and never a same-named entry differing only
+# in case (which a case-insensitive filesystem, e.g. APFS by default,
+# would otherwise treat as a match for a plain path lookup). Both were
+# found to be genuine bypasses of an earlier version of this check, well
+# after the five rounds that had already closed every other one — see
+# synthvdr.ownership, which is what actually implements the check now.
 MARKER_NAME = ".synthvdr-flagged-tree"
 
 MARKER_TEXT = (

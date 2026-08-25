@@ -424,3 +424,56 @@ def test_marker_is_written_before_any_document_so_a_partial_failure_is_recoverab
 
     report = build_subset(room, conf_for(room), findings(), total=6, out_dir=foreign)
     assert report.complete
+
+
+# --- Two further bypasses in the shared ownership guard, found by review
+# against a real build_subset call and a real victim file, and fixed in
+# synthvdr/ownership.py (both are pre-existing in Task 7's original
+# algorithm, not introduced by this file's out_dir guard). Both are proven
+# here the same way the coordinator reproduced them: an end-to-end
+# build_subset call against a foreign directory holding a planted file,
+# asserting that file still EXISTS afterwards — not merely that
+# SubsetError was raised, since code that raises after deleting would
+# still pass a raises-only test. -------------------------------------------
+
+
+def test_build_refuses_a_directory_whose_marker_is_a_symlink(room, tmp_path_factory):
+    # A symlink named exactly SUBSET_MARKER_NAME, pointing at an unrelated
+    # regular file, must not satisfy the marker check — is_file() on a
+    # symlink follows it and would otherwise read as "marker present".
+    foreign = tmp_path_factory.mktemp("foreign")
+    victim = foreign / "precious.txt"
+    victim.write_text("someone else's data\n")
+    elsewhere = tmp_path_factory.mktemp("elsewhere") / "unrelated.txt"
+    elsewhere.write_text("not a marker\n")
+    (foreign / SUBSET_MARKER_NAME).symlink_to(elsewhere)
+
+    with pytest.raises(SubsetError, match="was not created by this tool"):
+        build_subset(room, conf_for(room), findings(), total=6, out_dir=foreign)
+
+    assert victim.read_text(encoding="utf-8") == "someone else's data\n"
+
+
+def test_build_refuses_a_directory_whose_marker_differs_only_in_case(room, tmp_path_factory):
+    # A same-case-INsensitive-lookup match must not satisfy the marker
+    # check either: entries must be compared by exact `==`, never via a
+    # filesystem path lookup for `marker_name` (which a case-insensitive
+    # filesystem, e.g. APFS by default, would resolve onto this entry).
+    #
+    # This assertion is written to be meaningful regardless of whether the
+    # host filesystem happens to be case-insensitive: after the fix,
+    # `entries` always carries the literal on-disk name, and the match is
+    # always a plain Python string `==` — so a differently-cased entry is
+    # never accepted as the marker on ANY filesystem. No runtime
+    # case-sensitivity probe or skip is needed for the assertion to hold.
+    foreign = tmp_path_factory.mktemp("foreign")
+    victim = foreign / "precious.txt"
+    victim.write_text("someone else's data\n")
+    wrong_case = SUBSET_MARKER_NAME.upper()
+    assert wrong_case != SUBSET_MARKER_NAME  # sanity: the marker name has letters to case-flip
+    (foreign / wrong_case).write_text(SUBSET_MARKER_TEXT, encoding="utf-8")
+
+    with pytest.raises(SubsetError, match="was not created by this tool"):
+        build_subset(room, conf_for(room), findings(), total=6, out_dir=foreign)
+
+    assert victim.read_text(encoding="utf-8") == "someone else's data\n"

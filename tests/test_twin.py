@@ -700,6 +700,53 @@ def test_build_flagged_tree_refuses_a_non_empty_target_it_did_not_create(tmp_pat
     assert victim.read_text(encoding="utf-8") == "someone else's data\n"
 
 
+def test_build_flagged_tree_refuses_a_target_whose_marker_is_a_symlink(tmp_path, tmp_path_factory):
+    # A symlink named exactly MARKER_NAME, pointing at any unrelated
+    # regular file, must not satisfy the marker check — is_file() on a
+    # symlink follows it and would otherwise read as "marker present".
+    # Found by review, reproduced end-to-end against a real
+    # build_flagged_tree call with a planted victim file destroyed as a
+    # result, before this fix (synthvdr/ownership.py).
+    room = tmp_path
+    conf = _conf_with_flagged(room, "scratch")
+    target = room / "scratch"
+    target.mkdir(parents=True)
+    victim = target / "precious.txt"
+    victim.write_text("someone else's data\n")
+    elsewhere = tmp_path_factory.mktemp("elsewhere") / "unrelated.txt"
+    elsewhere.write_text("not a marker\n")
+    (target / MARKER_NAME).symlink_to(elsewhere)
+
+    with pytest.raises(TwinError, match="was not created by this tool"):
+        build_flagged_tree(room, conf, FindingSet(findings=[], room="Project Testbed"))
+
+    assert victim.read_text(encoding="utf-8") == "someone else's data\n"
+
+
+def test_build_flagged_tree_refuses_a_target_whose_marker_differs_only_in_case(tmp_path):
+    # Entries must be matched by exact `==` against the literal on-disk
+    # name, never via a filesystem path lookup for MARKER_NAME (which a
+    # case-insensitive filesystem, e.g. APFS by default, would resolve
+    # onto a differently-cased entry). Written to be meaningful regardless
+    # of the host filesystem's own case sensitivity: post-fix, a
+    # differently-cased entry is never accepted as the marker on ANY
+    # filesystem, so no runtime case-sensitivity probe or skip is needed.
+    room = tmp_path
+    conf = _conf_with_flagged(room, "scratch")
+    target = room / "scratch"
+    target.mkdir(parents=True)
+    victim = target / "precious.txt"
+    victim.write_text("someone else's data\n")
+    wrong_case = MARKER_NAME.upper()
+    assert wrong_case != MARKER_NAME  # sanity: the marker name has letters to case-flip
+    (target / wrong_case).write_text(MARKER_TEXT)
+
+    with pytest.raises(TwinError, match="was not created by this tool"):
+        build_flagged_tree(room, conf, FindingSet(findings=[], room="Project Testbed"))
+
+    assert victim.read_text(encoding="utf-8") == "someone else's data\n"
+
+
 def test_build_flagged_tree_refuses_a_second_build_after_the_marker_is_deleted(tmp_path):
     # The marker is the licence, and it can be revoked by hand. Once it is
     # gone the tree is indistinguishable from someone else's directory, and
