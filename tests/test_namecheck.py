@@ -311,8 +311,15 @@ def test_duplicate_declared_rows_with_different_kinds_raise():
         | Solmark | product |
         """
     ).strip()
-    with pytest.raises(NameCheckError, match="Solmark"):
+    # Tightened per re-review finding 5: matching only "Solmark" would still
+    # pass under a mutation that raised for an unrelated reason. Pin that
+    # the message names the offending text AND both conflicting kinds.
+    with pytest.raises(NameCheckError) as excinfo:
         extract_candidates(fact_sheet)
+    message = str(excinfo.value)
+    assert "Solmark" in message
+    assert "brand" in message
+    assert "product" in message
 
 
 def test_duplicate_declared_rows_with_the_same_kind_do_not_raise():
@@ -349,7 +356,12 @@ def test_render_raises_on_a_name_that_would_vanish_as_a_separator_row():
 
 def test_render_raises_on_an_empty_name():
     verdicts = [Verdict("", "entity", "clear", "2026-08-24", "")]
-    with pytest.raises(NameCheckError, match="separator"):
+    # Tightened per re-review finding 5: matching only "separator" is a
+    # message a sibling test (the "---" case) shares, so this test did not
+    # actually pin the empty-specific path. Anchor on the empty-string
+    # repr too, so the test fails if the guard stops recognising blank
+    # text as its own case.
+    with pytest.raises(NameCheckError, match=r"''.*empty"):
         render_name_check_md(verdicts, "Project Testbed")
 
 
@@ -379,3 +391,55 @@ def test_names_needing_check_does_not_fold_case_or_whitespace(existing_text):
     existing = [Verdict(existing_text, "entity", "clear", "2026-08-24", "")]
     todo = names_needing_check(candidates, existing)
     assert [c.text for c in todo] == ["Ashfell Holdings Limited"]
+
+
+
+# ---------------------------------------------------------------------------
+# Fix round 3: the guard is the round trip itself, not a checklist of
+# forbidden shapes. Six bypasses the re-review found against round 2's
+# shape-based guard, plus a positive list of plausible names that must
+# render and load cleanly — a guard that overfires on any of those is a
+# worse outcome than the bug it closes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    [
+        "---",  # already caught by round 2; kept as the control case
+        " - ",
+        "   ---   ",
+        "   ",
+        " : ",
+        "Corrupt\nName Corp Limited",
+        "Carriage\rReturn Ltd",
+    ],
+)
+def test_render_raises_on_names_that_do_not_survive_the_round_trip(bad_name):
+    verdicts = [Verdict(bad_name, "entity", "clear", "2026-08-24", "")]
+    with pytest.raises(NameCheckError):
+        render_name_check_md(verdicts, "Project Testbed")
+
+
+@pytest.mark.parametrize(
+    "good_name",
+    [
+        "Ashfell Ltd",
+        "Ashfell-Brandt Limited",
+        "Ashfell & Co",
+        "Kessler Werke GmbH & Co. KG",
+        "ashfell.example",
+        "Ashfell 2 Limited",
+        "Tab	Separated Ltd",
+        "O’Ashfell Limited",  # curly apostrophe
+        "Ashfell Inc.",  # trailing full stop
+    ],
+)
+def test_render_round_trips_plausible_names_cleanly(good_name, tmp_path):
+    verdicts = [Verdict(good_name, "entity", "clear", "2026-08-24", "a note")]
+    path = tmp_path / "name-check.md"
+    path.write_text(render_name_check_md(verdicts, "Project Testbed"))
+    loaded = load_name_check(path)
+    # Field for field, not just "some row came back" — the whole Verdict
+    # must survive unchanged.
+    assert loaded == verdicts

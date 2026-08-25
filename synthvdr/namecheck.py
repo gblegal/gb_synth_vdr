@@ -66,16 +66,31 @@ between two rows of the same table instead of two tables — "declared table
 wins" cannot arbitrate it either, because both sides ARE the declared table,
 so `_declared_candidates` raises `NameCheckError` rather than letting
 last-wins silently pick one (an identical kind repeated is harmless and does
-not raise). Separately, `render_name_check_md` rejects two shapes for a
-`Verdict.text`, because the Name is this record's key and the pipe-table
-format has no escaping: a literal `|` would split the row into extra columns,
-and text made up only of `-`/`:` characters (or empty) would be read back and
-silently swallowed by the same separator-row guard `load_name_check` and
-`names.cast_list` use — `Verdict("---", ...)` must not round-trip to zero
-rows. A `Verdict.note`, by contrast, is free-text commentary written by the
-search skill at build time, not a key, so a `|` in it is sanitised (replaced
-with `/`) rather than rejected — breaking a build over a cosmetic character in
-a comment is worse than substituting it, and the substitution must not
+not raise).
+
+Separately, `render_name_check_md` rejects a `Verdict.text` the pipe-table
+format cannot carry as a key. THE CHECK IS THE ROUND TRIP ITSELF, NOT A LIST
+OF FORBIDDEN SHAPES — an earlier version enumerated shapes (a literal `|`;
+text made only of `-`/`:` characters, or empty) and missed the actual
+boundary: `_would_vanish_as_separator` tested the raw text while the loader
+tests the STRIPPED cell, and `str.splitlines()` additionally treats a bare
+`\r` as a line break, so ' - ', '   ---   ', and a name containing `\n` or
+`\r` all rendered and then silently vanished on load — none matched the
+enumerated shapes, but all of them failed the round trip. The guard now
+renders the one row, re-parses it with `_read_verdict_row` — the exact
+function `load_name_check` uses, so the two can never drift apart the way
+`_would_vanish_as_separator` and the loader did — and raises unless the
+recovered Name equals the input. This closes every bypass of the class at
+once, including ones not yet found, and it is self-maintaining: a future
+change to `_read_verdict_row` automatically tightens the guard rather than
+opening a new gap. The specific messages below (empty, separator-shaped,
+contains a pipe, contains a line break) exist so an author learns why a name
+was rejected; they are diagnosis, not the check.
+
+A `Verdict.note`, by contrast, is free-text commentary written by the search
+skill at build time, not a key, so a `|` in it is sanitised (replaced with
+`/`) rather than rejected — breaking a build over a cosmetic character in a
+comment is worse than substituting it, and the substitution must not
 truncate the note the way emitting the raw pipe would have.
 """
 
@@ -268,39 +283,80 @@ def unresolved(verdicts: List[Verdict]) -> List[Verdict]:
     return [v for v in verdicts if v.verdict != "clear"]
 
 
-def _would_vanish_as_separator(text: str) -> bool:
-    """True if `text`, written into the Name column, would be misread on
-    load as a markdown table separator row and silently dropped — the same
-    guard (`_is_header_or_separator`) that `load_name_check` and
-    `names.cast_list` both use to skip `|---|---|` rows. Empty text
-    qualifies too: the empty set is a subset of any set, so it fails the
-    dash/colon test the same way a bare `---` does.
+def _read_verdict_row(line: str) -> List[str] | None:
+    """Recover one name-check row's cells from a single line of file
+    content, exactly as `load_name_check` reads a line — this function IS
+    that reader, factored out so the round-trip guard below and
+    `load_name_check` can never drift apart the way `_would_vanish_as_separator`
+    and the old loader once did.
+
+    Returns None if `line` would not be read back as a data row at all:
+    not pipe-prefixed after stripping, fewer than the four required cells
+    (Name, Kind, Verdict, Checked), or caught by the header/separator guard
+    `_is_header_or_separator` applies to the first cell.
     """
-    return set(text) <= {"-", ":"}
+    stripped = line.strip()
+    if not stripped.startswith("|"):
+        return None
+    cells = [c.strip() for c in stripped.strip("|").split("|")]
+    if len(cells) < 4 or _is_header_or_separator(cells[0]):
+        return None
+    return cells
 
 
-def _validate_name_for_render(text: str) -> None:
-    """Reject a `Verdict.text` the pipe-table format cannot carry as a key.
+def _recovered_row_names(row: str) -> List[str]:
+    """Every Name column `load_name_check` would recover from `row`, were
+    `row` to stand alone as file content.
 
-    Two shapes, both raised rather than sanitised because the Name is this
-    record's key, not commentary — see the module docstring for the
-    exact-or-reject-vs-sanitise distinction. A literal `|` would split the
-    row into extra columns on write. Text made of only `-`/`:` characters
-    (or nothing at all) would round-trip to zero rows: written out it reads
-    back as a separator row and vanishes, exactly what `_is_header_or_separator`
-    exists to skip.
+    `row` is split with `str.splitlines()`, the same call `load_name_check`
+    makes over the whole file — which treats a bare '\r' as a line break in
+    addition to '\n' — so an embedded line break inside `row` behaves
+    exactly as it would once this row is one line among many in the real
+    file: the pipe-prefixed fragment before the break is read as a
+    (truncated) row, and the fragment after it is not.
+    """
+    names = []
+    for line in row.splitlines():
+        cells = _read_verdict_row(line)
+        if cells is not None:
+            names.append(cells[0])
+    return names
+
+
+def _validate_name_for_render(text: str, row: str) -> None:
+    """Raise unless `row` — the exact table row `text` is about to be
+    written as — reads back with a Name column equal to `text`.
+
+    THE CHECK IS THE ROUND TRIP, NOT ANY ONE CONDITION BELOW. See the module
+    docstring for why: enumerating forbidden shapes left a gap between what
+    this function tested and what the loader actually does. The messages
+    here exist only so an author learns why their name was rejected; they
+    are consulted in order after the round trip has already failed, purely
+    for diagnosis.
     """
     if "|" in text:
         raise NameCheckError(
             f"{text!r} contains a literal '|', which the pipe-table Name column "
             f"cannot represent — rename it before writing the name check"
         )
-    if _would_vanish_as_separator(text):
+    if _recovered_row_names(row) == [text]:
+        return
+    if "\n" in text or "\r" in text:
+        raise NameCheckError(
+            f"{text!r} contains a line break, which splits it across multiple "
+            f"lines when the name check is written and read back — rename it "
+            f"before writing the name check"
+        )
+    if not text.strip() or set(text.strip()) <= {"-", ":"}:
         raise NameCheckError(
             f"{text!r} is empty or made up only of '-'/':' characters — written "
             f"into the Name column it would be misread as a table separator row "
             f"and silently dropped on load; rename it before writing the name check"
         )
+    raise NameCheckError(
+        f"{text!r} does not survive being written into and read back from the "
+        f"name check table — rename it before writing the name check"
+    )
 
 
 def _sanitise_note(note: str) -> str:
@@ -325,10 +381,10 @@ def render_name_check_md(verdicts: List[Verdict], room_codename: str) -> str:
     reorder the columns or drop the outer pipes; both are load-bearing for
     the downstream gate, not stylistic.
 
-    Raises `NameCheckError` if any verdict's `.text` cannot be written into
-    the Name column safely (a literal '|', or text that would be misread as
-    a separator row on load) — see `_validate_name_for_render`. A '|' in
-    `.note` is sanitised rather than rejected — see `_sanitise_note`.
+    Raises `NameCheckError` if any verdict's `.text` does not survive being
+    written into this row and read back — see `_validate_name_for_render`,
+    which performs that round trip. A '|' in `.note` is sanitised rather
+    than rejected — see `_sanitise_note`.
     """
     lines = [
         f"# {room_codename} — name check",
@@ -342,21 +398,25 @@ def render_name_check_md(verdicts: List[Verdict], room_codename: str) -> str:
         "|---|---|---|---|---|",
     ]
     for v in verdicts:
-        _validate_name_for_render(v.text)
         note = _sanitise_note(v.note)
-        lines.append(f"| {v.text} | {v.kind} | {v.verdict} | {v.checked} | {note} |")
+        row = f"| {v.text} | {v.kind} | {v.verdict} | {v.checked} | {note} |"
+        _validate_name_for_render(v.text, row)
+        lines.append(row)
     lines.append("")
     return "\n".join(lines)
 
 
 def load_name_check(path: Path) -> List[Verdict]:
+    """Read the pipe table `render_name_check_md` writes.
+
+    Delegates each line's cell recovery to `_read_verdict_row` — the same
+    function the round-trip guard in `_validate_name_for_render` calls, so
+    a name that renders without raising is guaranteed to load back exactly.
+    """
     out: List[Verdict] = []
     for line in Path(path).read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("|"):
-            continue
-        cells = [c.strip() for c in stripped.strip("|").split("|")]
-        if len(cells) < 4 or _is_header_or_separator(cells[0]):
+        cells = _read_verdict_row(line)
+        if cells is None:
             continue
         out.append(
             Verdict(
