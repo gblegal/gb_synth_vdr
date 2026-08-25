@@ -287,3 +287,95 @@ def test_all_recognised_kinds_are_accepted_without_raising():
     # Pins the valid set so a future edit to KINDS is deliberate, not an
     # accidental typo that starts rejecting a previously-valid Kind.
     assert set(KINDS) == {"entity", "brand", "product", "site", "domain", "person"}
+
+
+
+# ---------------------------------------------------------------------------
+# Fix round 2: duplicate declared rows with a genuine kind conflict, a Name
+# the pipe-table format cannot carry as a key (a literal '|', or text that
+# would vanish as a separator row), a Note sanitised rather than rejected,
+# and a pin proving names_needing_check is exact-match, not folded.
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_declared_rows_with_different_kinds_raise():
+    fact_sheet = textwrap.dedent(
+        """
+        # Fact sheet
+
+        ## Invented names
+
+        | Name | Kind |
+        |---|---|
+        | Solmark | brand |
+        | Solmark | product |
+        """
+    ).strip()
+    with pytest.raises(NameCheckError, match="Solmark"):
+        extract_candidates(fact_sheet)
+
+
+def test_duplicate_declared_rows_with_the_same_kind_do_not_raise():
+    # The negative case: repetition alone is not the defect, a genuine
+    # kind conflict is.
+    fact_sheet = textwrap.dedent(
+        """
+        # Fact sheet
+
+        ## Invented names
+
+        | Name | Kind |
+        |---|---|
+        | Solmark | brand |
+        | Solmark | brand |
+        """
+    ).strip()
+    candidates = {c.text: c.kind for c in extract_candidates(fact_sheet)}
+    assert candidates["Solmark"] == "brand"
+
+
+def test_render_raises_on_a_pipe_in_the_name():
+    verdicts = [Verdict("Ashfell | Corp", "entity", "clear", "2026-08-24", "")]
+    with pytest.raises(NameCheckError, match="literal"):
+        render_name_check_md(verdicts, "Project Testbed")
+
+
+def test_render_raises_on_a_name_that_would_vanish_as_a_separator_row():
+    # Verdict("---", ...) must not silently round-trip to zero rows.
+    verdicts = [Verdict("---", "entity", "clear", "2026-08-24", "")]
+    with pytest.raises(NameCheckError, match="separator"):
+        render_name_check_md(verdicts, "Project Testbed")
+
+
+def test_render_raises_on_an_empty_name():
+    verdicts = [Verdict("", "entity", "clear", "2026-08-24", "")]
+    with pytest.raises(NameCheckError, match="separator"):
+        render_name_check_md(verdicts, "Project Testbed")
+
+
+def test_render_sanitises_a_pipe_in_the_note_without_truncating(tmp_path):
+    long_note = "shares a name with a public figure | possible false positive"
+    verdicts = [
+        Verdict("Ashfell Holdings Limited", "entity", "ambiguous", "2026-08-24", long_note)
+    ]
+    path = tmp_path / "name-check.md"
+    path.write_text(render_name_check_md(verdicts, "Project Testbed"))
+    loaded = load_name_check(path)
+    assert len(loaded) == 1
+    # Sanitised, not truncated at the first pipe: the whole note survives.
+    assert loaded[0].note == long_note.replace("|", "/")
+    assert "possible false positive" in loaded[0].note
+
+
+@pytest.mark.parametrize(
+    "existing_text",
+    ["ashfell holdings limited", " Ashfell Holdings Limited ", "ASHFELL HOLDINGS LIMITED"],
+)
+def test_names_needing_check_does_not_fold_case_or_whitespace(existing_text):
+    # Pin for the exact-match behaviour already shipped: folding case or
+    # whitespace here would create a false "already checked" when the
+    # fact sheet's exact text differs from what was actually searched.
+    candidates = [CandidateName("Ashfell Holdings Limited", "entity")]
+    existing = [Verdict(existing_text, "entity", "clear", "2026-08-24", "")]
+    todo = names_needing_check(candidates, existing)
+    assert [c.text for c in todo] == ["Ashfell Holdings Limited"]

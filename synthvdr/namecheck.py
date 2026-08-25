@@ -58,6 +58,25 @@ raise eagerly rather than collecting into a report, because `/vdr-scope` calls
 `extract_candidates` while drafting — a self-contradictory or meaningless fact
 sheet should stop the skill immediately, the same ruling already applied to
 gate 13's self-contradictory fact sheet elsewhere in this project.
+
+FOUR MORE GUARDS, ONE PRINCIPLE: KEYS ARE EXACT-OR-REJECT, COMMENTARY IS
+SANITISED. A name declared twice in `## Invented names` with two different
+kinds is the same contradiction as the declared-vs-cast case above, just
+between two rows of the same table instead of two tables — "declared table
+wins" cannot arbitrate it either, because both sides ARE the declared table,
+so `_declared_candidates` raises `NameCheckError` rather than letting
+last-wins silently pick one (an identical kind repeated is harmless and does
+not raise). Separately, `render_name_check_md` rejects two shapes for a
+`Verdict.text`, because the Name is this record's key and the pipe-table
+format has no escaping: a literal `|` would split the row into extra columns,
+and text made up only of `-`/`:` characters (or empty) would be read back and
+silently swallowed by the same separator-row guard `load_name_check` and
+`names.cast_list` use — `Verdict("---", ...)` must not round-trip to zero
+rows. A `Verdict.note`, by contrast, is free-text commentary written by the
+search skill at build time, not a key, so a `|` in it is sanitised (replaced
+with `/`) rather than rejected — breaking a build over a cosmetic character in
+a comment is worse than substituting it, and the substitution must not
+truncate the note the way emitting the raw pipe would have.
 """
 
 from __future__ import annotations
@@ -143,8 +162,15 @@ def _declared_candidates(fact_sheet_text: str) -> List[CandidateName]:
     through: gate 14 fails safe on it (an unrecognised kind is simply not
     masked), but the collision-vs-notability split downstream is undefined
     for a kind nothing recognises.
+
+    Also raises if the same name is declared twice with two DIFFERENT
+    kinds — last-wins would silently pick one, and picking "entity" over
+    "person" is exactly the masking hazard the module docstring describes.
+    The same name repeated with the SAME kind is harmless and does not
+    raise; only a genuine conflict does.
     """
     out = []
+    seen: Dict[str, str] = {}
     for cells in _table_rows(fact_sheet_text, "## invented names"):
         if len(cells) < 2:
             continue
@@ -161,6 +187,13 @@ def _declared_candidates(fact_sheet_text: str) -> List[CandidateName]:
                 f"{text!r} declares an unrecognised Kind {raw_kind!r} in "
                 f"## Invented names — must be one of: {valid}"
             )
+        if text in seen and seen[text] != kind:
+            raise NameCheckError(
+                f"{text!r} is declared twice in ## Invented names with different "
+                f"kinds ({seen[text]!r} and {kind!r}) — the fact sheet is "
+                f"self-contradictory; resolve it by removing one of the rows"
+            )
+        seen[text] = kind
         out.append(CandidateName(text=text, kind=kind))
     return out
 
@@ -235,6 +268,55 @@ def unresolved(verdicts: List[Verdict]) -> List[Verdict]:
     return [v for v in verdicts if v.verdict != "clear"]
 
 
+def _would_vanish_as_separator(text: str) -> bool:
+    """True if `text`, written into the Name column, would be misread on
+    load as a markdown table separator row and silently dropped — the same
+    guard (`_is_header_or_separator`) that `load_name_check` and
+    `names.cast_list` both use to skip `|---|---|` rows. Empty text
+    qualifies too: the empty set is a subset of any set, so it fails the
+    dash/colon test the same way a bare `---` does.
+    """
+    return set(text) <= {"-", ":"}
+
+
+def _validate_name_for_render(text: str) -> None:
+    """Reject a `Verdict.text` the pipe-table format cannot carry as a key.
+
+    Two shapes, both raised rather than sanitised because the Name is this
+    record's key, not commentary — see the module docstring for the
+    exact-or-reject-vs-sanitise distinction. A literal `|` would split the
+    row into extra columns on write. Text made of only `-`/`:` characters
+    (or nothing at all) would round-trip to zero rows: written out it reads
+    back as a separator row and vanishes, exactly what `_is_header_or_separator`
+    exists to skip.
+    """
+    if "|" in text:
+        raise NameCheckError(
+            f"{text!r} contains a literal '|', which the pipe-table Name column "
+            f"cannot represent — rename it before writing the name check"
+        )
+    if _would_vanish_as_separator(text):
+        raise NameCheckError(
+            f"{text!r} is empty or made up only of '-'/':' characters — written "
+            f"into the Name column it would be misread as a table separator row "
+            f"and silently dropped on load; rename it before writing the name check"
+        )
+
+
+def _sanitise_note(note: str) -> str:
+    """Replace a literal '|' in free-text commentary with '/'.
+
+    The Note column is commentary written by the search skill at build
+    time, not a key (contrast `_validate_name_for_render`, which rejects
+    rather than sanitises) — breaking a build over one cosmetic character
+    in a comment is worse than substituting it. Left as-is, a '|' would
+    split the row into extra columns and `load_name_check` would silently
+    truncate the note at the first pipe, since it only reads the fifth
+    cell back.
+    """
+    return note.replace("|", "/")
+
+
 def render_name_check_md(verdicts: List[Verdict], room_codename: str) -> str:
     """The pipe table gate 14 (and `names.cast_list`) parse.
 
@@ -242,6 +324,11 @@ def render_name_check_md(verdicts: List[Verdict], room_codename: str) -> str:
     column 2 — `cast_list` reads exactly those two positions. Do not
     reorder the columns or drop the outer pipes; both are load-bearing for
     the downstream gate, not stylistic.
+
+    Raises `NameCheckError` if any verdict's `.text` cannot be written into
+    the Name column safely (a literal '|', or text that would be misread as
+    a separator row on load) — see `_validate_name_for_render`. A '|' in
+    `.note` is sanitised rather than rejected — see `_sanitise_note`.
     """
     lines = [
         f"# {room_codename} — name check",
@@ -255,7 +342,9 @@ def render_name_check_md(verdicts: List[Verdict], room_codename: str) -> str:
         "|---|---|---|---|---|",
     ]
     for v in verdicts:
-        lines.append(f"| {v.text} | {v.kind} | {v.verdict} | {v.checked} | {v.note} |")
+        _validate_name_for_render(v.text)
+        note = _sanitise_note(v.note)
+        lines.append(f"| {v.text} | {v.kind} | {v.verdict} | {v.checked} | {note} |")
     lines.append("")
     return "\n".join(lines)
 
