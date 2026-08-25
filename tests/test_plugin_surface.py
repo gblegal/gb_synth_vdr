@@ -24,8 +24,11 @@ project's gates call SKIP discipline: an expected gap must say so loudly enough 
 resolution is forced to be noticed, not quietly tolerated forever.
 """
 
+import ast
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import List, Sequence
 
@@ -71,6 +74,9 @@ FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 FENCED_YAML = re.compile(r"```yaml\n(.*?)\n```", re.DOTALL)
 FENCED_MARKDOWN = re.compile(r"```markdown\n(.*?)\n```", re.DOTALL)
 FENCED_JSON = re.compile(r"```json\n(.*?)\n```", re.DOTALL)
+FENCED_PYTHON = re.compile(r"```python\n(.*?)\n```", re.DOTALL)
+FENCED_BASH = re.compile(r"```bash\n(.*?)\n```", re.DOTALL)
+EMBEDDED_PYTHON_IN_BASH = re.compile(r'python3 -c "\n(.*?)\n"', re.DOTALL)
 
 
 def _pending_param(name: str, pending: tuple) -> "pytest.param":
@@ -138,6 +144,35 @@ def markdown_examples(path: Path) -> List[str]:
     expected content kept in the test.
     """
     return FENCED_MARKDOWN.findall(_read(path))
+
+
+def python_examples(path: Path) -> List[str]:
+    """Every fenced ` ```python ` code block's raw text in a skill/agent markdown file.
+
+    Final review, test-suite gap: no ```python or ```bash fence in any skill was executed
+    or even parsed by any test before this — exactly where F6 (a hardcoded subset total), F7
+    (a circular verification step) and two `room_codename` NameErrors lived, none of them
+    catchable by the YAML/JSON/markdown example tests above. This is the same class as those
+    extractors: read the fence text out of the shipped file, never a copy kept here.
+    """
+    return FENCED_PYTHON.findall(_read(path))
+
+
+def bash_examples(path: Path) -> List[str]:
+    """Every fenced ` ```bash ` code block's raw text in a skill/agent markdown file."""
+    return FENCED_BASH.findall(_read(path))
+
+
+def embedded_python_snippets(bash_text: str) -> List[str]:
+    """Every `python3 -c "..."` heredoc's inner Python source inside a fenced bash block.
+
+    Several skills embed a real Python script inside a bash fence via `python3 -c "\\n...\\n"`
+    (single-quoted Python string literals throughout, so the shell's own double quotes never
+    collide with them) rather than a bare ` ```python ` fence, because the step also runs a
+    plain shell command alongside it (e.g. `node ... pdf.mjs` next to a DOCX-render `python3
+    -c`). `python_examples()` alone would miss these entirely.
+    """
+    return EMBEDDED_PYTHON_IN_BASH.findall(bash_text)
 
 
 def find_example_by_marker(blocks: List[str], marker: str, source: Path) -> str:
@@ -388,6 +423,31 @@ def test_findings_skill_states_the_hard_gate_before_authoring():
     assert "no authoring" in body or "before any authoring" in body
 
 
+def test_findings_skill_expected_kdp_carriers_formula_is_markdown_only():
+    """Final review, F8: the skill told an author to set EXPECTED_KDP_CARRIERS to
+    `len(f.all_evidence_paths())` — EVERY evidence path, any suffix — but gate 8
+    (structural.py) only ever counts MARKDOWN carriers, since a CSV register is never
+    annotated. Any room with non-markdown evidence set the scalar too high and hard-FAILed
+    gate 8 with a diagnosis pointing at room.conf rather than at this formula — the third
+    recurrence of the same collision (fixed in the gate's code twice before, never in this
+    prose). Pins that the shipped formula filters to markdown paths.
+    """
+    body = _read(ROOT / "skills" / "vdr-findings" / "SKILL.md")
+    assert 'endswith(".md")' in body
+    assert "all_evidence_paths()" in body
+    # No other skill may state a DIFFERENT formula for the same value, or the two would
+    # silently drift apart again exactly as this one did against the gate's own code.
+    for name in SKILL_NAMES:
+        if name == "vdr-findings":
+            continue
+        other = ROOT / "skills" / name / "SKILL.md"
+        if other.is_file():
+            assert "all_evidence_paths()" not in _read(other), (
+                f"{other}: states its own EXPECTED_KDP_CARRIERS-related formula — "
+                "there must be exactly one place this formula is stated"
+            )
+
+
 def test_scope_skill_checks_for_an_existing_room_before_overwriting():
     """Fix round 1, F3: a literal re-run of /vdr-scope must not silently overwrite a fact
     sheet and name-check record that may already be signed off at Gate A — the name-check
@@ -410,6 +470,153 @@ def test_no_skill_tells_the_reader_to_hand_over_key_material():
             # missing file is not itself an instance of that property being violated.
             continue
         assert "hand over _key" not in _read(path).lower()
+
+
+# ---------------------------------------------------------------------------
+# Final review, test-suite gap: no ```python or ```bash fence in any skill was ever
+# executed, or even parsed, by any test — exactly where F6 (a hardcoded subset total),
+# F7 (a circular verification step) and two `room_codename` NameErrors lived, all
+# invisible to the YAML/JSON/markdown example tests above. These two tests are the
+# floor every skill's fenced code must clear: real Python syntax, real shell syntax.
+# Targeted execution tests further down in this file go further for the specific
+# scripts the review named.
+# ---------------------------------------------------------------------------
+
+
+def test_every_python_fence_in_every_skill_is_syntactically_valid():
+    for name in SKILL_NAMES:
+        path = ROOT / "skills" / name / "SKILL.md"
+        for block in python_examples(path):
+            try:
+                ast.parse(block)
+            except SyntaxError as exc:
+                pytest.fail(f"{path}: a ```python fence is not valid Python — {exc}\n{block}")
+
+
+def test_every_bash_fence_in_every_skill_is_syntactically_valid():
+    if not shutil.which("bash"):
+        pytest.skip("bash not available in this environment")
+    for name in SKILL_NAMES:
+        path = ROOT / "skills" / name / "SKILL.md"
+        for block in bash_examples(path):
+            result = subprocess.run(
+                ["bash", "-n"], input=block, capture_output=True, text=True
+            )
+            assert result.returncode == 0, (
+                f"{path}: a ```bash fence fails `bash -n` — {result.stderr}\n{block}"
+            )
+            # Any python3 -c "..." heredoc embedded in this bash block must itself be
+            # valid Python — `bash -n` only checks shell syntax, it never looks inside
+            # a quoted string, so a NameError-class or syntax-level Python defect
+            # embedded this way is otherwise invisible to both syntax checks at once.
+            for snippet in embedded_python_snippets(block):
+                try:
+                    ast.parse(snippet)
+                except SyntaxError as exc:
+                    pytest.fail(
+                        f"{path}: a python3 -c snippet inside a ```bash fence is not "
+                        f"valid Python — {exc}\n{snippet}"
+                    )
+
+
+# ---------------------------------------------------------------------------
+# Real EXECUTION of specific fenced scripts, not just syntax-checking. Syntax checking
+# alone (ast.parse) cannot catch a NameError — `room_codename` used nowhere else in its
+# own fence is perfectly valid Python syntax, and both `NameError`s the final review
+# found in the shipped skills were exactly this shape. These tests run the shipped
+# fence's own source (via exec(), never a copy retyped here) against a real filesystem.
+# ---------------------------------------------------------------------------
+
+
+def test_scope_skill_name_check_example_executes_without_a_nameerror(tmp_path, monkeypatch):
+    """Final review, F10: `room_codename` was used and never bound anywhere in this exact
+    fence — an instant NameError for anyone who copies it as shown. Runs the shipped fence
+    verbatim in a real directory rather than eyeballing it for the fix.
+    """
+    path = ROOT / "skills" / "vdr-scope" / "SKILL.md"
+    block = find_example_by_marker(python_examples(path), "render_name_check_md", path)
+    (tmp_path / "_key").mkdir()
+    monkeypatch.chdir(tmp_path)
+    exec(compile(block, str(path), "exec"), {})
+    assert (tmp_path / "_key" / "name-check.md").is_file()
+
+
+def test_findings_skill_validate_example_executes_without_a_nameerror(tmp_path, monkeypatch):
+    """Final review, F10: the second `room_codename` NameError, in the Gate B validate
+    step — fixed by loading room.conf's ROOM_CODENAME instead of assuming a bound name.
+    Runs the shipped fence verbatim against a real room.conf plus the skill's own
+    findings.yaml/distractors.yaml examples (already proven to validate cleanly above).
+    """
+    path = ROOT / "skills" / "vdr-findings" / "SKILL.md"
+    findings_yaml = find_example_by_top_level_key(yaml_examples(path), "findings", path)
+    distractors_yaml = find_example_by_top_level_key(yaml_examples(path), "distractors", path)
+    (tmp_path / "_key").mkdir()
+    (tmp_path / "_key" / "findings.yaml").write_text(findings_yaml, encoding="utf-8")
+    (tmp_path / "_key" / "distractors.yaml").write_text(distractors_yaml, encoding="utf-8")
+    (tmp_path / "room.conf").write_text(
+        'ROOM_CODENAME="Project Example"\n'
+        "INDEX_TOTAL=1\nBLIND_TOTAL=1\nFLAGGED_TOTAL=1\n"
+        'BLIND_TREE="data-room"\nFLAGGED_TREE="_key/flagged"\nKEY_ROOT="_key"\n'
+        'FLAG_STRING_1="Key diligence points"\nFLAG_STRING_2="DD flag"\n'
+        'FINDING_PREFIXES="ENV|FIN"\nEXPECTED_KDP_CARRIERS=0\n'
+        'SECTION_DIRS="01_corporate"\n',
+        encoding="utf-8",
+    )
+    block = find_example_by_marker(python_examples(path), "render_findings_md", path)
+    monkeypatch.chdir(tmp_path)
+    exec(compile(block, str(path), "exec"), {})
+    assert (tmp_path / "_key" / "findings.md").is_file()
+    assert "Project Example" in (tmp_path / "_key" / "findings.md").read_text()
+
+
+def test_package_skill_manifest_script_executes_and_produces_a_real_hash(xs_room, monkeypatch):
+    """Final review, F10: `compute_content_hash` — the single definition of the room's
+    provenance hash — "exists only inside a python fence ... and has no test" (confirmed by
+    the review by running it by hand against a real built room). Runs the shipped fence
+    verbatim against a real built fixture room and checks the result independently, rather
+    than trusting that a hand run once means it will keep working.
+    """
+    path = ROOT / "skills" / "vdr-package" / "SKILL.md"
+    block = find_example_by_marker(python_examples(path), "compute_content_hash", path)
+    monkeypatch.chdir(xs_room)
+    exec(compile(block, str(path), "exec"), {})
+
+    manifest = json.loads((xs_room / "_key" / "manifest.json").read_text())
+    assert set(manifest) >= {"room", "content_hash", "documents", "findings", "built"}
+
+    # Independently recompute the same hash a different way (sorted (path, sha256) pairs,
+    # joined and hashed) and confirm it agrees — this is the "does it actually work"
+    # check the review ran by hand; here it runs every time.
+    import hashlib
+
+    blind_root = xs_room / "data-room"
+    entries = sorted(
+        f"{p.relative_to(blind_root).as_posix()}\0{hashlib.sha256(p.read_bytes()).hexdigest()}"
+        for p in blind_root.rglob("*")
+        if p.is_file()
+    )
+    expected_hash = hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()
+    assert manifest["content_hash"] == expected_hash
+    assert manifest["documents"] == len(entries)
+
+
+def test_package_skill_subset_script_executes_against_a_real_room(xs_room, monkeypatch):
+    """Final review, F6/test-suite gap: runs the shipped Step 2 subset-building script
+    (embedded as a python3 -c heredoc inside a ```bash fence, so python_examples() alone
+    would miss it) against a real built fixture room, confirming subset_total is genuinely
+    derived from BLIND_TOTAL rather than a number retyped here, and that the derived subset
+    is complete.
+    """
+    path = ROOT / "skills" / "vdr-package" / "SKILL.md"
+    bash_block = find_example_by_marker(bash_examples(path), "build_subset", path)
+    snippets = embedded_python_snippets(bash_block)
+    assert len(snippets) == 1, f"{path}: expected exactly one python3 -c snippet"
+
+    monkeypatch.chdir(xs_room)
+    namespace = {}
+    exec(compile(snippets[0], str(path), "exec"), namespace)
+    assert namespace["report"].complete
+    assert namespace["subset_total"] == min(40, max(50, 40 // 2))  # xs-room's BLIND_TOTAL is 40
 
 
 def test_findings_and_distractors_examples_in_skill_validate_cleanly(tmp_path):

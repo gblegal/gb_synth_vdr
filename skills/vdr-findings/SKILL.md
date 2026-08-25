@@ -179,13 +179,15 @@ tell it first, in exactly this shape.
 
 ```python
 from pathlib import Path
+from synthvdr.roomconf import load_room_conf
 from synthvdr.schema import load_findings, load_distractors, validate, render_findings_md
 
+conf = load_room_conf(Path("room.conf"))
 f = load_findings(Path("_key/findings.yaml"))
 d = load_distractors(Path("_key/distractors.yaml"))
 errors = validate(f, d)
 print("\n".join(errors) if errors else "valid")
-Path("_key/findings.md").write_text(render_findings_md(f, room_codename))
+Path("_key/findings.md").write_text(render_findings_md(f, conf.get("ROOM_CODENAME")))
 ```
 
 Fix every error `validate` reports before proceeding — do not hand-wave past one because it
@@ -194,12 +196,19 @@ much later, with far less context about why. `/vdr-qa`'s gate 17 runs this exact
 as an automated backstop, so an error left unfixed here does not ship silently — but a real
 error is far cheaper to fix now, before a single document exists, than after a full build.
 
-Then set `EXPECTED_KDP_CARRIERS` in `room.conf` to `len(f.all_evidence_paths())` — the
-number of *distinct* documents named across every finding's `source` and `corroboration`
-combined (a document corroborating two findings still counts once). This is the number
-`/vdr-build`'s per-wave QA checks the flagged tree's annotation-carrier count against; get it
-from the loaded `FindingSet`, not by counting rows in the YAML by eye — a document shared
-between findings makes those two different numbers.
+Then set `EXPECTED_KDP_CARRIERS` in `room.conf` to
+`len([p for p in f.all_evidence_paths() if p.endswith(".md")])` — the number of *distinct
+markdown* documents named across every finding's `source` and `corroboration` combined (a
+document corroborating two findings still counts once). **Markdown only, not every evidence
+path**: `synthvdr.twin.build_flagged_tree` never annotates non-markdown evidence (a CSV
+register, say — there is nowhere in a CSV to append prose), so a `.csv` evidence path can
+never become a carrier, and counting it here sets the scalar too high by exactly the number
+of non-markdown evidence paths. Gate 8 then hard-FAILs with "`EXPECTED_KDP_CARRIERS=N` in
+room.conf is stale", pointing at `room.conf` when the real defect is this formula — this is
+the third time that exact collision has appeared in this project, fixed in the gate's code
+twice before and never in this instruction until now. Get the count from the loaded
+`FindingSet`, not by counting rows in the YAML by eye — a document shared between findings,
+or a non-markdown evidence path, both make an eyeballed count wrong in a different direction.
 
 ## Gate B — hard stop
 

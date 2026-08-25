@@ -123,6 +123,7 @@ from datetime import date
 from pathlib import Path
 from synthvdr.namecheck import Verdict, render_name_check_md
 
+room_codename = "Project Ashfell"  # substitute the codename you invented in step 2
 verdicts = [
     Verdict(text="Ashfell Advanced Materials Limited", kind="entity", verdict="clear",
             checked=date.today().isoformat(), note=""),

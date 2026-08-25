@@ -6,7 +6,7 @@ description: Score a document-review tool's output against the room's answer key
 # Score a tool against the answer key
 
 ```bash
-python3 -m synthvdr score <tool-output.json> --room .
+python3 -m synthvdr score "<tool-output.json>" --room .
 ```
 
 Accepts the shipped JSON schema (`schemas/tool-output.schema.json`) or, leniently, a markdown
@@ -111,7 +111,7 @@ inconsistently.
 ## Comparing runs
 
 ```bash
-python3 -m synthvdr score <new-output.json> --room . --baseline <earlier-output.json>
+python3 -m synthvdr score "<new-output.json>" --room . --baseline "<earlier-output.json>"
 ```
 
 `--baseline` takes **another tool output, scored fresh against this same room** — not a saved
