@@ -54,10 +54,10 @@ findings:
     severity: critical
     workstream: environmental
     multi_document: true
-    source: data-room/11_environmental-hs/11.3_site-reports/11.3.4_phase-2.md
+    source: 11_environmental-hs/11.3_site-reports/11.3.4_phase-2.md
     location: "Table 4, remediation estimate"
     corroboration:
-      - data-room/02_financial/2.4_provisions/2.4.2_environmental-provision.md
+      - 02_financial/2.4_provisions/2.4.2_environmental-provision.md
     substance: >
       Phase 2 estimates a remediation cost far above the balance-sheet provision, and the
       indemnity that would have covered the gap expired before signing.
@@ -66,7 +66,7 @@ findings:
     severity: high
     workstream: financial
     multi_document: false
-    source: data-room/02_financial/2.4_provisions/2.4.1_provisions-note.md
+    source: 02_financial/2.4_provisions/2.4.1_provisions-note.md
     location: "Note 14"
     substance: >
       The disclosed provision does not reflect the remediation estimate carried elsewhere in
@@ -83,6 +83,18 @@ directions are enforced by `synthvdr.schema.validate`, not just documented here)
 names other finding IDs this one relates to, never a second ID for the same issue — see the
 first rule below. `id` is prefixed by the finding's workstream (e.g. `ENV-1`), matching a
 token you declared in `room.conf`'s `FINDING_PREFIXES` at scope time.
+
+**`source` and every `corroboration` entry are paths relative to the blind tree root —
+never prefixed with `BLIND_TREE`'s own name (`data-room` by convention).** A path like
+`11_environmental-hs/11.3_site-reports/11.3.4_phase-2.md` is correct; the same path with a
+leading `data-room/` is not, and is silently wrong in a way nothing here catches: it still
+loads, still validates, and only fails later, when `/vdr-build` calls
+`synthvdr.twin.build_flagged_tree` and it raises `TwinError: finding evidence path(s) not
+found under BLIND_TREE` for every finding at once, because `build_flagged_tree` computes
+each real file's key as its path *relative to* `BLIND_TREE`, which never includes
+`BLIND_TREE`'s own name. This is the same convention gate 8's carrier census, the subset
+builder and `/vdr-score`'s deterministic pre-match all rely on — one prefix in one finding's
+`source` is one finding that cannot be built, scored, or found by any of them.
 
 Rules that do not appear anywhere else and must be followed exactly, because the harness
 enforces some of them mechanically and the rest are invisible to it:
@@ -116,12 +128,14 @@ distractors:
   - id: DX-1
     title: Alarming-looking regulator notice, fully remediated
     shape_matches: ENV-1
-    location: data-room/11_environmental-hs/11.5_hse/11.5.2_improvement-notice.md
-    resolution: data-room/11_environmental-hs/11.5_hse/11.5.3_closure-letter.md
+    location: 11_environmental-hs/11.5_hse/11.5.2_improvement-notice.md
+    resolution: 11_environmental-hs/11.5_hse/11.5.3_closure-letter.md
 ```
 
 `id`, `title`, `location` and `resolution` are required — `load_distractors` raises
-`SchemaError` naming the missing field if any is absent. `shape_matches` is optional but
+`SchemaError` naming the missing field if any is absent. **`location` and `resolution` follow
+the exact same convention as a finding's `source`/`corroboration` above: relative to the
+blind tree root, never prefixed with `BLIND_TREE`'s own name.** `shape_matches` is optional but
 should name a real finding `id` whenever the distractor is that finding's benign twin — see
 below. **At least a third** of all distractors must be shape-matched benign twins of real
 findings this way — a document that looks exactly as alarming as a genuine finding but

@@ -121,6 +121,12 @@ subagent's wave-and-batch identifier, e.g. `wave1-batch-a.yaml`) — copy and ad
 reconstruct it from memory, since `findings:` is exactly `synthvdr.schema`'s `findings.yaml`
 shape and `new_findings:` rows carry the same required fields, just with a provisional ID:
 
+`source` and `corroboration` are relative to the blind tree root, never prefixed with
+`BLIND_TREE`'s own name — see `/vdr-findings`' fuller note on this. An author who has just
+written a real file knows its path *within* `BLIND_TREE`, not the tree's own name, so this
+is usually automatic; the failure mode when it is not is `build_flagged_tree` (Step 5 below)
+raising `TwinError` for the batch.
+
 ```yaml
 findings:
   - id: FIN-2
@@ -128,7 +134,7 @@ findings:
     severity: medium
     workstream: financial
     multi_document: false
-    source: data-room/02_financial/2.6_completion-accounts/2.6.3_escrow-notice.md
+    source: 02_financial/2.6_completion-accounts/2.6.3_escrow-notice.md
     location: "Clause 4.2"
     substance: >
       The escrow release notice references a completion accounts adjustment mechanism that
@@ -138,10 +144,10 @@ findings:
     severity: high
     workstream: operations
     multi_document: true
-    source: data-room/14_operations/14.2_supply-chain/14.2.5_supplier-list.md
+    source: 14_operations/14.2_supply-chain/14.2.5_supplier-list.md
     location: "Row 3, annual spend column"
     corroboration:
-      - data-room/06_commercial/6.3_supplier-contracts/6.3.1_master-supply-agreement.md
+      - 06_commercial/6.3_supplier-contracts/6.3.1_master-supply-agreement.md
     substance: >
       One supplier accounts for the majority of a key input's annual spend, and the master
       supply agreement contains no minimum-volume or exclusivity carve-out addressing that
@@ -152,7 +158,7 @@ new_findings:
     severity: high
     workstream: environmental
     multi_document: false
-    source: data-room/11_environmental-hs/11.4_permits/11.4.2_variation-notice.md
+    source: 11_environmental-hs/11.4_permits/11.4.2_variation-notice.md
     location: "Condition 7"
     substance: >
       A permit variation notice tightens a discharge limit the room's other environmental

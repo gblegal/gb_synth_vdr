@@ -27,14 +27,16 @@ resolution is forced to be noticed, not quietly tolerated forever.
 import json
 import re
 from pathlib import Path
-from typing import List
+from typing import List, Sequence
 
 import pytest
 import yaml
 
 import synthvdr
 from synthvdr.qa.structural import SLOT_REF, parse_gaps_allowlist
+from synthvdr.roomconf import load_room_conf
 from synthvdr.schema import (
+    Distractor,
     Finding,
     FindingSet,
     allocate_new_finding_ids,
@@ -50,6 +52,7 @@ from synthvdr.score import (
     load_adjudications,
     validate_adjudications,
 )
+from synthvdr.twin import TwinError, build_flagged_tree
 
 ROOT = Path(__file__).resolve().parent.parent
 SKILL_NAMES = ("vdr-scope", "vdr-findings", "vdr-build", "vdr-qa", "vdr-package", "vdr-score")
@@ -176,6 +179,105 @@ def find_example_by_top_level_key(blocks: List[str], key: str, source: Path) -> 
     return matches[0]
 
 
+# Fix round 1, coordinator ruling: a minimal but real room.conf for SEMANTIC
+# example-validation — see assert_evidence_paths_resolve_under_blind_tree() below. Every
+# value is arbitrary except the three PATH_KEYS, which must be internally consistent for
+# synthvdr.roomconf.load_room_conf / check_tree_identity to accept it at all.
+_SEMANTIC_ROOM_CONF = """ROOM_CODENAME="Example Verification Room"
+INDEX_TOTAL=1
+BLIND_TOTAL=1
+FLAGGED_TOTAL=1
+BLIND_TREE="data-room"
+FLAGGED_TREE="_key/flagged"
+KEY_ROOT="_key"
+FLAG_STRING_1="Key diligence points"
+FLAG_STRING_2="DD flag"
+FINDING_PREFIXES="XXX"
+EXPECTED_KDP_CARRIERS=0
+SECTION_DIRS="."
+"""
+
+
+def _without_blind_tree_prefix(rel: str, blind_tree_name: str) -> str:
+    """The path `rel` SHOULD have named if it is already blind-tree-relative, used only to
+    decide where this helper's throwaway blind tree puts its real files — never fed back
+    into the code under test, which must see the example's own raw string, prefix bug and
+    all, or the check below would prove nothing about it.
+    """
+    prefix = blind_tree_name.rstrip("/") + "/"
+    return rel[len(prefix):] if rel.startswith(prefix) else rel
+
+
+def assert_evidence_paths_resolve_under_blind_tree(
+    tmp_path: Path,
+    findings: FindingSet,
+    distractors: Sequence[Distractor] = (),
+) -> None:
+    """SEMANTIC validation for a findings/distractors example — reusable across every test
+    that extracts one from a shipped skill file, and left in this shape so Task 20's
+    end-to-end acceptance test can import and call it directly rather than re-deriving it,
+    since it is the same real-room construction that test needs at a larger scale.
+
+    Fix round 1, coordinator ruling: `load_findings`/`validate()` (used by every other
+    example test in this file) check the answer key's SCHEMA — required fields,
+    cross-reference consistency — but never touch a real blind tree, so neither can see
+    whether a `source`/`corroboration`/`location`/`resolution` path is actually shaped the
+    way the room-building code expects. That gap is exactly how Tasks 17 and 18 shipped
+    skill examples with every evidence path prefixed `data-room/`: schema-valid, every
+    existing test green, and yet `synthvdr.twin.build_flagged_tree` — the function
+    `/vdr-build` actually calls to consolidate a wave — raised TwinError on every single one
+    of them, because it keys each real file by its path RELATIVE TO BLIND_TREE, which never
+    includes BLIND_TREE's own name (confirmed by reproduction, not just by reading the code).
+
+    The check does not trust the example's own paths to build its ground truth — that would
+    make a prefixed path match a prefixed path and prove nothing. Instead it builds a real
+    file at what the path would be with any `data-room/`-style prefix stripped (the
+    convention design spec §5.1 and both skills now state explicitly), then hands the
+    example's RAW, unmodified paths to the real `build_flagged_tree`. A prefixed path then
+    names a file that was never created at that location, and `build_flagged_tree` raises
+    TwinError naming it — exactly the failure an author following a bad example would hit.
+    `build_flagged_tree` has no notion of distractors at all (only finding evidence gets
+    annotated), so a distractor's `location`/`resolution` gets its own, separate existence
+    check against the same real tree, or the identical prefix bug in a distractor's path
+    would pass here silently.
+    """
+    (tmp_path / "room.conf").write_text(_SEMANTIC_ROOM_CONF, encoding="utf-8")
+    blind_tree_name = "data-room"
+    blind_root = tmp_path / blind_tree_name
+
+    raw_paths = set()
+    for finding in findings.findings:
+        raw_paths.update(finding.evidence_paths())
+    for distractor in distractors:
+        raw_paths.add(distractor.location)
+        raw_paths.add(distractor.resolution)
+    assert raw_paths, "no evidence paths to verify — the example has no findings or distractors"
+
+    for rel in raw_paths:
+        real_rel = _without_blind_tree_prefix(rel, blind_tree_name)
+        target = blind_root / real_rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"Placeholder content for {real_rel}.\n", encoding="utf-8")
+
+    conf = load_room_conf(tmp_path / "room.conf")
+    try:
+        build_flagged_tree(tmp_path, conf, findings)
+    except TwinError as exc:
+        pytest.fail(
+            f"a findings example's evidence paths do not resolve under BLIND_TREE — {exc}. "
+            "This is almost always a `data-room/`-style prefix left in `source` or "
+            "`corroboration`: those paths must be relative to the blind tree root, never "
+            "prefixed with BLIND_TREE's own name."
+        )
+
+    for distractor in distractors:
+        for field, rel in (("location", distractor.location), ("resolution", distractor.resolution)):
+            assert (blind_root / rel).is_file(), (
+                f"{distractor.id}: {field} {rel!r} does not resolve under BLIND_TREE "
+                f"({blind_root}) — check for a `data-room/`-style prefix"
+            )
+
+
 @pytest.mark.parametrize("name", [_pending_param(n, PENDING_SKILLS) for n in SKILL_NAMES])
 def test_every_skill_exists_with_matching_frontmatter(name):
     path = ROOT / "skills" / name / "SKILL.md"
@@ -288,6 +390,11 @@ def test_findings_and_distractors_examples_in_skill_validate_cleanly(tmp_path):
     # render_findings_md is the other real consumer step 5 of the skill tells an author to
     # call; it must not raise on the skill's own example either.
     render_findings_md(findings, "Project Example")
+
+    # SEMANTIC validation, fix round 1: the two checks above are schema-only and would not
+    # have caught the data-room/-prefixed evidence paths this skill actually shipped with —
+    # see assert_evidence_paths_resolve_under_blind_tree's docstring for the reproduction.
+    assert_evidence_paths_resolve_under_blind_tree(tmp_path, findings, distractors)
 
 
 def test_gaps_example_in_skill_matches_gate_9s_real_parser():
@@ -421,6 +528,11 @@ def test_incoming_example_in_build_skill_validates_as_findings(tmp_path):
     errors = validate(findings, [])
     assert errors == [], f"the skill's own incoming.yaml example fails validate(): {errors}"
 
+    # SEMANTIC validation, fix round 1 — see assert_evidence_paths_resolve_under_blind_tree's
+    # docstring: this is the check that would have caught vdr-build's data-room/-prefixed
+    # source/corroboration paths, which validate() above cannot see.
+    assert_evidence_paths_resolve_under_blind_tree(tmp_path, findings)
+
 
 NEW_FINDING_ID = re.compile(r"\A(?P<label>.+)-NEW-\d+\Z")
 
@@ -454,6 +566,11 @@ def test_new_findings_example_in_build_skill_has_full_finding_shape(tmp_path):
     findings = load_findings(findings_path)
     errors = validate(findings, [])
     assert errors == [], f"the skill's own new_findings.yaml example fails validate(): {errors}"
+
+    # SEMANTIC validation, fix round 1 — see assert_evidence_paths_resolve_under_blind_tree's
+    # docstring: the new_findings example carried the same data-room/-prefixed source path
+    # as the findings: example above it, which validate() cannot see.
+    assert_evidence_paths_resolve_under_blind_tree(tmp_path, findings)
 
 
 def test_new_findings_example_in_build_skill_allocates_deterministically_across_two_agents():
