@@ -109,6 +109,41 @@ def _same_file(a: Path, b: Path) -> bool:
         return False
 
 
+_FINDING_PREFIX_TOKEN = re.compile(r"^[A-Z][A-Z0-9]*$")
+
+
+def _check_finding_prefixes(path: Path, key: str, value: str) -> None:
+    """Reject a FINDING_PREFIXES value that would degrade
+    synthvdr.qa.leakage.finding_id_pattern's regex into something
+    dangerously broad.
+
+    That function interpolates this value directly into
+    `\\b(?:{prefixes})-\\d+\\b` — an empty value, an empty segment (from a
+    leading, trailing, or doubled '|'), or a segment that is not a
+    plausible prefix token collapses the alternation towards `-\\d+`, which
+    then matches ordinary hyphenated text ("page 12-15", "2020-2021") as if
+    it were a finding ID. Checked once, here, at load time — reachable by an
+    authoring typo in room.conf, not just in theory — rather than trusted
+    at every call site that builds a pattern from it.
+    """
+    if not value:
+        raise RoomConfError(
+            f"{path}: {key} is empty — it must be one or more prefix tokens separated by '|'"
+        )
+    for segment in value.split("|"):
+        if not segment:
+            raise RoomConfError(
+                f"{path}: {key} {value!r} contains an empty segment — "
+                "check for a leading, trailing, or doubled '|'"
+            )
+        if not _FINDING_PREFIX_TOKEN.match(segment):
+            raise RoomConfError(
+                f"{path}: {key} {value!r} contains {segment!r}, which is not "
+                "a plausible prefix token — expected uppercase letters and "
+                "digits only, starting with a letter"
+            )
+
+
 def _check_relative_path(path: Path, key: str, value: str) -> None:
     """Reject a path-valued room.conf entry that could escape the room root.
 
@@ -369,6 +404,8 @@ def load_room_conf(path: Path) -> RoomConf:
     missing = [k for k in REQUIRED_KEYS if k not in values]
     if missing:
         raise RoomConfError(f"{path}: missing required keys: {', '.join(missing)}")
+
+    _check_finding_prefixes(path, "FINDING_PREFIXES", values["FINDING_PREFIXES"])
 
     # Property 1 + Property 2 over every path-valued key at once. The room
     # root is path.parent — room.conf sits at the top of the room it

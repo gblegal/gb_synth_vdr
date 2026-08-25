@@ -484,3 +484,42 @@ def test_every_pair_of_path_keys_is_rejected_when_they_name_the_same_tree(
         load_room_conf(write(tmp_path, conf_text))
     message = str(excinfo.value)
     assert key_a in message and key_b in message, message
+
+
+# ---------------------------------------------------------------------------
+# Review finding E — FINDING_PREFIXES is interpolated directly into
+# synthvdr.qa.leakage.finding_id_pattern's regex as `\b(?:{prefixes})-\d+\b`.
+# An empty value, an empty segment (a leading, trailing, or doubled '|'), or
+# a segment that is not a plausible prefix token collapses that alternation
+# towards `-\d+`, which then matches ordinary hyphenated text ("page 12-15",
+# "2020-2021") as if it were a finding ID — reachable by an authoring typo
+# in room.conf, not just in theory, so it is checked here at load time.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    ["", "|", "CORP|", "|ENV", "CORP||ENV", "corp", "CORP-1", "CO RP", "1CORP"],
+    ids=[
+        "empty",
+        "bare-pipe",
+        "trailing-pipe",
+        "leading-pipe",
+        "doubled-pipe",
+        "lowercase",
+        "hyphenated",
+        "internal-space",
+        "leading-digit",
+    ],
+)
+def test_finding_prefixes_rejects_an_implausible_value(tmp_path, bad_value):
+    conf_text = SAMPLE.replace('FINDING_PREFIXES="CORP|ENV|FIN"', f'FINDING_PREFIXES="{bad_value}"')
+    assert conf_text != SAMPLE
+    with pytest.raises(RoomConfError, match="FINDING_PREFIXES"):
+        load_room_conf(write(tmp_path, conf_text))
+
+
+def test_finding_prefixes_accepts_a_single_token(tmp_path):
+    conf_text = SAMPLE.replace('FINDING_PREFIXES="CORP|ENV|FIN"', 'FINDING_PREFIXES="CORP"')
+    conf = load_room_conf(write(tmp_path, conf_text))
+    assert conf.get("FINDING_PREFIXES") == "CORP"
