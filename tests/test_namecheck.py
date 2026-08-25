@@ -2,8 +2,12 @@ import pathlib
 import tempfile
 import textwrap
 
+import pytest
+
 from synthvdr.namecheck import (
+    KINDS,
     CandidateName,
+    NameCheckError,
     Verdict,
     extract_candidates,
     load_name_check,
@@ -201,3 +205,85 @@ def test_declared_kind_wins_over_entity_token_suffix_match():
     ).strip()
     candidates = {c.text: c.kind for c in extract_candidates(fact_sheet)}
     assert candidates["Solmark Trading Limited"] == "brand"
+
+
+
+# ---------------------------------------------------------------------------
+# Fix round 1: a person declared with a non-person Kind, and an unrecognised
+# or blank Kind, are both authoring errors that must stop /vdr-scope rather
+# than resolve silently. Both raise NameCheckError.
+# ---------------------------------------------------------------------------
+
+
+def test_person_declared_as_non_person_kind_is_a_contradiction():
+    # Declaring "entity" for a name that ## Cast says is a person is a
+    # self-contradictory fact sheet. Silently preferring the declared kind
+    # (the ordinary precedence rule) would mask this name out of the room
+    # as a company and blind gate 14 to unchecked names beside it.
+    fact_sheet = textwrap.dedent(
+        """
+        # Fact sheet
+
+        ## Invented names
+
+        | Name | Kind |
+        |---|---|
+        | Marta Vinceau | entity |
+
+        ## Cast
+
+        | Name | Role |
+        |---|---|
+        | Marta Vinceau | Chief executive |
+        """
+    ).strip()
+    with pytest.raises(NameCheckError, match="Marta Vinceau"):
+        extract_candidates(fact_sheet)
+
+
+def test_person_declared_as_person_and_also_cast_is_not_a_contradiction():
+    # This is the case the guard above must NOT overfire on: declaring the
+    # row as Kind "person" is exactly how an author states the overlap
+    # with ## Cast is deliberate, not an error.
+    fact_sheet = textwrap.dedent(
+        """
+        # Fact sheet
+
+        ## Invented names
+
+        | Name | Kind |
+        |---|---|
+        | Marta Vinceau | person |
+
+        ## Cast
+
+        | Name | Role |
+        |---|---|
+        | Marta Vinceau | Chief executive |
+        """
+    ).strip()
+    candidates = {c.text: c.kind for c in extract_candidates(fact_sheet)}
+    assert candidates["Marta Vinceau"] == "person"
+
+
+@pytest.mark.parametrize("bad_kind", ["prodcut", ""])
+def test_unrecognised_or_blank_declared_kind_raises(bad_kind):
+    fact_sheet = textwrap.dedent(
+        f"""
+        # Fact sheet
+
+        ## Invented names
+
+        | Name | Kind |
+        |---|---|
+        | Veltrix | {bad_kind} |
+        """
+    ).strip()
+    with pytest.raises(NameCheckError, match="Veltrix"):
+        extract_candidates(fact_sheet)
+
+
+def test_all_recognised_kinds_are_accepted_without_raising():
+    # Pins the valid set so a future edit to KINDS is deliberate, not an
+    # accidental typo that starts rejecting a previously-valid Kind.
+    assert set(KINDS) == {"entity", "brand", "product", "site", "domain", "person"}

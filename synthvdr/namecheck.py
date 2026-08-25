@@ -40,6 +40,24 @@ entity_tokens from the prose, say). It is emitted once. Precedence: the
 declared `## Invented names` table wins, because it is authorial intent;
 failing that, "entity" beats "person", because being masked and searched as a
 company is the conservative treatment for gate 14.
+
+TWO WAYS THE FACT SHEET CAN BE WRONG, AND WHY BOTH RAISE. `## Cast` rows are
+people by definition. If `## Invented names` also declares that same text with
+a non-person kind, the fact sheet is self-contradictory, and "declared table
+wins" would resolve it silently — masking that name out of the room as an
+entity and blinding gate 14 to genuinely unchecked names sitting next to it,
+exactly the hazard synthvdr/names.py:139-163 documents. There is no correct
+side to pick, so `extract_candidates` raises `NameCheckError` instead of
+choosing: the author must resolve the contradiction, and declaring the row as
+Kind "person" is how they say the overlap with `## Cast` is intentional
+rather than an error. Separately, a Kind that is blank or not one of the six
+recognised values also raises: the collision-vs-notability split below is
+undefined for a kind nothing recognises, and gate 14's fail-safe (not masking
+an unrecognised kind) is not a reason to let a typo through quietly here. Both
+raise eagerly rather than collecting into a report, because `/vdr-scope` calls
+`extract_candidates` while drafting — a self-contradictory or meaningless fact
+sheet should stop the skill immediately, the same ruling already applied to
+gate 13's self-contradictory fact sheet elsewhere in this project.
 """
 
 from __future__ import annotations
@@ -52,8 +70,22 @@ from .names import entity_tokens
 
 VERDICTS = ("clear", "collision", "ambiguous")
 
-# The five kinds a fact sheet may declare in `## Invented names`, plus
-# "person", which is never declared — it comes only from `## Cast` rows.
+
+class NameCheckError(ValueError):
+    """The fact sheet declares something invalid or self-contradictory.
+
+    Raised eagerly by `extract_candidates`, not collected, because
+    `/vdr-scope` calls it while drafting the fact sheet — a contradiction or
+    a meaningless Kind should stop the skill immediately, not be gathered
+    into a report the author might not see until later. See the module
+    docstring for the two conditions that raise it.
+    """
+
+
+# The six recognised kinds. `## Invented names` typically declares one of
+# the first five; "person" may also be declared there, which is how an
+# author states that an overlap with `## Cast` is deliberate rather than a
+# contradiction (see _check_declared_person_consistency).
 KINDS = ("entity", "brand", "product", "site", "domain", "person")
 
 
@@ -104,18 +136,63 @@ def _table_rows(fact_sheet_text: str, heading_prefix: str) -> Iterator[List[str]
 
 
 def _declared_candidates(fact_sheet_text: str) -> List[CandidateName]:
-    """Names declared in `## Invented names` (`| Name | Kind |`)."""
+    """Names declared in `## Invented names` (`| Name | Kind |`).
+
+    Raises `NameCheckError` for a blank or unrecognised Kind — see the
+    module docstring for why this raises rather than passing the value
+    through: gate 14 fails safe on it (an unrecognised kind is simply not
+    masked), but the collision-vs-notability split downstream is undefined
+    for a kind nothing recognises.
+    """
     out = []
     for cells in _table_rows(fact_sheet_text, "## invented names"):
         if len(cells) < 2:
             continue
-        out.append(CandidateName(text=cells[0], kind=cells[1].strip().lower()))
+        text = cells[0]
+        raw_kind = cells[1].strip()
+        kind = raw_kind.lower()
+        if kind not in KINDS:
+            valid = ", ".join(KINDS)
+            if not kind:
+                raise NameCheckError(
+                    f"{text!r} has a blank Kind in ## Invented names — must be one of: {valid}"
+                )
+            raise NameCheckError(
+                f"{text!r} declares an unrecognised Kind {raw_kind!r} in "
+                f"## Invented names — must be one of: {valid}"
+            )
+        out.append(CandidateName(text=text, kind=kind))
     return out
 
 
 def _cast_candidates(fact_sheet_text: str) -> List[CandidateName]:
     """People from `## Cast` (`| Name | Role |`), always tagged "person"."""
     return [CandidateName(text=cells[0], kind="person") for cells in _table_rows(fact_sheet_text, "## cast")]
+
+
+def _check_declared_person_consistency(
+    declared: List[CandidateName], cast: List[CandidateName]
+) -> None:
+    """Raise if a name is declared with a non-person kind but is also cast.
+
+    `## Cast` rows are people by definition. If `## Invented names` also
+    declares that same text as an entity/brand/product/site/domain, the
+    fact sheet contradicts itself, and there is no correct side to pick —
+    silently preferring the declared kind (the usual precedence) would mask
+    that name out of the room as an entity and blind gate 14 to genuinely
+    unchecked names beside it. Declaring the row as Kind "person" is how an
+    author states the overlap is intentional, not a contradiction, so that
+    case does not raise.
+    """
+    cast_texts = {c.text for c in cast}
+    for c in declared:
+        if c.kind != "person" and c.text in cast_texts:
+            raise NameCheckError(
+                f"{c.text!r} is declared as {c.kind!r} in ## Invented names but "
+                f"also appears as a person in ## Cast — the fact sheet is "
+                f"self-contradictory; resolve it by removing one, or by "
+                f"declaring it as Kind 'person' if the overlap is intentional"
+            )
 
 
 def extract_candidates(fact_sheet_text: str) -> List[CandidateName]:
@@ -129,13 +206,22 @@ def extract_candidates(fact_sheet_text: str) -> List[CandidateName]:
       3. `## Invented names` table rows, which always win — a declared kind
          is authorial intent and overrides whatever the other two sources
          guessed.
+
+    Raises `NameCheckError` if `## Invented names` declares a blank or
+    unrecognised Kind, or declares a non-person kind for a name that also
+    appears in `## Cast` — see the module docstring for why both raise
+    rather than resolving silently.
     """
+    cast = _cast_candidates(fact_sheet_text)
+    declared = _declared_candidates(fact_sheet_text)
+    _check_declared_person_consistency(declared, cast)
+
     by_text: Dict[str, CandidateName] = {}
     for name in sorted(entity_tokens(fact_sheet_text)):
         by_text[name] = CandidateName(text=name, kind="entity")
-    for candidate in _cast_candidates(fact_sheet_text):
+    for candidate in cast:
         by_text.setdefault(candidate.text, candidate)
-    for candidate in _declared_candidates(fact_sheet_text):
+    for candidate in declared:
         by_text[candidate.text] = candidate
     return sorted(by_text.values(), key=lambda c: c.text)
 
