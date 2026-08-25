@@ -47,6 +47,7 @@ import yaml
 
 from ..roomconf import RoomConfError
 from ..twin import is_valid_twin, split_twin
+from .runner import warn
 
 SLOT_REF = re.compile(r"\b(\d{1,2}\.\d{1,2}\.\d{1,3})\b")
 
@@ -125,15 +126,27 @@ def gate_08_carrier_census(ctx):
     stale-value tripwire once the key-derived checks below are clean — the
     key wins on any conflict, because the key is the ground truth and
     room.conf is a hand-maintained convenience.
+
+    Only MARKDOWN evidence is expected to carry a block: synthvdr.twin
+    never annotates non-.md evidence (a CSV register, say) — it is copied
+    byte-for-byte, by design, because there is nowhere in a CSV to append a
+    prose annotation. A non-markdown evidence path is therefore reported
+    separately, below, as INFORMATIONAL — real evidence for a real finding
+    that this gate cannot and does not expect to see annotated — never as a
+    missing or destroyed carrier.
     """
     if not ctx.flagged_root.is_dir():
         return skip("8", "annotation-carrier census", f"{ctx.flagged_root} absent")
     flag_string = ctx.conf.get("FLAG_STRING_1")
 
     expected_ids_by_path = {}
+    non_markdown_evidence = {}
     for finding in ctx.findings.findings:
         for rel in finding.evidence_paths():
-            expected_ids_by_path.setdefault(rel, set()).add(finding.id)
+            if rel.endswith(".md"):
+                expected_ids_by_path.setdefault(rel, set()).add(finding.id)
+            else:
+                non_markdown_evidence.setdefault(rel, set()).add(finding.id)
     expected_carriers = set(expected_ids_by_path)
     known_ids = set(ctx.findings.by_id)
 
@@ -183,8 +196,19 @@ def gate_08_carrier_census(ctx):
                 f"{rel}: block names {sorted(claimed) or ['no finding ID']}, expected {sorted(expected)}"
             )
 
+    # Never silently dropped: a reader should be able to see that a
+    # finding's evidence includes a register (or other non-markdown file)
+    # that by design carries no block, whichever of PASS/FAIL this gate
+    # ends up reporting.
+    info = ""
+    if non_markdown_evidence:
+        named = "; ".join(
+            f"{path} ({', '.join(sorted(ids))})" for path, ids in sorted(non_markdown_evidence.items())
+        )
+        info = f"; non-markdown evidence, never annotated by design: {named}"
+
     if problems:
-        return fail("8", "annotation-carrier census", "; ".join(problems[:5]))
+        return fail("8", "annotation-carrier census", "; ".join(problems[:5]) + info)
 
     # Secondary tripwire, run only once the key-derived checks above are
     # clean. A missing or absent EXPECTED_KDP_CARRIERS, or one that is
@@ -200,10 +224,12 @@ def gate_08_carrier_census(ctx):
             "8",
             "annotation-carrier census",
             f"EXPECTED_KDP_CARRIERS={expected_scalar} in room.conf is stale — the answer key "
-            f"implies {len(actual_carriers)} carrier(s)",
+            f"implies {len(actual_carriers)} carrier(s)" + info,
         )
 
-    return ok("8", "annotation-carrier census", f"{len(actual_carriers)} carrier(s) match the answer key")
+    return ok(
+        "8", "annotation-carrier census", f"{len(actual_carriers)} carrier(s) match the answer key" + info
+    )
 
 
 def gate_09_xrefs(ctx):
@@ -212,21 +238,31 @@ def gate_09_xrefs(ctx):
 
     SLOT_REF's shape also matches ordinary prose that is not a reference at
     all — a short-format date ("24.08.26") or a version string are
-    indistinguishable from "1.2.3" by shape alone. Bounding the first
-    component to the room's ACTUAL section numbers, derived from
-    SECTION_DIRS rather than hardcoded, rules out anything with no section
-    that number could belong to: a date's day/month/year component
-    routinely exceeds any real room's section count, so it is filtered out
-    before the known/allowed check ever runs, rather than being flagged and
-    then relying on the allowlist to excuse it.
+    indistinguishable from "1.2.3" by shape alone. The first component is
+    checked against the room's ACTUAL section numbers, derived from
+    SECTION_DIRS rather than hardcoded. An OUT-OF-RANGE match (no section
+    that number could belong to) is surfaced as a WARN, not silently
+    dropped and not a hard FAIL: an out-of-range slot-shaped token is a date
+    OR a gross typo, and an out-of-range value is if anything MORE likely
+    to be an error than an in-range one, not less — silently dropping it
+    (this gate's first attempt at this fix) threw away exactly the signal
+    it was meant to preserve. WARN surfaces it in the runner's warn count
+    (see synthvdr.qa.runner) without failing a build over what is often a
+    genuine date.
 
-    This narrows the false-positive surface; it does not eliminate it. An
-    IN-RANGE version-like string ("1.2" read as "1.2.0", or a genuine
-    "1.2.3" typo in prose) is indistinguishable from a real reference by
-    shape or range alone. _key/gaps.yaml is the escape hatch for THAT
-    residual too, not only for a deliberate, intentional documentation gap —
-    treating the allowlist as if it existed solely for deliberate gaps would
-    mislead whoever has to maintain it when a false match shows up there.
+    An IN-RANGE reference that resolves to no known slot and no allowlisted
+    gap is still a hard FAIL, exactly as before — that is a genuinely
+    dangling in-room reference, not a shape coincidence, and the bound
+    above does nothing to weaken that check.
+
+    This does not eliminate every false positive: an IN-RANGE version-like
+    string ("1.2.3" typed in prose, in a room with 3+ sections) is
+    indistinguishable from a real reference by shape or range alone, and
+    would still hard-FAIL if unresolved. _key/gaps.yaml is the escape hatch
+    for THAT residual too, not only for a deliberate, intentional
+    documentation gap — treating the allowlist as if it existed solely for
+    deliberate gaps would mislead whoever has to maintain it when a false
+    match shows up there instead.
     """
     files = ctx.blind_files()
     if not files:
@@ -249,6 +285,7 @@ def gate_09_xrefs(ctx):
         doc = yaml.safe_load(gaps_path.read_text(encoding="utf-8")) or {}
         allowed = {str(row["ref"]) for row in (doc.get("gaps") or [])}
     dangling = []
+    out_of_range = []
     for path in files:
         if path.suffix != ".md":
             continue
@@ -256,14 +293,28 @@ def gate_09_xrefs(ctx):
         for ref in SLOT_REF.findall(path.read_text(encoding="utf-8")):
             section = ref.split(".", 1)[0]
             if not section.isdigit() or int(section) not in valid_sections:
-                # Shape matches, but no section in THIS room could own it —
-                # a date or version string, not a reference. Not a slot
-                # candidate at all, so it is neither dangling nor in need
-                # of an allowlist entry.
+                # No section in THIS room could own it — a date or a gross
+                # typo either way, and worth a human's attention either
+                # way. Surfaced as a WARN below, never silently dropped;
+                # never treated as a hard, in-room dangling reference
+                # either, since it does not name a section this room has.
+                out_of_range.append(f"{path.name} -> {ref}")
                 continue
             if ref == own or ref in known or ref in allowed:
                 continue
             dangling.append(f"{path.name} -> {ref}")
     if dangling:
-        return fail("9", "cross-reference resolution", "; ".join(sorted(set(dangling))[:5]))
+        detail = "; ".join(sorted(set(dangling))[:5])
+        if out_of_range:
+            detail += "; also out-of-range token(s) worth checking: " + "; ".join(
+                sorted(set(out_of_range))[:5]
+            )
+        return fail("9", "cross-reference resolution", detail)
+    if out_of_range:
+        return warn(
+            "9",
+            "cross-reference resolution",
+            "out-of-range slot-shaped token(s), likely a date or a typo — no section in this room "
+            "could own them: " + "; ".join(sorted(set(out_of_range))[:5]),
+        )
     return ok("9", "cross-reference resolution", f"{len(known)} slots, {len(allowed)} allowlisted gaps")

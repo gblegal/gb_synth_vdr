@@ -55,11 +55,11 @@ def room(tmp_path):
     return tmp_path
 
 
-def ctx_for(room):
+def ctx_for(room, findings=None):
     return GateContext(
         room=room,
         conf=load_room_conf(room / "room.conf"),
-        findings=FindingSet([finding()], "Project Testbed"),
+        findings=FindingSet(findings if findings is not None else [finding()], "Project Testbed"),
         distractors=[],
     )
 
@@ -105,12 +105,12 @@ def test_gate_09_passes_when_every_reference_resolves(room):
 
 
 def test_gate_09_catches_a_dangling_reference(room):
-    # "1.9.9" — not "9.9.9" — because gate 9 now bounds a candidate
-    # reference's first component to the room's real section numbers
-    # (1 and 2, from SECTION_DIRS). Section 9 does not exist in this room,
-    # so "9.9.9" would now be filtered out as shape-only noise before ever
-    # reaching the dangling check; "1.9.9" names a real section (1) but no
-    # real slot, so it stays genuinely dangling under the new bound.
+    # "1.9.9" — not "9.9.9" — because gate 9 bounds a candidate reference's
+    # first component to the room's real section numbers (1 and 2, from
+    # SECTION_DIRS). Section 9 does not exist in this room, so "9.9.9" is
+    # now a WARN, not a hard FAIL (see the dedicated WARN test below);
+    # "1.9.9" names a real section (1) but no real slot, so it stays a
+    # genuinely dangling, hard-FAILing in-room reference.
     p = room / "data-room/02_financial/2.1_statutory-accounts/2.1.1_accounts.md"
     p.write_text("# accounts\n\nSee 1.9.9 for detail.\n")
     result = gate_09_xrefs(ctx_for(room))
@@ -118,15 +118,47 @@ def test_gate_09_catches_a_dangling_reference(room):
     assert "1.9.9" in result.detail
 
 
-def test_gate_09_does_not_flag_a_date_shaped_token_in_prose(room):
+def test_gate_09_warns_on_an_out_of_range_slot_shaped_token(room):
+    """Round 1 of this fix bounded SLOT_REF's first component to the room's
+    real sections to kill a date false-positive, then silently dropped
+    every out-of-range match — including a genuine typo like "9.9.9" in
+    this two-section room, which used to (correctly) hard-FAIL before that
+    bound existed. An out-of-range token is a date OR a gross typo, and
+    either way is worth a human's attention: WARN, not silence and not a
+    hard FAIL."""
+    p = room / "data-room/02_financial/2.1_statutory-accounts/2.1.1_accounts.md"
+    p.write_text("# accounts\n\nSee 9.9.9 for detail.\n")
+    result = gate_09_xrefs(ctx_for(room))
+    assert result.status == "WARN"
+    assert "9.9.9" in result.detail
+
+
+def test_gate_09_fails_and_still_names_an_out_of_range_token_when_both_occur(room):
+    """A hard FAIL (a genuinely dangling in-range reference) takes priority
+    over a WARN (an out-of-range token) when a single document has both —
+    but the out-of-range token must still be named in the FAIL detail, not
+    silently dropped just because a stronger problem was found first."""
+    p = room / "data-room/02_financial/2.1_statutory-accounts/2.1.1_accounts.md"
+    p.write_text("# accounts\n\nSee 1.9.9 and 9.9.9 for detail.\n")
+    result = gate_09_xrefs(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "1.9.9" in result.detail
+    assert "9.9.9" in result.detail
+
+
+def test_gate_09_does_not_fail_on_a_date_shaped_token_in_prose(room):
     """A short-format date matches SLOT_REF's shape exactly, but "24" is not
-    a section this two-section room could ever have — the bound introduced
-    to fix this must filter it out before the dangling check ever runs,
-    not merely make it easy to allowlist."""
+    a section this two-section room could ever have. Round 1 of this fix
+    silently dropped it (a PASS); round 2 corrects that — silence throws
+    away a signal worth having, since an out-of-range token is often a
+    genuine error too — so it is now a WARN, which still does not fail the
+    build (see synthvdr.qa.runner: WARN is counted but never turns the exit
+    code non-zero)."""
     p = room / "data-room/02_financial/2.1_statutory-accounts/2.1.1_accounts.md"
     p.write_text("# accounts\n\nFiled 24.08.26, pending review.\n")
     result = gate_09_xrefs(ctx_for(room))
-    assert result.status == "PASS"
+    assert result.status == "WARN"
+    assert "24.08.26" in result.detail
 
 
 def test_gate_09_honours_the_gaps_allowlist(room):
@@ -253,3 +285,60 @@ def test_gate_08_flags_a_stale_expected_kdp_carriers_scalar(room):
     result = gate_08_carrier_census(ctx_for(room))
     assert result.status == "FAIL"
     assert "EXPECTED_KDP_CARRIERS" in result.detail
+
+
+# ---------------------------------------------------------------------------
+# synthvdr.twin never annotates non-markdown evidence (a CSV register, say)
+# — it is copied byte-for-byte, because there is nowhere in a CSV to append
+# prose. Round 1 of gate 8's redesign built its expected-carrier set from
+# EVERY evidence path regardless of suffix, so a legitimate CSV-evidenced
+# finding in a correctly-built room was reported as "destroyed or moved" —
+# a false FAIL on a healthy room. These two tests confirm gate 8 now
+# expects a carrier only for markdown evidence, while still surfacing the
+# non-markdown evidence informationally rather than dropping it silently.
+# ---------------------------------------------------------------------------
+
+
+def test_gate_08_passes_when_a_findings_evidence_is_a_csv_register(room):
+    csv_rel = "02_financial/2.1_statutory-accounts/2.1.1_register.csv"
+    for tree in ("data-room", "_key/flagged"):
+        (room / tree / csv_rel).write_text("id,value\n1,10\n")
+    csv_finding = Finding(
+        id="FIN-1",
+        title="A register issue",
+        severity="high",
+        workstream="financial",
+        multi_document=False,
+        source=csv_rel,
+        location="row 1",
+        substance="a register issue",
+    )
+    # ENV-1 (the room fixture's real, correctly-annotated markdown carrier)
+    # is kept in play alongside the new CSV-evidenced finding, so this test
+    # isolates "does a CSV finding alone break an otherwise healthy room".
+    result = gate_08_carrier_census(ctx_for(room, findings=[finding(), csv_finding]))
+    assert result.status == "PASS"
+    assert "2.1.1_register.csv" in result.detail
+
+
+def test_gate_08_expects_a_carrier_only_for_the_markdown_evidence_path(room):
+    """A mixed finding — one markdown source, one CSV corroboration path.
+    Only the markdown path should be an expected carrier; the CSV path is
+    informational only, never expected to carry a block of its own."""
+    csv_rel = "02_financial/2.1_statutory-accounts/2.1.1_register.csv"
+    for tree in ("data-room", "_key/flagged"):
+        (room / tree / csv_rel).write_text("id,value\n1,10\n")
+    mixed = Finding(
+        id="ENV-1",
+        title="An issue",
+        severity="critical",
+        workstream="environmental",
+        multi_document=True,
+        source="01_corporate/1.1_constitutional/1.1.1_articles.md",
+        corroboration=[csv_rel],
+        location="clause 4",
+        substance="an issue",
+    )
+    result = gate_08_carrier_census(ctx_for(room, findings=[mixed]))
+    assert result.status == "PASS"
+    assert "2.1.1_register.csv" in result.detail
