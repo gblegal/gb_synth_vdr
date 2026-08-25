@@ -1,0 +1,69 @@
+import pytest
+
+from synthvdr.qa.depth import gate_10_depth
+from synthvdr.qa.runner import GateContext
+from synthvdr.roomconf import load_room_conf
+from synthvdr.schema import FindingSet
+
+CONF = '''ROOM_CODENAME="Project Testbed"
+INDEX_TOTAL=1
+BLIND_TOTAL=1
+FLAGGED_TOTAL=1
+BLIND_TREE="data-room"
+FLAGGED_TREE="_key/flagged"
+KEY_ROOT="_key"
+FLAG_STRING_1="Key diligence points"
+FLAG_STRING_2="DD flag"
+FINDING_PREFIXES="ENV"
+EXPECTED_KDP_CARRIERS=0
+SECTION_DIRS="01_corporate"
+'''
+
+
+@pytest.fixture
+def room(tmp_path):
+    (tmp_path / "room.conf").write_text(CONF)
+    d = tmp_path / "data-room" / "01_corporate" / "1.1_constitutional"
+    d.mkdir(parents=True)
+    (d / "1.1.1_articles.md").write_text("# Articles\n\n" + ("word " * 400))
+    (tmp_path / "_key").mkdir()
+    (tmp_path / "_key" / "anchors.csv").write_text(
+        "slot_id,tier,rel_path\n1.1.1,F,01_corporate/1.1_constitutional/1.1.1_articles.md\n"
+    )
+    return tmp_path
+
+
+def ctx_for(room):
+    return GateContext(
+        room=room, conf=load_room_conf(room / "room.conf"), findings=FindingSet([], ""), distractors=[]
+    )
+
+
+def test_passes_when_above_the_tier_f_floor(room):
+    assert gate_10_depth(ctx_for(room)).status == "PASS"
+
+
+def test_fails_below_the_floor(room):
+    p = room / "data-room/01_corporate/1.1_constitutional/1.1.1_articles.md"
+    p.write_text("# Articles\n\n" + ("word " * 20))
+    assert gate_10_depth(ctx_for(room)).status == "FAIL"
+
+
+def test_fails_on_a_placeholder_token(room):
+    p = room / "data-room/01_corporate/1.1_constitutional/1.1.1_articles.md"
+    p.write_text("# Articles\n\nTODO: write this.\n" + ("word " * 400))
+    result = gate_10_depth(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "placeholder" in result.detail.lower()
+
+
+def test_a_slot_missing_from_the_manifest_is_a_failure(room):
+    (room / "_key" / "anchors.csv").write_text("slot_id,tier,rel_path\n")
+    result = gate_10_depth(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "1.1.1" in result.detail
+
+
+def test_skips_when_there_is_no_anchors_manifest(room):
+    (room / "_key" / "anchors.csv").unlink()
+    assert gate_10_depth(ctx_for(room)).status == "SKIP"
