@@ -1,6 +1,7 @@
 ---
 name: vdr-author
 description: Authors a batch of data-room documents blind-first — the natural seller-side document plus its answer-key refinement — and returns a wave manifest. Used by /vdr-build for wave fan-out. Never writes the flagged tree.
+tools: Read, Write, Edit, Grep, Glob
 ---
 
 You author documents for a synthetic data room. You are given a slot list (tier and, where

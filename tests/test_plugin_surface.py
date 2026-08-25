@@ -298,15 +298,87 @@ def test_build_skill_states_the_findings_first_ordering_rule():
     assert "resume" in body
 
 
+def _normalise_whitespace(text: str) -> str:
+    """Collapse all whitespace runs to single spaces, so a sentence that happens to wrap
+    across a markdown line break can still be matched as one literal string.
+    """
+    return " ".join(text.split())
+
+
 def test_author_agent_is_forbidden_from_the_flagged_tree():
-    body = (ROOT / "agents" / "vdr-author.md").read_text().lower()
-    assert "never" in body and "flagged" in body
+    """Task 18 fix round 2, F4: the original version of this test only checked that the
+    words "never" and "flagged" appeared SOMEWHERE in the file — a reviewer proved that
+    passes even after replacing the absolute prohibition with a sentence permitting the
+    flagged tree, as long as "never" and "flagged" survive elsewhere. This asserts the
+    load-bearing sentences THEMSELVES, verbatim (modulo whitespace), so reversing or
+    softening either one is what breaks the test — not the mere presence of a keyword.
+    """
+    body = (ROOT / "agents" / "vdr-author.md").read_text()
+    normalised = _normalise_whitespace(body)
+    assert "never" in body.lower() and "flagged" in body.lower()
+    assert "You never write to the flagged tree, under any name or any path." in normalised
+    assert "that proof stops holding" in normalised
 
 
 def test_auditor_agent_reads_only_the_blind_room():
-    body = (ROOT / "agents" / "vdr-auditor.md").read_text().lower()
-    assert "blind" in body
-    assert "findings.yaml" in body
+    """Task 18 fix round 2, F4: same defect as the author test above — checked "blind" and
+    "findings.yaml" appeared anywhere in the file, which survives the absolute prohibitions
+    being weakened as long as those words remain elsewhere. Now asserts the two load-bearing
+    sentences verbatim (modulo whitespace): the auditor never opens the flagged tree, and
+    never opens `_key/findings.yaml` (or anything else under `_key/`) at any point.
+    """
+    body = (ROOT / "agents" / "vdr-auditor.md").read_text()
+    normalised = _normalise_whitespace(body)
+    assert "blind" in body.lower()
+    assert "findings.yaml" in body.lower()
+    assert (
+        "You never open the flagged tree, under any name or any path, at any point in this "
+        "task." in normalised
+    )
+    assert (
+        "You never open `_key/findings.yaml`, or any other file under `_key/`, at any point "
+        "in this task." in normalised
+    )
+
+
+def test_author_and_auditor_agents_declare_a_restricted_tool_set():
+    """Task 18 fix round 2, F4 (defence in depth): prose is the only enforcement of the
+    author/auditor separation today, and prose can be edited away by someone who does not
+    know why it was there. A `tools:` frontmatter restriction cannot restrict WHICH PATHS an
+    agent touches, but it can restrict WHICH TOOLS it has at all — an auditor with no
+    Write/Edit tool cannot write to `_key/findings.yaml` or the flagged tree even if an
+    instruction told it to, which is a stronger guarantee than an instruction alone.
+    """
+    author_tools = frontmatter(ROOT / "agents" / "vdr-author.md").get("tools", "")
+    auditor_tools = frontmatter(ROOT / "agents" / "vdr-auditor.md").get("tools", "")
+    assert author_tools, "vdr-author.md declares no tools: restriction"
+    assert auditor_tools, "vdr-auditor.md declares no tools: restriction"
+
+    auditor_tool_names = {t.strip() for t in auditor_tools.split(",")}
+    assert "Write" not in auditor_tool_names and "Edit" not in auditor_tool_names, (
+        "vdr-auditor must have no write access at all — it returns its verdict for "
+        "/vdr-build to record, rather than writing to the answer key itself"
+    )
+
+
+def test_auditor_is_given_the_finding_substance_but_never_its_location():
+    """Task 18 fix round 2, F1: the coordinator found the original design unanswerable — the
+    auditor was told to judge whether "the offending clause is actually present" while being
+    handed nothing that says what the clause IS. Design spec §5.1's own worked example
+    (`audit_note: "Reachable from 11.3.4 + 2.6.2 without the key."`) only makes sense if the
+    auditor already knows what it went looking for. What must stay withheld is WHERE the
+    finding lives, not WHAT it is.
+    """
+    build_body = _read(ROOT / "skills" / "vdr-build" / "SKILL.md").lower()
+    auditor_body = _read(ROOT / "agents" / "vdr-auditor.md").lower()
+
+    assert "substance" in build_body, "the build skill must hand the auditor the substance"
+    assert "not its substance" not in auditor_body, (
+        "the auditor must no longer be told its finding's substance is withheld — it needs "
+        "to know what the issue IS to look for it at all"
+    )
+    for withheld in ("source", "corroboration", "location"):
+        assert withheld in auditor_body, f"the auditor's doc no longer mentions {withheld!r}"
 
 
 def test_incoming_example_in_build_skill_validates_as_findings(tmp_path):

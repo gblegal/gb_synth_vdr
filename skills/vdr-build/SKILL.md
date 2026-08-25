@@ -46,7 +46,7 @@ this table until its own gate run above (Step 6) has come back all-PASS):
 | 1 | 45 | PASS |
 | 2 | 45 | PASS |
 
-## New findings this wave
+## New findings
 
 | Provisional id | Final id | Workstream |
 |---|---|---|
@@ -62,10 +62,14 @@ Wave 3, slots 91-140 (filler). Not yet started.
 Not started — runs once authoring is complete.
 ```
 
-"New findings this wave" is the permanent record of every provisional -> final ID mapping
-Step 3's consolidation produced for that wave — the wave manifest the design spec requires a
-mid-authoring discovery to be "declared in." An empty wave (nothing discovered) omits the
-section entirely rather than leaving it with no rows.
+"New findings" is a **cumulative ledger**, appended to across the whole build, not reset per
+wave — it is both the permanent record the design spec requires a mid-authoring discovery to
+be "declared in," and the durable idempotency check Step 3 reads before allocating anything.
+It is written by Step 3 itself, **immediately** when a discovery is allocated — never deferred
+to Step 7 — because Step 3 can succeed while Step 6's gate check afterwards fails, and a
+resumed build must be able to tell "already allocated in a prior attempt" from "not yet seen"
+without waiting for the wave to fully complete. An empty build (nothing discovered yet) omits
+the section entirely rather than leaving it with no rows.
 
 A wave is only added to the "Waves completed" table once its gate run is clean; a wave that
 failed its gate stays the "Next wave" entry, re-run rather than duplicated, until it passes.
@@ -156,64 +160,78 @@ new_findings:
       of an existing finding.
 ```
 
-Consolidate with an upsert-by-id merge for `findings:`, then allocate real IDs for every
-`new_findings:` row across *all* of this wave's incoming files together — never per file, or
-two files' provisional IDs could be numbered as if the other did not exist — using
-`synthvdr.schema.allocate_new_finding_ids`. Sorting the discoveries by `(label,
-provisional_id)` before allocating, which that function does internally, is what makes the
-result **deterministic**: the same set of discoveries numbers the same way on a rerun no
-matter which order the incoming files were read in, because nothing here depends on
-filesystem or dict iteration order. `prefix_for_workstream` is built once from `room.conf`'s
-`FINDING_PREFIXES`, in the same workstream order the domain pack declares them:
+Merging and allocating is `synthvdr.schema.consolidate_wave_incoming` — a single, pure,
+already-tested function, not something this script re-derives by hand. Two things it depends
+on that are also shared functions, never reimplemented inline:
+
+- `derive_prefix_for_workstream` builds the workstream -> finding-ID-prefix mapping
+  `FINDING_PREFIXES` needs to be read as, and **validates the correspondence** rather than
+  trusting a bare `zip()`. `FINDING_PREFIXES` carries no explicit workstream labels — the
+  correspondence with the domain pack's workstream order is positional by convention only —
+  so a short list raises a clear error naming the mismatch, and a *reordered* list (same
+  length, wrong pairing, which a bare zip would accept silently and use to misattribute a new
+  finding's workstream) is caught by cross-checking every workstream that already has an
+  existing finding against that finding's own id.
+- `parse_new_findings_ledger` reads `_key/build-status.md`'s "New findings" table into
+  `{provisional_id: final_id}` — the durable record of what has already been allocated.
+  **Consolidation is not something this build guarantees happens exactly once.** A wave can
+  succeed at this step and then fail its gate at Step 6; resuming re-runs Step 3 over the
+  same, untouched `_key/incoming/*.yaml` content. Without checking this ledger first, that
+  rerun would allocate a *second*, higher id for the same discovery — a duplicate that still
+  passes `validate()`, because nothing about a duplicate substance under two different ids is
+  structurally invalid. A provisional id already in the ledger is **skipped, not
+  re-allocated** — `consolidate_wave_incoming` does this internally given `already_mapped`.
 
 ```python
 import yaml
 from pathlib import Path
 from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
 from synthvdr.roomconf import load_room_conf
-from synthvdr.schema import allocate_new_finding_ids, load_findings, load_distractors, validate
+from synthvdr.schema import (
+    consolidate_wave_incoming,
+    derive_prefix_for_workstream,
+    load_findings,
+    load_distractors,
+    parse_new_findings_ledger,
+    validate,
+)
 
 conf = load_room_conf(Path("room.conf"))
 pack = load_domain(DEFAULT_DOMAIN_ROOT)
-# FINDING_PREFIXES is one token per workstream, in the same order vdr-scope declared them:
-# the domain pack's own finding_archetypes order (its dict preserves the YAML file's order).
-prefix_for_workstream = dict(zip(pack.finding_archetypes, conf.get("FINDING_PREFIXES").split("|")))
+existing = load_findings(Path("_key/findings.yaml"))
+prefix_for_workstream = derive_prefix_for_workstream(
+    pack.finding_archetypes, conf.get("FINDING_PREFIXES").split("|"), existing.findings
+)
 
-master = yaml.safe_load(Path("_key/findings.yaml").read_text()) or {"findings": []}
-by_id = {row["id"]: row for row in master["findings"]}
+status_path = Path("_key/build-status.md")
+already_mapped = parse_new_findings_ledger(status_path.read_text()) if status_path.is_file() else {}
 
-discoveries = []          # (label, provisional_id, workstream)
-new_rows_by_provisional = {}
-for incoming_path in sorted(Path("_key/incoming").glob("*.yaml")):
-    label = incoming_path.stem
-    incoming = yaml.safe_load(incoming_path.read_text()) or {}
-    for row in incoming.get("findings") or []:
-        if row["id"] not in by_id:
-            raise SystemExit(f"{incoming_path}: {row['id']} is not in the Gate B registry")
-        by_id[row["id"]].update(row)
-    for row in incoming.get("new_findings") or []:
-        discoveries.append((label, row["id"], row["workstream"]))
-        new_rows_by_provisional[row["id"]] = row
+findings_doc = yaml.safe_load(Path("_key/findings.yaml").read_text()) or {"findings": []}
+incoming_docs = {
+    p.stem: (yaml.safe_load(p.read_text()) or {})
+    for p in sorted(Path("_key/incoming").glob("*.yaml"))
+}
 
-mapping = allocate_new_finding_ids(set(by_id), prefix_for_workstream, discoveries)
-for provisional_id, final_id in mapping.items():
-    row = dict(new_rows_by_provisional[provisional_id])
-    row["id"] = final_id
-    by_id[final_id] = row
+result = consolidate_wave_incoming(findings_doc, incoming_docs, already_mapped, prefix_for_workstream)
+Path("_key/findings.yaml").write_text(yaml.safe_dump(result.findings_doc, sort_keys=False))
 
-master["findings"] = list(by_id.values())
-Path("_key/findings.yaml").write_text(yaml.safe_dump(master, sort_keys=False))
+# Persist the new mapping to the ledger IMMEDIATELY, before Step 6's gate even runs — this is
+# what makes a rerun idempotent regardless of whether the gate afterwards passes or fails.
+if result.new_mapping:
+    status_text = status_path.read_text() if status_path.is_file() else "# Build status\n"
+    if "## New findings" not in status_text:
+        status_text += "\n## New findings\n\n| Provisional id | Final id | Workstream |\n|---|---|---|\n"
+    rows = "\n".join(
+        f"| {pid} | {fid} | {result.workstream_by_final_id[fid]} |"
+        for pid, fid in result.new_mapping.items()
+    )
+    status_path.write_text(status_text + rows + "\n")
 
 f = load_findings(Path("_key/findings.yaml"))
 d = load_distractors(Path("_key/distractors.yaml"))
 errors = validate(f, d)
 assert not errors, errors
 ```
-
-Record `mapping` (provisional ID -> final ID) in `_key/build-status.md`'s "New findings this
-wave" section (see the literal shape in "Resume" above) — this is the wave manifest's permanent record
-that the spec requires, and it is what lets anyone reconstruct, after the fact, which
-document actually surfaced which finding.
 
 ### 4. Reconcile new canonical facts
 
@@ -244,23 +262,32 @@ print(build_flagged_tree(Path('.'), conf, load_findings(Path('_key/findings.yaml
 ### 7. Update the build status
 
 Update `_key/build-status.md`: append this wave's number, the slots it authored, and the gate
-result to the "Waves completed" table, add a row to "New findings this wave" for every
-provisional -> final ID Step 3 just allocated (omit the section if this wave discovered
-nothing), then rewrite "Next wave" to name exactly one more than the wave you just appended
-(see the literal shape above) — never leave the file pointing at a wave number that has
-already run, and never skip a number.
+result to the "Waves completed" table, then rewrite "Next wave" to name exactly one more than
+the wave you just appended (see the literal shape above) — never leave the file pointing at a
+wave number that has already run, and never skip a number. "New findings" is **not** touched
+here — Step 3 already appended to it, unconditionally, before this wave's gate even ran.
 
 Do not start the next wave while any gate is failing. A wave whose gate run failed is not
 recorded in "Waves completed" at all; it stays the resume target until it passes.
 
 ## After the last wave
 
-Dispatch `vdr-auditor` once per finding, or in batches. Hand each one **only** the finding's
-ID and the path to the blind room — never `_key/`, never the flagged tree, never the
-finding's substance or evidence paths. See `agents/vdr-auditor.md` for why: an auditor told
-where to look is not measuring whether a real reviewer could find it.
+Dispatch `vdr-auditor` once per finding, or in batches. Hand each one the finding's **ID and
+substance** (`f.by_id[finding_id].substance` — what the issue is, in the abstract) plus the
+path to the blind room. Never hand over its `source`, `corroboration` or `location` — those
+are exactly what the auditor must find independently — and never the flagged tree or
+`_key/findings.yaml` itself. See `agents/vdr-auditor.md` for why: an auditor told where to
+look is not measuring whether a real reviewer could find it, but an auditor told nothing about
+the issue at all cannot look for anything either — the design spec's own phrase is "attempts
+to reach each registered finding" (§3), which needs the finding named, not just numbered.
+
+`vdr-auditor` has no write access (its frontmatter restricts it to `Read, Grep, Glob`) — it
+**returns** its verdict rather than writing to the answer key itself. For each finding, take
+the returned `reachable`/`not reachable` verdict and one-line `audit_note`, and write
+`discoverable_from_blind` and `audit_note` into `_key/findings.yaml` for that finding
+yourself.
 
 Gate 15 fails until every finding is audited, because a planted finding nobody can find is a
 corpus bug that no grep detects. Once every finding's `discoverable_from_blind`/`audit_note`
-is written back to `_key/findings.yaml`, re-run `bash tools/check.sh .` and record the result
-in `_key/build-status.md`'s "Auditor" section.
+is written into `_key/findings.yaml`, re-run `bash tools/check.sh .` and record the result in
+`_key/build-status.md`'s "Auditor" section.

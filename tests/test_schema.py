@@ -3,10 +3,14 @@ import textwrap
 import pytest
 
 from synthvdr.schema import (
+    ConsolidationResult,
     SchemaError,
     allocate_new_finding_ids,
+    consolidate_wave_incoming,
+    derive_prefix_for_workstream,
     load_distractors,
     load_findings,
+    parse_new_findings_ledger,
     render_findings_md,
     validate,
 )
@@ -402,3 +406,214 @@ def test_allocate_new_finding_ids_raises_on_unknown_workstream():
             prefix_for_workstream=PREFIX_FOR_WORKSTREAM,
             discoveries=[("wave1-batch-a", "wave1-batch-a-NEW-1", "esg")],
         )
+
+
+# ---------------------------------------------------------------------------
+# derive_prefix_for_workstream — Task 18 fix round 2, F3: the workstream <-> prefix
+# correspondence in FINDING_PREFIXES is positional and unenforced by format; a reordered
+# list must be caught, not silently misattributed.
+# ---------------------------------------------------------------------------
+
+EXISTING_FOR_PREFIX_TESTS = textwrap.dedent(
+    """
+    findings:
+      - id: ENV-1
+        title: Existing environmental finding
+        severity: critical
+        workstream: environmental
+        multi_document: false
+        source: 11_environmental-hs/11.1_permits/11.1.1_permit.md
+        substance: Seed finding.
+      - id: FIN-1
+        title: Existing financial finding
+        severity: high
+        workstream: financial
+        multi_document: false
+        source: 02_financial/2.1_accounts/2.1.1_accounts.md
+        substance: Seed finding.
+    """
+).strip()
+
+
+def _existing(tmp_path):
+    return load_findings(write(tmp_path, "existing.yaml", EXISTING_FOR_PREFIX_TESTS)).findings
+
+
+def test_derive_prefix_for_workstream_accepts_the_correct_correspondence(tmp_path):
+    mapping = derive_prefix_for_workstream(
+        ["environmental", "financial", "operations"], ["ENV", "FIN", "OPS"], _existing(tmp_path)
+    )
+    assert mapping == {"environmental": "ENV", "financial": "FIN", "operations": "OPS"}
+
+
+def test_derive_prefix_for_workstream_rejects_a_length_mismatch(tmp_path):
+    with pytest.raises(SchemaError, match="2 token"):
+        derive_prefix_for_workstream(
+            ["environmental", "financial", "operations"], ["ENV", "FIN"], _existing(tmp_path)
+        )
+
+
+def test_derive_prefix_for_workstream_rejects_a_reordered_list(tmp_path):
+    """Same length, wrong pairing — the exact silent-misattribution case, caught only because
+    an existing finding's own id (ENV-1, workstream environmental) disagrees with what the
+    swapped order would assign it (FIN).
+    """
+    with pytest.raises(SchemaError, match="reordered"):
+        derive_prefix_for_workstream(
+            ["environmental", "financial"], ["FIN", "ENV"], _existing(tmp_path)
+        )
+
+
+def test_derive_prefix_for_workstream_does_not_block_a_workstream_with_no_existing_finding(
+    tmp_path,
+):
+    # "operations" has no existing finding to cross-check against — only length is checked.
+    mapping = derive_prefix_for_workstream(
+        ["environmental", "financial", "operations"], ["ENV", "FIN", "OPS"], _existing(tmp_path)
+    )
+    assert mapping["operations"] == "OPS"
+
+
+# ---------------------------------------------------------------------------
+# parse_new_findings_ledger / consolidate_wave_incoming — Task 18 fix round 2, F2:
+# consolidation must be idempotent across a resumed build, because a wave only advances past
+# its gate on a pass, and a gate failure after a successful consolidation must not double
+# every discovery on the next attempt.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_new_findings_ledger_reads_the_table():
+    text = (
+        "# Build status\n\n## New findings\n\n"
+        "| Provisional id | Final id | Workstream |\n|---|---|---|\n"
+        "| wave2-batch-a-NEW-1 | ENV-2 | environmental |\n"
+    )
+    assert parse_new_findings_ledger(text) == {"wave2-batch-a-NEW-1": "ENV-2"}
+
+
+def test_parse_new_findings_ledger_is_empty_for_a_fresh_build():
+    assert parse_new_findings_ledger("") == {}
+    assert parse_new_findings_ledger("# Build status\n\n## Waves completed\n") == {}
+
+
+FINDINGS_DOC = {
+    "schema_version": 1,
+    "room": "Project Testbed",
+    "findings": [
+        {
+            "id": "ENV-1",
+            "title": "Existing environmental finding",
+            "severity": "critical",
+            "workstream": "environmental",
+            "multi_document": False,
+            "source": "11_environmental-hs/11.1_permits/11.1.1_permit.md",
+            "substance": "Seed finding.",
+        }
+    ],
+}
+
+PREFIX_FOR_WORKSTREAM_CONSOLIDATION = {"environmental": "ENV", "operations": "OPS"}
+
+
+def _wave2_incoming_docs():
+    return {
+        "wave2-batch-a": {
+            "new_findings": [
+                {
+                    "id": "wave2-batch-a-NEW-1",
+                    "title": "Undisclosed related-party balance",
+                    "severity": "high",
+                    "workstream": "environmental",
+                    "multi_document": False,
+                    "source": "11_environmental-hs/11.4_permits/11.4.2_variation-notice.md",
+                    "location": "Condition 7",
+                    "substance": "A permit variation notice tightens a discharge limit.",
+                }
+            ]
+        },
+        "wave2-batch-b": {
+            "new_findings": [
+                {
+                    "id": "wave2-batch-b-NEW-1",
+                    "title": "Single-source supplier dependency",
+                    "severity": "high",
+                    "workstream": "operations",
+                    "multi_document": False,
+                    "source": "14_operations/14.2_supply-chain/14.2.5_supplier-list.md",
+                    "location": "Row 3",
+                    "substance": "One supplier accounts for the majority of annual spend.",
+                }
+            ]
+        },
+    }
+
+
+def test_consolidate_wave_incoming_allocates_new_discoveries():
+    result = consolidate_wave_incoming(
+        FINDINGS_DOC, _wave2_incoming_docs(), {}, PREFIX_FOR_WORKSTREAM_CONSOLIDATION
+    )
+    assert result.new_mapping == {
+        "wave2-batch-a-NEW-1": "ENV-2",
+        "wave2-batch-b-NEW-1": "OPS-1",
+    }
+    ids = {row["id"] for row in result.findings_doc["findings"]}
+    assert ids == {"ENV-1", "ENV-2", "OPS-1"}
+
+
+def test_consolidate_wave_incoming_is_idempotent_across_a_resumed_build():
+    """The exact bug the coordinator reproduced: a wave whose gate fails AFTER a successful
+    consolidation must not double every discovery when /vdr-build resumes and consolidates
+    the same, untouched _key/incoming/*.yaml content again. Simulated here by feeding the
+    first call's `new_mapping` back in as `already_mapped`, exactly as parsing it out of the
+    persisted `_key/build-status.md` ledger would.
+    """
+    incoming_docs = _wave2_incoming_docs()
+
+    first = consolidate_wave_incoming(
+        FINDINGS_DOC, incoming_docs, {}, PREFIX_FOR_WORKSTREAM_CONSOLIDATION
+    )
+    assert first.new_mapping == {
+        "wave2-batch-a-NEW-1": "ENV-2",
+        "wave2-batch-b-NEW-1": "OPS-1",
+    }
+
+    # Second attempt: same untouched incoming files, findings.yaml already updated from the
+    # first call, already_mapped now carries what the ledger would already have recorded.
+    second = consolidate_wave_incoming(
+        first.findings_doc, incoming_docs, first.new_mapping, PREFIX_FOR_WORKSTREAM_CONSOLIDATION
+    )
+    assert second.new_mapping == {}, "a rerun over the same intake must allocate nothing new"
+    assert second.findings_doc == first.findings_doc, (
+        "a rerun must leave findings_doc unchanged — no duplicate ENV-4/OPS-2 entries"
+    )
+    ids = [row["id"] for row in second.findings_doc["findings"]]
+    assert len(ids) == len(set(ids)) == 3, "no duplicate finding ids after the rerun"
+
+
+def test_consolidate_wave_incoming_upserts_findings_refinements():
+    incoming_docs = {
+        "wave2-batch-a": {
+            "findings": [
+                {
+                    "id": "ENV-1",
+                    "title": "Existing environmental finding",
+                    "severity": "critical",
+                    "workstream": "environmental",
+                    "multi_document": False,
+                    "source": "11_environmental-hs/11.1_permits/11.1.1_permit.md",
+                    "location": "Condition 3, second paragraph",
+                    "substance": "Refined substance now that the document exists.",
+                }
+            ]
+        }
+    }
+    result = consolidate_wave_incoming(FINDINGS_DOC, incoming_docs, {}, {})
+    (row,) = result.findings_doc["findings"]
+    assert row["location"] == "Condition 3, second paragraph"
+    assert row["substance"] == "Refined substance now that the document exists."
+
+
+def test_consolidate_wave_incoming_rejects_a_findings_row_not_in_the_gate_b_registry():
+    incoming_docs = {"wave2-batch-a": {"findings": [{"id": "NOT-REGISTERED"}]}}
+    with pytest.raises(SchemaError, match="NOT-REGISTERED"):
+        consolidate_wave_incoming(FINDINGS_DOC, incoming_docs, {}, {})

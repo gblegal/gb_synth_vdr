@@ -5,6 +5,7 @@ YAML is canonical; findings.md is generated from it. Nothing else parses the key
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set
@@ -322,3 +323,153 @@ def allocate_new_finding_ids(
         next_number[prefix] = next_number.get(prefix, 0) + 1
         mapping[provisional_id] = f"{prefix}-{next_number[prefix]}"
     return mapping
+
+
+def derive_prefix_for_workstream(workstreams, prefixes, existing_findings=()):
+    """Build and validate the workstream -> finding-id-prefix mapping `allocate_new_finding_ids`
+    needs, from `room.conf`'s `FINDING_PREFIXES` token list and the domain pack's declared
+    workstream order.
+
+    `FINDING_PREFIXES` carries no explicit workstream labels — `/vdr-scope` declares it as
+    "one token per workstream in the domain pack," so the correspondence between the two lists
+    is positional by convention, never enforced by any format. A hand-edited room.conf, or a
+    domain pack whose workstream order later changes, can silently shift that correspondence:
+    same length, wrong pairing, and a bare `zip()` would never notice — a newly discovered
+    finding would then be numbered under the WRONG workstream's prefix with no error at all,
+    which is worse than the loud failure a merely-short list already gives.
+
+    This checks the one thing it CAN check without a separately stored mapping: every
+    workstream that already has at least one existing finding has a KNOWN prefix, read
+    straight off that finding's own id (Gate B already fixed it, and it necessarily agrees
+    with the room's real FINDING_PREFIXES because the finding was authored against it) — so
+    the zip's answer for that workstream must agree. A workstream with no existing finding yet
+    cannot be cross-checked this way; only the list length is checked for those.
+
+    Raises `SchemaError`, naming the exact mismatch, on a length disagreement or on any
+    already-established workstream whose known prefix disagrees with the zip — never silently
+    returning a mapping that could misattribute a new finding's workstream.
+    """
+    workstreams = list(workstreams)
+    prefixes = list(prefixes)
+    if len(workstreams) != len(prefixes):
+        raise SchemaError(
+            f"FINDING_PREFIXES has {len(prefixes)} token(s) but the domain pack declares "
+            f"{len(workstreams)} workstream(s) — they must correspond one-to-one, in order"
+        )
+    mapping = dict(zip(workstreams, prefixes))
+
+    known_prefix_for_workstream: Dict[str, str] = {}
+    for finding in existing_findings:
+        prefix, _, number = finding.id.rpartition("-")
+        if prefix and number.isdigit():
+            known_prefix_for_workstream.setdefault(finding.workstream, prefix)
+
+    for workstream, known_prefix in known_prefix_for_workstream.items():
+        if workstream not in mapping:
+            raise SchemaError(
+                f"FINDING_PREFIXES has no entry for workstream {workstream!r}, but an "
+                f"existing finding already uses prefix {known_prefix!r} for it"
+            )
+        if mapping[workstream] != known_prefix:
+            raise SchemaError(
+                f"FINDING_PREFIXES appears reordered: workstream {workstream!r} already has "
+                f"finding(s) prefixed {known_prefix!r}, but the declared order maps it to "
+                f"{mapping[workstream]!r} instead — check FINDING_PREFIXES against the domain "
+                "pack's workstream order"
+            )
+    return mapping
+
+
+NEW_FINDING_LEDGER_ROW = re.compile(
+    r"^\|\s*([\w-]+)\s*\|\s*([A-Z]+-\d+)\s*\|\s*(\w+)\s*\|\s*$", re.MULTILINE
+)
+
+
+def parse_new_findings_ledger(build_status_text: str) -> Dict[str, str]:
+    """`{provisional_id: final_id}` already recorded in `_key/build-status.md`'s
+    "New findings" table.
+
+    This is the durable idempotency record `consolidate_wave_incoming` reads before
+    allocating: a provisional id already present here was allocated in an earlier attempt at
+    this build (possibly one whose gate later failed) and must never be allocated again, or a
+    resumed build silently doubles every mid-authoring discovery under a second, higher id —
+    the exact defect `/vdr-build`'s own resumability guarantee exists to rule out. An absent
+    or empty ledger (a fresh build, or one with no discoveries yet) parses to `{}`.
+    """
+    return {
+        provisional: final
+        for provisional, final, _workstream in NEW_FINDING_LEDGER_ROW.findall(build_status_text)
+    }
+
+
+@dataclass(frozen=True)
+class ConsolidationResult:
+    """Result of one `consolidate_wave_incoming` call."""
+
+    findings_doc: dict
+    new_mapping: Dict[str, str]
+    workstream_by_final_id: Dict[str, str]
+
+
+def consolidate_wave_incoming(
+    findings_doc: dict,
+    incoming_docs: Dict[str, dict],
+    already_mapped: Dict[str, str],
+    prefix_for_workstream: Dict[str, str],
+) -> ConsolidationResult:
+    """Merge a wave's `_key/incoming/*.yaml` files into `_key/findings.yaml`'s parsed
+    document, and allocate real ids for any genuinely new discovery.
+
+    Pure and file-I/O-free by design, so it can be called twice over the same inputs and
+    checked for exactly the property `/vdr-build`'s resumability depends on: calling it again
+    with `already_mapped` updated from the first call's `new_mapping` must allocate NOTHING
+    new and must leave `findings_doc` unchanged, because every provisional id it would
+    otherwise see is already in `already_mapped` and is skipped rather than re-allocated.
+    Skipping, not re-deriving state some other way, is what makes a rerun over an UNTOUCHED
+    intake safe — `/vdr-build` can call this after every wave attempt, gate pass or gate fail,
+    with no risk of duplicating a discovery that a failed gate left sitting in the incoming
+    directory.
+
+    `incoming_docs` maps each incoming file's label (its filename stem) to its parsed YAML
+    document. `findings_doc` is `_key/findings.yaml`'s parsed document (with a `findings` key,
+    a list of row mappings — the same shape `synthvdr.schema.load_findings` reads). A
+    `findings:` row inside an incoming doc upserts onto the matching existing row by id, and
+    raises `SchemaError` if that id is not already in `findings_doc` (Gate B's registry is
+    closed; consolidation never introduces a new id under that key). A `new_findings:` row
+    proposes a discovery under a provisional id; unless that id is already in `already_mapped`,
+    it is passed to `allocate_new_finding_ids` (sorted there by `(label, provisional_id)`, so
+    the allocation itself is deterministic across reruns too) and the resulting row is added
+    under its real, newly allocated id.
+    """
+    by_id = {row["id"]: dict(row) for row in (findings_doc.get("findings") or [])}
+
+    discoveries = []
+    new_rows_by_provisional: Dict[str, dict] = {}
+    for label, incoming in sorted(incoming_docs.items()):
+        for row in incoming.get("findings") or []:
+            if row["id"] not in by_id:
+                raise SchemaError(
+                    f"{label}: finding {row['id']!r} is not in the Gate B registry — "
+                    "consolidation only refines an existing finding, it never adds one "
+                    "under the `findings:` key"
+                )
+            by_id[row["id"]].update(row)
+        for row in incoming.get("new_findings") or []:
+            if row["id"] in already_mapped:
+                continue
+            discoveries.append((label, row["id"], row["workstream"]))
+            new_rows_by_provisional[row["id"]] = row
+
+    new_mapping = allocate_new_finding_ids(set(by_id), prefix_for_workstream, discoveries)
+    for provisional_id, final_id in new_mapping.items():
+        row = dict(new_rows_by_provisional[provisional_id])
+        row["id"] = final_id
+        by_id[final_id] = row
+
+    updated_doc = dict(findings_doc)
+    updated_doc["findings"] = list(by_id.values())
+    workstream_by_final_id = {
+        final_id: new_rows_by_provisional[provisional_id]["workstream"]
+        for provisional_id, final_id in new_mapping.items()
+    }
+    return ConsolidationResult(updated_doc, new_mapping, workstream_by_final_id)
