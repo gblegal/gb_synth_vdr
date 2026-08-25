@@ -9,43 +9,65 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Set
+from typing import List, Set
 
 ENTITY_SUFFIXES = (
     "Limited", "Ltd", "PLC", "LLP", "LLC", "Inc", "Incorporated",
     "GmbH", "AG", "SAS", "SARL", "SA", "BV", "NV", "AB", "Oy", "SpA", "KK",
 )
 
-# A small, closed set of English determiners — not a general stopword list.
-# Excluded from EVERY repetition of the word-run below, not just the first:
-# a heading followed by a blank line followed by a determiner-led sentence
-# ("# Articles\n\nThe Ashfell Holdings Limited...") lets "Articles" start
-# the run legitimately, and a guard that only checked the match's start
-# would then let "The" slide in as the run's second word. Guarding each
-# repetition instead means no word anywhere in the run can be a bare
-# determiner, so the run breaks — and restarts one word later — the moment
-# it reaches one, regardless of how many capitalised words preceded it.
-_LEADING_STOPWORDS = ("The", "A", "An", "This", "That", "These", "Those")
-
 _SUFFIX_ALTERNATION = "|".join(re.escape(s) for s in ENTITY_SUFFIXES)
-_STOPWORD_ALTERNATION = "|".join(re.escape(w) for w in _LEADING_STOPWORDS)
 
+# Inter-word separation is spaces and tabs only, not \s — an entity name
+# does not span a paragraph, and \s would let the run cross a blank line
+# (or any line break), joining a heading to the sentence below it into one
+# false candidate ("Supply\n\nSee Kessler Werke GmbH").
 _ENTITY = re.compile(
-    r"\b((?:(?!(?:" + _STOPWORD_ALTERNATION + r")\b)[A-Z][\w&'’-]*\s+){1,4}"
-    r"(?i:" + _SUFFIX_ALTERNATION + r"))\b"
+    r"\b((?:[A-Z][\w&'’-]*[ \t]+){1,4}(?i:" + _SUFFIX_ALTERNATION + r"))\b"
 )
 
 
 def entity_tokens(text: str) -> Set[str]:
     """Capitalised phrases ending in a corporate suffix.
 
-    The suffix is matched case-insensitively (Limited/limited, GmbH/GMBH
-    all count) so recognition does not depend on a document happening to
-    spell the suffix in the canonical casing — case variants are handled by
-    folding the match, not by adding one more spelling to ENTITY_SUFFIXES
-    each time a new one is noticed.
+    Matches greedily and makes no attempt to tell a genuine leading word of
+    a name from an ordinary word that merely precedes one ("See Kessler
+    Werke GmbH", "Under Kessler Werke GmbH", "Per Ashfell Holdings
+    Limited") — there is no closed list of words that might come before a
+    name, so a version of this function that tried to exclude them one
+    spelling at a time would always be one word behind the next document
+    that plants a new one. That reconciliation is the cast list's job (see
+    `covered_by_cast`), not this function's: it stays a plain, context-free
+    matcher. The suffix is matched case-insensitively (Limited/limited,
+    GmbH/GMBH all count).
     """
     return {match.group(1).strip() for match in _ENTITY.finditer(text)}
+
+
+def trailing_subphrases(candidate: str) -> List[str]:
+    """`candidate`'s trailing word sub-phrases, longest to shortest.
+
+    For "See Kessler Werke GmbH": ["See Kessler Werke GmbH", "Kessler Werke
+    GmbH", "Werke GmbH", "GmbH"]. Internal whitespace is normalised via
+    `str.split()` before re-joining with a single space, since a candidate
+    captured by entity_tokens may carry a tab between words where a
+    cast-list entry is written with a plain space.
+    """
+    words = candidate.split()
+    return [" ".join(words[i:]) for i in range(len(words))]
+
+
+def covered_by_cast(candidate: str, cast: Set[str]) -> bool:
+    """True if some trailing sub-phrase of `candidate` is on the cast list.
+
+    This is the property that replaces trying to guess which leading words
+    can precede a real name: a candidate is accounted for the moment ANY
+    suffix of its word sequence — down to its last word alone — matches an
+    entry the cast list already vouches for, regardless of what leading
+    word(s) the regex greedily pulled in ahead of it. A candidate is only
+    "unchecked" when none of its trailing sub-phrases is on the list.
+    """
+    return any(phrase in cast for phrase in trailing_subphrases(candidate))
 
 
 def cast_list(path: Path) -> Set[str]:

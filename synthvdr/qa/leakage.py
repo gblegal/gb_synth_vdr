@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import List, Set, Tuple
 
-from ..names import cast_list, entity_tokens
+from ..names import cast_list, covered_by_cast, entity_tokens
 from .runner import fail, ok, skip
 
 # Gate 4. "registry" is deliberately absent: Land Registry is legitimate in-room.
@@ -44,8 +44,19 @@ _HIT_LIMIT = 5
 
 
 def finding_id_pattern(conf) -> re.Pattern:
+    """A finding ID must not continue into another alphanumeric character.
+
+    The trailing edge used to be a plain `\\b`, which `_` defeats — `_` is a
+    word character, so there is no boundary between the "1" in "ENV-1" and
+    an underscore straight after it, and this project's own slug
+    convention ("1.1.1_articles.md") puts an underscore exactly there. An
+    explicit negative lookahead for a following letter or digit rejects
+    only a real alphanumeric continuation ("ENV-1a" must not match) while
+    treating '_', '.', '-', and end-of-string as legitimate boundaries.
+    """
     prefixes = conf.get("FINDING_PREFIXES")
-    return re.compile(rf"\b(?:{prefixes})-\d+\b|\bDX-\d+\b")
+    boundary = r"(?![A-Za-z0-9])"
+    return re.compile(rf"\b(?:{prefixes})-\d+{boundary}|\bDX-\d+{boundary}")
 
 
 def _truncated(items: List[str], sep: str = "; ", limit: int = _HIT_LIMIT) -> str:
@@ -194,8 +205,8 @@ def gate_14_unchecked_names(ctx):
             continue
         if needed_fallback:
             replaced += 1
-        unchecked |= entity_tokens(text) - cast
-        unchecked |= entity_tokens(path.name) - cast
+        candidates = entity_tokens(text) | entity_tokens(path.name)
+        unchecked |= {c for c in candidates if not covered_by_cast(c, cast)}
     if unchecked:
         detail = _truncated(sorted(unchecked), sep=", ") + " — not on the cast list; check or remove"
         return fail("14", "unchecked names", detail + _fallback_note(replaced))

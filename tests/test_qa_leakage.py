@@ -2,11 +2,12 @@ import re
 
 import pytest
 
-from synthvdr.names import entity_tokens
+from synthvdr.names import covered_by_cast, entity_tokens, trailing_subphrases
 from synthvdr.qa.leakage import (
     ANSWER_KEY_NOUNS,
     BUILD_VOCABULARY,
     _hits,
+    finding_id_pattern,
     gate_03_flag_leakage,
     gate_04_vocabulary,
     gate_05_index_vocabulary,
@@ -43,6 +44,7 @@ def room(tmp_path):
     (tmp_path / "_key" / "name-check.md").write_text(
         "| Name | Kind | Verdict | Checked |\n|---|---|---|---|\n"
         "| Ashfell Holdings Limited | entity | clear | 2026-08-24 |\n"
+        "| Kessler Werke GmbH | entity | clear | 2026-08-24 |\n"
     )
     return tmp_path
 
@@ -152,11 +154,10 @@ def test_hits_sweeps_the_filename_as_well_as_the_content(tmp_path):
 
 
 def test_gate_04_catches_a_finding_id_that_appears_only_in_the_filename(room):
-    # A trailing underscore ("ENV-1_articles.md") sits inside \w, so \b
-    # would not fire right after the digit — this uses a boundary the
-    # pattern actually recognises, to isolate "is the filename swept at
-    # all" from finding_id_pattern's own boundary character set.
-    (room / "data-room" / "01_corporate" / "1.1_constitutional" / "ENV-1.md").write_text(
+    # The real slug shape this project produces — a trailing underscore
+    # right after the digit — now matches, thanks to finding_id_pattern's
+    # boundary fix below (finding B, residual).
+    (room / "data-room" / "01_corporate" / "1.1_constitutional" / "ENV-1_articles.md").write_text(
         "# Articles\n\nOrdinary content.\n"
     )
     result = gate_04_vocabulary(ctx_for(room))
@@ -174,6 +175,28 @@ def test_gate_14_flags_an_entity_named_only_in_the_filename(room):
 
 
 # ---------------------------------------------------------------------------
+# Review finding B (residual) — finding_id_pattern's trailing \b was
+# defeated by a trailing underscore, exactly the shape this project's own
+# slug convention produces ("1.1.1_articles.md").
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "candidate, should_match",
+    [
+        ("ENV-1_articles", True),   # the slug shape that used to be invisible
+        ("ENV-1a", False),          # a real alphanumeric continuation
+        ("ENV-1.md", True),
+        ("ENV-12", True),
+        ("MENV-1", False),         # leading \b must still block a mid-word hit
+    ],
+)
+def test_finding_id_pattern_rejects_only_a_real_alphanumeric_continuation(room, candidate, should_match):
+    pattern = finding_id_pattern(ctx_for(room).conf)
+    assert bool(pattern.search(candidate)) is should_match
+
+
+# ---------------------------------------------------------------------------
 # Review finding C — a corporate suffix must be recognised regardless of how
 # it is cased; gate 14 can never flag what entity_tokens never sees.
 # ---------------------------------------------------------------------------
@@ -185,29 +208,87 @@ def test_entity_tokens_matches_suffixes_case_insensitively():
 
 
 # ---------------------------------------------------------------------------
-# Review finding D — a leading determiner must not be absorbed into the
-# captured name: that turns ordinary prose into an unrecognised "entity"
-# that fails gate 14 even though the real name is on the cast list.
+# Review finding D (reopened) — the first fix enumerated leading words
+# ("The") instead of stating the property. The property: a candidate is
+# only "unchecked" if NO trailing sub-phrase of it is on the cast list —
+# this needs no list of words that might precede a real name, because it
+# reconciles from the right-hand end of the phrase, not the left.
 # ---------------------------------------------------------------------------
 
 
-def test_entity_tokens_does_not_absorb_a_leading_determiner():
-    assert entity_tokens("The Ashfell Holdings Limited was incorporated in 2019.") == {
-        "Ashfell Holdings Limited"
-    }
-    # Sanity: positions and phrasing the fix must not disturb.
-    assert entity_tokens("Ashfell Holdings Limited is a company.") == {"Ashfell Holdings Limited"}
-    assert entity_tokens("Contracts were exchanged. Kessler Werke GmbH signed the deed.") == {
-        "Kessler Werke GmbH"
-    }
-    assert entity_tokens(
-        "Ashfell Holdings Limited entered a contract with Kessler Werke GmbH in March."
-    ) == {"Ashfell Holdings Limited", "Kessler Werke GmbH"}
+def test_trailing_subphrases_runs_longest_to_shortest():
+    assert trailing_subphrases("See Kessler Werke GmbH") == [
+        "See Kessler Werke GmbH",
+        "Kessler Werke GmbH",
+        "Werke GmbH",
+        "GmbH",
+    ]
 
 
-def test_gate_14_does_not_false_fail_on_a_leading_determiner(room):
-    blind_doc(room).write_text("# Articles\n\nThe Ashfell Holdings Limited was incorporated in 2019.\n")
+def test_covered_by_cast_is_true_for_every_cast_entry_under_any_leading_word():
+    # Property, not examples: for EVERY name actually on the cast list, that
+    # name preceded by an arbitrary capitalised leading word must register
+    # as covered — the mechanism must not depend on which leading words
+    # anyone happened to think of.
+    cast = {"Ashfell Holdings Limited", "Kessler Werke GmbH", "Vantage Underwriting PLC"}
+    leading_words = ("See", "Under", "Per", "Registered", "Formerly", "Regarding")
+    for name in cast:
+        for leading in leading_words:
+            candidate = f"{leading} {name}"
+            assert covered_by_cast(candidate, cast), candidate
+    assert not covered_by_cast("Completely Unrelated Entity Limited", cast)
+
+
+@pytest.mark.parametrize(
+    "prose",
+    [
+        "The Ashfell Holdings Limited signed.",
+        "See Kessler Werke GmbH for detail.",
+        "Under Kessler Werke GmbH the plant runs.",
+        "Per Ashfell Holdings Limited, the deed.",
+        "Registered Ashfell Holdings Limited today.",
+    ],
+)
+def test_gate_14_does_not_false_fail_on_an_arbitrary_leading_word(room, prose):
+    blind_doc(room).write_text(f"# Articles\n\n{prose}\n")
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "PASS", result.detail
+
+
+def test_gate_14_still_flags_an_unchecked_entity_even_with_a_leading_word(room):
+    # The property must not have been blunted into never flagging anything:
+    # a leading word only excuses a name that IS on the cast list.
+    blind_doc(room).write_text("# Articles\n\nSee Unlisted Trading Limited for detail.\n")
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "Unlisted Trading Limited" in result.detail
+
+
+def test_gate_14_does_not_false_fail_on_a_name_at_the_start_of_a_file(room):
+    blind_doc(room).write_text("Ashfell Holdings Limited is a company.\n")
     assert gate_14_unchecked_names(ctx_for(room)).status == "PASS"
+
+
+def test_gate_14_does_not_false_fail_on_a_name_after_a_full_stop(room):
+    blind_doc(room).write_text("Formation was complete. Ashfell Holdings Limited then traded.\n")
+    assert gate_14_unchecked_names(ctx_for(room)).status == "PASS"
+
+
+def test_entity_tokens_does_not_join_a_heading_and_body_across_a_blank_line():
+    # An entity name does not span a paragraph: the inter-word separator is
+    # spaces and tabs only, so a heading cannot be glued to the sentence
+    # below it into one false candidate.
+    text = "# Supply\n\nKessler Werke GmbH signed the deed.\n"
+    assert entity_tokens(text) == {"Kessler Werke GmbH"}
+
+
+def test_gate_14_does_not_false_fail_when_a_heading_precedes_a_covered_name(room):
+    # Combines both halves of the reopened fix: the heading must not be
+    # joined into the candidate, AND the leading word "See" must not stop
+    # the (correctly isolated) candidate from being recognised as covered.
+    blind_doc(room).write_text("# Supply\n\nSee Kessler Werke GmbH for detail.\n")
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "PASS", result.detail
 
 
 # ---------------------------------------------------------------------------
