@@ -44,11 +44,12 @@ AGENT_NAMES = ("vdr-author", "vdr-auditor")
 # "/vdr-package", "/vdr-score"). Remove each name from here in the same commit that adds
 # its skill/agent file — leaving it in place after the file exists is a hard failure
 # (XPASS under strict=True), by design; see the module docstring.
-PENDING_SKILLS = ("vdr-build", "vdr-qa", "vdr-package", "vdr-score")
-PENDING_AGENTS = ("vdr-author", "vdr-auditor")
+PENDING_SKILLS = ("vdr-qa", "vdr-package", "vdr-score")
+PENDING_AGENTS = ()
 
 FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 FENCED_YAML = re.compile(r"```yaml\n(.*?)\n```", re.DOTALL)
+FENCED_MARKDOWN = re.compile(r"```markdown\n(.*?)\n```", re.DOTALL)
 
 
 def _pending_param(name: str, pending: tuple) -> "pytest.param":
@@ -95,6 +96,34 @@ def yaml_examples(path: Path) -> List[str]:
     pdf.mjs rather than a Python re-implementation of it.
     """
     return FENCED_YAML.findall(_read(path))
+
+
+def markdown_examples(path: Path) -> List[str]:
+    """Every fenced ` ```markdown ` code block's raw text in a skill/agent markdown file.
+
+    The markdown-example counterpart to `yaml_examples()` above, for an artefact that is
+    prose rather than YAML — `_key/build-status.md` here in Task 18. Same rule applies: a
+    test checks this text as extracted from the shipped skill file, never a copy of the
+    expected content kept in the test.
+    """
+    return FENCED_MARKDOWN.findall(_read(path))
+
+
+def find_example_by_marker(blocks: List[str], marker: str, source: Path) -> str:
+    """The one fenced markdown block, among `blocks`, containing the literal `marker` text.
+
+    Markdown has no top-level-key structure to key off the way `find_example_by_top_level_key`
+    does for YAML, so this matches on a distinctive literal substring instead — and, exactly
+    like its YAML counterpart, fails loudly rather than guessing if zero or more than one
+    block qualifies.
+    """
+    matches = [block for block in blocks if marker in block]
+    assert matches, f"{source}: no fenced ```markdown block containing {marker!r}"
+    assert len(matches) == 1, (
+        f"{source}: {len(matches)} fenced ```markdown blocks contain {marker!r} — "
+        "expected exactly one canonical example"
+    )
+    return matches[0]
 
 
 def find_example_by_top_level_key(blocks: List[str], key: str, source: Path) -> str:
@@ -255,3 +284,81 @@ def test_gaps_example_in_skill_matches_gate_9s_real_parser():
     doc = yaml.safe_load(gaps_yaml)
     for row in doc["gaps"]:
         assert row.get("reason"), f"gaps.yaml example row {row!r} has no reason"
+
+
+def test_build_skill_states_the_findings_first_ordering_rule():
+    body = (ROOT / "skills" / "vdr-build" / "SKILL.md").read_text().lower()
+    assert "findings-first" in body
+    assert "resume" in body
+
+
+def test_author_agent_is_forbidden_from_the_flagged_tree():
+    body = (ROOT / "agents" / "vdr-author.md").read_text().lower()
+    assert "never" in body and "flagged" in body
+
+
+def test_auditor_agent_reads_only_the_blind_room():
+    body = (ROOT / "agents" / "vdr-auditor.md").read_text().lower()
+    assert "blind" in body
+    assert "findings.yaml" in body
+
+
+def test_incoming_example_in_build_skill_validates_as_findings(tmp_path):
+    """The `_key/incoming/<label>.yaml` example `/vdr-build` tells a vdr-author subagent to
+    copy — the answer-key refinement it writes alongside its documents — must itself load and
+    validate through the real `synthvdr.schema` functions, the same discipline Task 17's fix
+    round established for findings.yaml/distractors.yaml in `/vdr-findings`. It is exactly the
+    `findings.yaml` shape (a subset of rows, upserted into the master registry), so it is
+    checked the same way: read straight out of the shipped skill file, never a copy kept here.
+    """
+    path = ROOT / "skills" / "vdr-build" / "SKILL.md"
+    incoming_yaml = find_example_by_top_level_key(yaml_examples(path), "findings", path)
+
+    incoming_path = tmp_path / "incoming-example.yaml"
+    incoming_path.write_text(incoming_yaml, encoding="utf-8")
+
+    findings = load_findings(incoming_path)
+    assert findings.findings, "the incoming.yaml example in the skill has no findings"
+
+    errors = validate(findings, [])
+    assert errors == [], f"the skill's own incoming.yaml example fails validate(): {errors}"
+
+
+BUILD_STATUS_WAVE_ROW = re.compile(
+    r"^\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(PASS|FAIL)\s*\|\s*$", re.MULTILINE
+)
+BUILD_STATUS_NEXT_WAVE = re.compile(r"##\s*Next wave\s*\n+.*?Wave\s+(\d+)", re.DOTALL)
+
+
+def test_build_status_example_in_build_skill_proves_the_resume_contract():
+    """`_key/build-status.md` exists so an interrupted build can resume "without duplicating
+    or losing slots" (Task 18 ruling 6) — and that property is mechanical, not a matter of
+    prose. The literal example the skill tells an implementer to copy must itself satisfy it:
+    every recorded wave shows a passing gate result (a failed wave is never recorded — see
+    the skill's own text), wave numbers are consecutive starting at 1, and the "Next wave"
+    section names exactly one more than the last completed wave. Read out of the shipped
+    skill file, never a copy kept here, so a future edit that breaks the arithmetic — the
+    exact way a stale resume pointer would duplicate or strand a wave — is caught in the
+    commit that breaks it.
+    """
+    path = ROOT / "skills" / "vdr-build" / "SKILL.md"
+    block = find_example_by_marker(markdown_examples(path), "# Build status", path)
+
+    waves = [
+        (int(wave), int(slots), gate)
+        for wave, slots, gate in BUILD_STATUS_WAVE_ROW.findall(block)
+    ]
+    assert waves, f"{path}: build-status.md example has no wave rows"
+    assert [w for w, _, _ in waves] == list(range(1, len(waves) + 1)), (
+        "wave numbers in the build-status.md example must be consecutive, starting at 1"
+    )
+    assert all(gate == "PASS" for _, _, gate in waves), (
+        "every recorded wave in the build-status.md example must show a passing gate result"
+    )
+
+    next_wave = BUILD_STATUS_NEXT_WAVE.search(block)
+    assert next_wave, f"{path}: build-status.md example has no '## Next wave' naming a wave"
+    assert int(next_wave.group(1)) == waves[-1][0] + 1, (
+        "'Next wave' in the build-status.md example must name exactly one more than the "
+        "last completed wave"
+    )
