@@ -1,10 +1,31 @@
+import json
+import re
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 from synthvdr.render.docx import RenderUnavailable, render_tree_docx, rotation_for, scanned_slots
 from synthvdr.schema import Finding, FindingSet
+
+PDF_MJS = Path(__file__).resolve().parent.parent / "synthvdr" / "render" / "pdf.mjs"
+
+# 22 (slot_id, page) pairs chosen to exercise both signs and enough distinct
+# slots/pages to catch a sign-bit or index error, not just agreement on one
+# lucky value. rotation_for(...) over this set yields 11 positive, 11
+# negative, 20 distinct values (two ties) — see
+# test_pdf_mjs_rotation_matches_python_exactly below.
+ROTATION_PAIRS = [
+    (slot, page)
+    for slot in (
+        "11.1.1", "2.2.2", "9.9.9", "a", "b",
+        "01_corp/1.1_x/1.1.1_other", "11_env/11.1_x/11.1.1_report",
+        "3.3.3", "4.4.4", "zulu", "alpha",
+    )
+    for page in (1, 2)
+]
 
 docx_module = pytest.importorskip("docx", reason="python-docx not installed")
 
@@ -175,3 +196,70 @@ def test_render_unavailable_when_docx_import_fails(tmp_path, monkeypatch):
     (src / "1.1.1_articles.md").write_text("# Articles\n")
     with pytest.raises(RenderUnavailable):
         render_tree_docx(tmp_path / "data-room", tmp_path / "data-room-docx")
+
+
+def _extract_rotation_for_source(mjs_text: str) -> str:
+    """Pull rotationFor's actual function body out of pdf.mjs, rather than
+    letting the test carry its own copy of the formula. A test with its own
+    copy proves the two authors agree, not that the shipped file matches —
+    this one breaks the moment pdf.mjs's implementation drifts from
+    synthvdr.render.docx.rotation_for, because it runs the real source."""
+    match = re.search(r"function rotationFor\([^)]*\)\s*\{.*?\n\}", mjs_text, re.DOTALL)
+    if not match:
+        raise AssertionError(
+            "could not find `function rotationFor(...)` in synthvdr/render/pdf.mjs "
+            "— has it been renamed or restructured? update the extraction regex"
+        )
+    return match.group(0)
+
+
+def _extract_crypto_import(mjs_text: str) -> str:
+    match = re.search(r"^import .*createHash.*$", mjs_text, re.MULTILINE)
+    if not match:
+        raise AssertionError(
+            "could not find the createHash import in synthvdr/render/pdf.mjs"
+        )
+    return match.group(0)
+
+
+def _run_node_rotation(node: str, pairs):
+    mjs_text = PDF_MJS.read_text(encoding="utf-8")
+    import_line = _extract_crypto_import(mjs_text)
+    fn_source = _extract_rotation_for_source(mjs_text)
+    script = (
+        f"{import_line}\n"
+        f"{fn_source}\n"
+        f"const pairs = {json.dumps(pairs)};\n"
+        "console.log(JSON.stringify(pairs.map(([slot, page]) => rotationFor(slot, page))));\n"
+    )
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", script],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(f"node failed to run pdf.mjs's rotationFor: {proc.stderr}")
+    return json.loads(proc.stdout.strip())
+
+
+def test_pdf_mjs_rotation_matches_python_exactly():
+    """pdf.mjs's rotationFor is a hand-written JS port of
+    synthvdr.render.docx.rotation_for, kept as two separate implementations
+    because one is Python (DOCX path) and one is Node (PDF path). Nothing
+    else in the harness compares them, so a scanned PDF and a DOCX render of
+    the same slot could silently rotate differently if the port ever
+    drifts — this is the only check that would catch it.
+
+    python-docx being installed doesn't help here: this needs `node`, not
+    `docx`, so it SKIPs (never silently passes) if node is unavailable,
+    same SKIP discipline as every gate in this project.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available — cross-language rotation parity unverified")
+
+    js_values = _run_node_rotation(node, ROTATION_PAIRS)
+    py_values = [rotation_for(slot, page) for slot, page in ROTATION_PAIRS]
+
+    assert js_values == py_values
+    assert any(v > 0 for v in py_values), "fixture pairs must cover the positive case"
+    assert any(v < 0 for v in py_values), "fixture pairs must cover the negative case"
