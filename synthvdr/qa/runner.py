@@ -3,6 +3,23 @@
 A gate whose inputs are absent must SKIP loudly. Silence is indistinguishable
 from a pass, and that silence has already hidden real defects for two phases of
 a previous build. --strict turns every skip into a hard failure.
+
+Two further disciplines are enforced here, once, rather than left to
+individual gates:
+
+  - An empty gate list is refused, not reported as a clean pass. That is the
+    same silence-as-pass failure this module exists to eliminate, one level
+    up: not one gate skipping quietly, but zero gates ever having run.
+  - Every gate's `detail` prints as exactly one line, regardless of what it
+    contains. Embedded newlines are collapsed to spaces here so the
+    one-line-per-gate invariant holds no matter what any of the sixteen
+    gates puts in `detail` — a leak sweep naming several offending paths at
+    once should not be able to break the transcript just by joining them
+    with newlines.
+
+WARN is informational and never affects the exit code, but IS counted in the
+summary line, so a warn-only run cannot be misread as one where nothing was
+worth mentioning.
 """
 
 from __future__ import annotations
@@ -59,13 +76,37 @@ class GateContext:
         return self.room / self.conf.get("KEY_ROOT")
 
     def blind_files(self) -> List[Path]:
+        """Every file under BLIND_TREE, unfiltered by suffix.
+
+        Suffix filtering is the CALLER's job, not this method's — different
+        gates care about different suffixes, and handing back everything
+        keeps one implementation usable by all of them. A gate that walks
+        BLIND_TREE or FLAGGED_TREE with this same `rglob("*") if p.is_file()`
+        shape but skips adding its own suffix filter will pick up
+        synthvdr.twin.MARKER_NAME (suffix '') as if it were a document —
+        keep the filter gate 2 already applies.
+        """
         if not self.blind_root.is_dir():
             return []
         return sorted(p for p in self.blind_root.rglob("*") if p.is_file())
 
 
+def _one_line(text: str) -> str:
+    """Collapse all whitespace, including embedded newlines, to single spaces.
+
+    Applied once, here, at print time, so the one-line-per-gate invariant
+    holds regardless of what any gate returns in `detail` — gate authors are
+    not required to remember to sanitise their own output.
+    """
+    return " ".join(text.split())
+
+
 def run_gates(ctx, gates: List[Callable]) -> int:
-    failures = skips = 0
+    if not gates:
+        print("FAIL — no gates were run: an empty gate list is refused, never reported as a pass")
+        return 1
+
+    failures = skips = warns = 0
     for gate in gates:
         try:
             result = gate(ctx)
@@ -74,15 +115,17 @@ def run_gates(ctx, gates: List[Callable]) -> int:
             result = fail("?", name, f"gate raised {type(exc).__name__}: {exc}")
         line = f"{result.status} {result.number} — {result.name}"
         if result.detail:
-            line += f": {result.detail}"
+            line += f": {_one_line(result.detail)}"
         print(line)
         if result.status == FAIL:
             failures += 1
         elif result.status == SKIP:
             skips += 1
+        elif result.status == WARN:
+            warns += 1
 
     print()
-    summary = f"{len(gates)} gates run, {failures} failed, {skips} skipped"
+    summary = f"{len(gates)} gates run, {failures} failed, {skips} skipped, {warns} warned"
     if failures == 0 and skips == 0:
         summary += " — no hard failures"
     print(summary)
