@@ -9,6 +9,11 @@ Produces the room's foundations — the fact sheet, `room.conf`, the slot index,
 name-collision record — and stops at **Gate A**. Nothing after this skill runs until the
 user signs Gate A off.
 
+**This writes into the current working directory** — `room.conf`, `_key/`, and (once
+`/vdr-build` runs) up to 2,000 documents under `data-room/`. Create and `cd` into an empty
+directory for the room before starting, unless the user has already put you in one; nothing
+in this skill creates that directory for you.
+
 ## 0. Check whether this room is already scoped
 
 Before touching anything, check the current directory for `room.conf`, `_key/fact-sheet.md`

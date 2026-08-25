@@ -231,6 +231,7 @@ from synthvdr.schema import (
     load_findings,
     load_distractors,
     parse_new_findings_ledger,
+    render_findings_md,
     validate,
 )
 
@@ -269,6 +270,13 @@ f = load_findings(Path("_key/findings.yaml"))
 d = load_distractors(Path("_key/distractors.yaml"))
 errors = validate(f, d)
 assert not errors, errors
+
+# _key/findings.md is GENERATED from findings.yaml (README's own invariant) — regenerate it
+# every time this step touches findings.yaml, not just at Gate B. Without this, a wave that
+# discovers ENV-2/OPS-1 updates the YAML but leaves findings.md showing only the Gate-B
+# registry, and anyone reading findings.md (rather than the YAML) sees a stale, incomplete
+# answer key with nothing to say so.
+Path("_key/findings.md").write_text(render_findings_md(f, conf.get("ROOM_CODENAME")))
 ```
 
 ### 4. Reconcile new canonical facts

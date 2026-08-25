@@ -4,6 +4,23 @@ A Claude Code plugin that generates **synthetic M&A virtual data rooms** with a 
 machine-checked ground-truth answer key, for evaluating document-review and due-diligence
 AI tools.
 
+## Install
+
+```bash
+pip install -e .              # the plugin's Python package (synthvdr) — required before any /vdr-* skill runs
+pip install -e ".[dev]"       # adds pytest, for the test suite
+pip install -e ".[docx]"      # adds python-docx, only if you want DOCX renders (see "Optional render toolchains")
+```
+
+Every `/vdr-*` skill shells out to `python3 -c "from synthvdr...` or `python3 -m synthvdr...`
+— none of them work until `synthvdr` is importable. This is a Claude Code plugin, not a
+package on PyPI: install it from a checkout of this repository, not `pip install synthvdr`.
+
+`/vdr-scope` is the first skill and creates the room in the **current working directory** —
+`room.conf`, `_key/`, and eventually `data-room/` with up to 2,000 documents. Create and `cd`
+into an empty directory for the room before running it; nothing in this plugin will do that
+for you, and a 200+ document tree lands wherever your shell happens to be.
+
 ## Who this is for
 
 Anyone building or evaluating a document-review / due-diligence tool who needs a realistic
@@ -42,18 +59,21 @@ Six `/vdr-*` skills, run in this order, each gated on the previous one closing o
 
 ## Worked example: the XS fixture
 
-`fixtures/xs-room/` is a complete, hand-authored XS room (40 documents, 4 findings, 2
-distractors) checked into this repository, together with a sample tool output
-(`tool-output-sample.json`) and a known scorecard. `tests/conftest.py`'s
-`build_fixture_room()` turns the fixture into a full room — generating filler prose above
-every slot's depth floor, deriving the flagged (annotated) tree, and building the 10-document
-subset — and `tests/test_end_to_end.py` runs every gate against it, proves each gate is
-load-bearing by breaking the room in one specific way per gate and checking the *right* gate
-catches it, and scores the sample output to confirm it reports exactly recall 75%, precision
-75% and one false alarm. It is the closest thing this project has to a smoke test for the
-whole pipeline; run it with:
+`fixtures/xs-room/` is the hand-authored ANSWER KEY for an XS room (4 findings, 2
+distractors) checked into this repository — `room.conf`, `_key/fact-sheet.md`,
+`_key/findings.yaml`, `_key/distractors.yaml`, `_key/name-check.md` and a sample tool output
+(`tool-output-sample.json`) — six files, no documents yet. `tests/conftest.py`'s
+`build_fixture_room()` is what turns this key into an actual 40-document room: generating
+filler prose above every slot's depth floor, deriving the flagged (annotated) tree, and
+building the 10-document subset. `tests/test_end_to_end.py` runs `build_fixture_room()` and
+then every gate against the room it produces, proves each gate is load-bearing by breaking
+the room in one specific way per gate and checking the *right* gate catches it, and scores
+the sample output to confirm it reports exactly recall 75%, precision 75% and one false
+alarm. It is the closest thing this project has to a smoke test for the whole pipeline; run
+it with:
 
 ```bash
+pip install -e ".[dev]"    # pytest is in the dev extra, not a base dependency
 python3 -m pytest tests/test_end_to_end.py -v
 ```
 
@@ -91,16 +111,20 @@ A room is markdown at heart, and a tool can be evaluated against clean markdown 
 `/vdr-package` can additionally render:
 
 - **DOCX**, via `synthvdr.render.docx` (requires the `python-docx` package — install with
-  the `docx` extra: `pip install synthvdr[docx]`).
+  the `docx` extra: `pip install -e ".[docx]"`).
 - **PDF**, via `synthvdr/render/pdf.mjs`, a separate Node process (requires Node and a local
   Chrome/Chromium for Puppeteer).
 
 Both renderers are optional and non-destructive — they only create or overwrite the files
 they are responsible for, never delete a stale render — and neither is imported at core
 build time, so a missing `python-docx` or missing Node/Chrome never blocks generating or
-QA-checking a room. `synthvdr.qa.gate_16_render_parity` checks both render trees against the
-source markdown, in both directions, whenever a render tree is present, and SKIPs loudly
-(never silently) when neither is.
+QA-checking a room. **`synthvdr.qa.gate_16_render_parity` checks filename parity only, in
+both directions — it never opens a rendered file to compare content.** Whenever a render tree
+is present it confirms every blind-tree document has a same-named render and every render has
+a same-named source; it SKIPs loudly (never silently) when neither render tree exists. A
+render whose *content* has drifted from its markdown source (a stale render left behind after
+the source was edited, say) is not something this gate can see — re-render after any source
+edit rather than relying on gate 16 to catch it.
 
 ## Limits
 

@@ -600,6 +600,65 @@ def test_package_skill_manifest_script_executes_and_produces_a_real_hash(xs_room
     assert manifest["documents"] == len(entries)
 
 
+def test_build_skill_consolidation_script_executes_and_regenerates_findings_md(tmp_path, monkeypatch):
+    """Runs /vdr-build's Step 3 consolidation script verbatim, against real inputs, and
+    confirms two things at once: `derive_prefix_for_workstream(pack.workstreams(), ...)`
+    (F2) works end to end against the real domain pack, and `_key/findings.md` is actually
+    regenerated (final review, F10 — previously written once at Gate B and never touched
+    again, so it silently went stale the first time a wave discovered a new finding).
+    """
+    path = ROOT / "skills" / "vdr-build" / "SKILL.md"
+    block = find_example_by_marker(python_examples(path), "consolidate_wave_incoming(findings_doc", path)
+
+    (tmp_path / "_key" / "incoming").mkdir(parents=True)
+    (tmp_path / "room.conf").write_text(
+        'ROOM_CODENAME="Project Example"\n'
+        "INDEX_TOTAL=1\nBLIND_TOTAL=1\nFLAGGED_TOTAL=1\n"
+        'BLIND_TREE="data-room"\nFLAGGED_TREE="_key/flagged"\nKEY_ROOT="_key"\n'
+        'FLAG_STRING_1="Key diligence points"\nFLAG_STRING_2="DD flag"\n'
+        'FINDING_PREFIXES="CORP|FIN|TAX|FING|COMM|IP|IT|PROP|EMPL|REG|ENV|INS|PEN|DATA|'
+        'LIT|OPS|MGMT|TXN|ESG|JV"\nEXPECTED_KDP_CARRIERS=0\nSECTION_DIRS="01_corporate"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "_key" / "findings.yaml").write_text(
+        "schema_version: 1\n"
+        'room: "Project Example"\n'
+        "findings:\n"
+        "  - id: ENV-1\n"
+        "    title: Seed finding\n"
+        "    severity: high\n"
+        "    workstream: environmental\n"
+        "    multi_document: false\n"
+        "    source: 01_corporate/1.1_x/1.1.1_x.md\n"
+        "    substance: Seed.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "_key" / "distractors.yaml").write_text(
+        "schema_version: 1\ndistractors: []\n", encoding="utf-8"
+    )
+    (tmp_path / "_key" / "incoming" / "wave1-batch-a.yaml").write_text(
+        "new_findings:\n"
+        "  - id: wave1-batch-a-NEW-1\n"
+        "    title: Newly discovered issue\n"
+        "    severity: medium\n"
+        "    workstream: operations\n"
+        "    multi_document: false\n"
+        "    source: 16_operations-quality/16.1_qms/16.1.1_x.md\n"
+        "    substance: Discovered mid-authoring.\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    exec(compile(block, str(path), "exec"), {})
+
+    updated = load_findings(tmp_path / "_key" / "findings.yaml")
+    assert {f.id for f in updated.findings} == {"ENV-1", "OPS-1"}
+
+    findings_md = (tmp_path / "_key" / "findings.md").read_text()
+    assert "OPS-1" in findings_md, "findings.md was not regenerated with the new discovery"
+    assert "ENV-1" in findings_md
+
+
 def test_package_skill_subset_script_executes_against_a_real_room(xs_room, monkeypatch):
     """Final review, F6/test-suite gap: runs the shipped Step 2 subset-building script
     (embedded as a python3 -c heredoc inside a ```bash fence, so python_examples() alone

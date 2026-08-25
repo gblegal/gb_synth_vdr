@@ -40,14 +40,14 @@ never ran."
 
 | # | Gate | Checks |
 |---|---|---|
-| 1 | Index count and regeneration | `_key/index.md` matches a fresh regeneration from `_key/index-src/` |
+| 1 | Index count and regeneration | `index.md` matches a fresh regeneration from `_key/index-src/` |
 | 2 | Tree counts | Document counts match `room.conf`'s declared totals |
 | 3 | Annotation-string leakage | The flag strings never appear in the blind tree |
 | 4 | Blind-tree vocabulary sweep | Answer-key vocabulary never appears in the blind tree |
-| 5 | Index.md vocabulary sweep | A wider vocabulary sweep of `_key/index.md` itself |
+| 5 | Index.md vocabulary sweep | A wider vocabulary sweep of `index.md` itself |
 | 6 | Directory canon | Blind and flagged trees mirror the same directory shape |
 | 7 | Twin diff | A blind document and its flagged twin differ only by an annotation block |
-| 8 | Annotation-carrier census | Every finding/distractor's evidence carries its annotation block in the flagged twin |
+| 8 | Annotation-carrier census | Every finding's/distractor's evidence path exists, and every markdown evidence path carries its annotation block in the flagged twin |
 | 9 | Cross-reference resolution | Every cross-reference in the room resolves to a real slot |
 | 10 | Depth lint | Document depth and density are inside the room's declared bounds |
 | 11 | Subset reconciliation | `subset/`, if built, reproduces every finding with its full evidence chain |
@@ -55,21 +55,24 @@ never ran."
 | 13 | Fact-sheet reconciliation | Canonical figures in `_key/fact-sheet.md` appear consistently, with no superseded value surviving |
 | 14 | Unchecked names | Every entity-shaped token in the room is in the fact-sheet cast list or already name-checked |
 | 15 | Discoverability audit | Every registered finding has a recorded `discoverable_from_blind` verdict |
-| 16 | Render parity | DOCX/PDF renders, if built, match the blind tree's structure and content |
+| 16 | Render parity | DOCX/PDF renders, if built, mirror the blind tree's document set by filename, in both directions (never checks rendered content) |
 | 17 | Answer-key validation | `_key/findings.yaml`/`_key/distractors.yaml` pass `synthvdr.schema.validate()`'s own internal-consistency checks |
 
 ## Common failures and what they mean
 
-- **Gate 1 regeneration diff** — someone hand-edited `_key/index.md`. Fix
+- **Gate 1 regeneration diff** — someone hand-edited `index.md`. Fix
   `_key/index-src/` and regenerate; never patch `index.md` directly.
 - **Gate 3 or 4** — answer-key material has reached the blind eval input. Find it and
   remove it from the blind document; the corpus is not usable until it is clean.
-- **Gate 5** — build vocabulary in `_key/index.md`. Its token list is *wider* than gate
+- **Gate 5** — build vocabulary in `index.md`. Its token list is *wider* than gate
   4's on purpose. Do not trim it to match: the leak this gate exists to catch used none of
   gate 4's tokens.
-- **Gate 8 carrier census** — a planted finding's annotation block has been deleted from
-  its flagged twin. Gate 7 cannot catch this on its own: a stripped twin is
-  byte-identical to its blind twin, which is exactly what a benign document looks like.
+- **Gate 8 carrier census** — either a distractor's `location`/`resolution`, or a finding's
+  `source`/`corroboration`, names a document that does not exist under `BLIND_TREE` (fix the
+  answer key or author the missing document); or a planted finding's annotation block has
+  been deleted from its flagged twin. Gate 7 cannot catch the second case on its own: a
+  stripped twin is byte-identical to its blind twin, which is exactly what a benign document
+  looks like.
 - **Gate 11** — `subset/` was built against a stale `_key/findings.yaml`. Rebuild it with
   `synthvdr.subset.build_subset` (see `/vdr-package`) before re-running the gate.
 - **Gate 13** — a canonical figure appears nowhere, or a superseded one survived a
