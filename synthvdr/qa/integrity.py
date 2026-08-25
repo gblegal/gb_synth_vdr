@@ -64,6 +64,20 @@ def _cell_has_no_superseded_values(cell: str) -> bool:
 
 
 def parse_canonical_figures(fact_sheet_text: str) -> List[CanonicalFigure]:
+    """Every canonical figure declared under EVERY `## Canonical figures` heading
+    in the fact sheet, not just the first.
+
+    Final review, F3: this used to `break` out of the whole scan on the first
+    `##` heading following a canonical-figures table, which silently stopped
+    parsing at that point — a fact sheet that groups figures under more than
+    one `## Canonical figures` heading (financial figures first, commercial
+    figures under their own heading further down) had every figure after the
+    first heading's table go unchecked, with gate 13 reporting a confident
+    PASS on whatever fraction it happened to see. `continue` instead of
+    `break`: leaving the current table (`in_table = False`) on an unrelated
+    `##` heading, but carrying on scanning the rest of the file so a LATER
+    `## Canonical figures` heading is picked back up.
+    """
     figures: List[CanonicalFigure] = []
     in_table = False
     for line in fact_sheet_text.splitlines():
@@ -72,7 +86,8 @@ def parse_canonical_figures(fact_sheet_text: str) -> List[CanonicalFigure]:
             in_table = True
             continue
         if in_table and stripped.startswith("##"):
-            break
+            in_table = False
+            continue
         if not in_table or not stripped.startswith("|"):
             continue
         cells = [c.strip() for c in stripped.strip("|").split("|")]
@@ -101,6 +116,10 @@ def _diagnose_malformed_table(fact_sheet_text: str) -> str:
     for a well-formed 3-column header that simply has no data rows under
     it yet, or for a heading with no table beneath it at all.
     """
+    # Mirrors parse_canonical_figures's continue-not-break fix (F3): scans
+    # every '## Canonical figures' table in the file, not just the first,
+    # so a diagnosis of "no rows"/"malformed header" is never reported
+    # against only a truncated prefix of the fact sheet.
     in_table = False
     rows: List[List[str]] = []
     for line in fact_sheet_text.splitlines():
@@ -109,7 +128,8 @@ def _diagnose_malformed_table(fact_sheet_text: str) -> str:
             in_table = True
             continue
         if in_table and stripped.startswith("##"):
-            break
+            in_table = False
+            continue
         if not in_table or not stripped.startswith("|"):
             continue
         rows.append([c.strip() for c in stripped.strip("|").split("|")])

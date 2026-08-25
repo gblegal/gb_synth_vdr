@@ -107,6 +107,77 @@ def test_gate_13_fails_when_a_superseded_figure_survives(room):
     assert "GBP 700m" in result.detail
 
 
+def test_gate_13_parses_a_second_canonical_figures_table(room):
+    """Final review, F3: the ORIGINAL bug had this parked as "authoring error
+    only, no silent-PASS risk" — it is a silent PASS. A fact sheet that groups
+    canonical figures under more than one '## Canonical figures' heading (a
+    financial-figures table, then a commercial-figures table further down
+    under its own heading) is a natural shape for an author to produce, and
+    every figure after the FIRST heading used to go completely unchecked.
+
+    Reproduced exactly: a superseded value ('GBP 6.2m') still present in the
+    room, declared in a SECOND canonical-figures table. Before the fix this
+    passed (rc 0, "2 canonical figures reconciled" counting only the first
+    table); the fix must both catch the still-present superseded value AND
+    report the true total figure count across both tables.
+    """
+    second_table_fact_sheet = """# Fact sheet
+
+## Canonical figures
+
+| Key | Value | Superseded |
+|---|---|---|
+| ev_headline | GBP 725m | GBP 700m |
+
+## Deal narrative
+
+Some prose that is not a canonical-figures table at all.
+
+## Canonical figures
+
+| Key | Value | Superseded |
+|---|---|---|
+| debt_headline | GBP 7.1m | GBP 6.2m |
+"""
+    (room / "_key" / "fact-sheet.md").write_text(second_table_fact_sheet)
+    p = room / "data-room/01_corporate/1.1_constitutional/1.1.1_articles.md"
+    p.write_text(
+        "# Articles\n\nEnterprise value of GBP 725m. Net debt of GBP 7.1m, "
+        "previously reported as GBP 6.2m.\n"
+    )
+    result = gate_13_fact_sheet(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "debt_headline" in result.detail
+    assert "GBP 6.2m" in result.detail
+
+
+def test_gate_13_counts_figures_from_every_canonical_figures_table_when_clean(room):
+    second_table_fact_sheet = """# Fact sheet
+
+## Canonical figures
+
+| Key | Value | Superseded |
+|---|---|---|
+| ev_headline | GBP 725m | GBP 700m |
+
+## Deal narrative
+
+Some prose that is not a canonical-figures table at all.
+
+## Canonical figures
+
+| Key | Value | Superseded |
+|---|---|---|
+| debt_headline | GBP 7.1m | — |
+"""
+    (room / "_key" / "fact-sheet.md").write_text(second_table_fact_sheet)
+    p = room / "data-room/01_corporate/1.1_constitutional/1.1.1_articles.md"
+    p.write_text("# Articles\n\nEnterprise value of GBP 725m. Net debt of GBP 7.1m.\n")
+    result = gate_13_fact_sheet(ctx_for(room))
+    assert result.status == "PASS"
+    assert "2 canonical figures" in result.detail
+
+
 def test_gate_13_skips_without_a_fact_sheet(room):
     (room / "_key" / "fact-sheet.md").unlink()
     assert gate_13_fact_sheet(ctx_for(room)).status == "SKIP"
