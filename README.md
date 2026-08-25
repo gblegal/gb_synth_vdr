@@ -87,5 +87,8 @@ files, so the empty folder matters. The exact commands are in
   workflow.
 - [TECHNICAL-NOTES.md](TECHNICAL-NOTES.md) — installation, commands, file formats, the test
   fixture, and the known limits of what this project can check.
-- [docs/superpowers/build-record/](docs/superpowers/build-record/) — why the design is the
-  way it is, including the options that were deliberately not taken.
+
+The working record of the build — the design spec, the implementation plan, the ledger of
+rulings and the final whole-branch review — is kept out of the repository. It explains why
+the design is the way it is, including the options that were deliberately not taken. Ask if
+you need it.
