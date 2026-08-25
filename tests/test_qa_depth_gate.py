@@ -40,6 +40,9 @@ def ctx_for(room):
 
 
 def test_passes_when_above_the_tier_f_floor(room):
+    # The fixture body contains none of PLACEHOLDER_MARKERS below, so this
+    # also stands as the "clean document still passes" check: the
+    # placeholder mechanism has not been widened into always-failing.
     assert gate_10_depth(ctx_for(room)).status == "PASS"
 
 
@@ -59,7 +62,28 @@ def test_fail_detail_also_names_the_metric(room):
     assert "metric" in result.detail.lower()
 
 
-@pytest.mark.parametrize("marker", ["[DRAFT]", "[TBC]", "fixme", "placeholder"])
+# The full table this gate must catch: the five original literals
+# ("todo", "tbd", "[insert", "xxx", "lorem ipsum"), the two literals added
+# for the enumeration fix ("fixme", "placeholder"), and two instances of
+# the bracket-idiom property ("[DRAFT]", "[TBC]") that no literal list
+# could name in advance. A previous round silently dropped the first five
+# by rewriting the list instead of extending it — parametrized so a future
+# edit that drops any one shape shows up as a single named failure rather
+# than a silent gap.
+PLACEHOLDER_MARKERS = [
+    "TODO: write this",
+    "tbd",
+    "XXX",
+    "[insert amount]",
+    "[DRAFT]",
+    "[TBC]",
+    "fixme",
+    "placeholder",
+    "Lorem Ipsum dolor",
+]
+
+
+@pytest.mark.parametrize("marker", PLACEHOLDER_MARKERS)
 def test_fails_on_a_placeholder_marker(room, marker):
     p = room / "data-room/01_corporate/1.1_constitutional/1.1.1_articles.md"
     p.write_text(f"# Articles\n\n{marker}\n" + ("word " * 400))

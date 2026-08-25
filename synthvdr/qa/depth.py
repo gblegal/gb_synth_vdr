@@ -23,11 +23,16 @@ from ..domain import DEFAULT_DOMAIN_ROOT, DomainPack, load_domain
 from ..slots import read_anchors_csv
 from .runner import fail, ok, skip
 
-# A short, closed list of literal phrases that read as a placeholder
-# regardless of case or brackets. Deliberately NOT grown to cover every
-# spelling of "insert something here" — that enumeration anti-pattern is
-# what the bracket-idiom property below exists to replace.
-PLACEHOLDER_TOKENS = ("lorem ipsum", "fixme", "placeholder")
+# Literal phrases that read as a placeholder regardless of case or
+# brackets. This list PINS THE KNOWN SHAPES (a prior round nearly dropped
+# "todo"/"tbd"/"[insert"/"xxx" here, mistaking the list itself for the
+# enumeration anti-pattern the bracket-idiom property below exists to
+# extend beyond — it does not replace them: TODO is the single most common
+# placeholder shape in generated text, and "[insert amount]" is exactly
+# what a half-finished contract leaves behind, and neither is catchable by
+# the all-caps bracket property below). The property adds coverage for
+# shapes this list cannot enumerate; it does not supersede the list.
+PLACEHOLDER_TOKENS = ("lorem ipsum", "todo", "tbd", "[insert", "xxx", "fixme", "placeholder")
 
 # The "[BRACKETED ALL-CAPS]" drafting idiom — [INSERT], [DRAFT], [TBC], and
 # any future marker of that shape, without naming each one here. Requires
