@@ -46,6 +46,12 @@ this table until its own gate run above (Step 6) has come back all-PASS):
 | 1 | 45 | PASS |
 | 2 | 45 | PASS |
 
+## Anchors
+
+Complete as of wave 2 — every finding's and distractor's evidence path has been authored.
+Gate 8 is a real check from wave 3 onward; gate 2 stays excepted until the LAST wave (it
+checks the room's finished size, fixed since `/vdr-scope`, not what has been authored so far).
+
 ## New findings
 
 | Provisional id | Final id | Workstream |
@@ -71,8 +77,21 @@ resumed build must be able to tell "already allocated in a prior attempt" from "
 without waiting for the wave to fully complete. An empty build (nothing discovered yet) omits
 the section entirely rather than leaving it with no rows.
 
-A wave is only added to the "Waves completed" table once its gate run is clean; a wave that
-failed its gate stays the "Next wave" entry, re-run rather than duplicated, until it passes.
+"Anchors" is written **once**, the wave Step 1 first has to reach into a tier-`F` slot — never
+rewritten afterwards. Absent before that point (a fresh build, or one still mid-anchor). This
+is the fact Steps 5–7 read to know whether gates 2/7/8's mid-build exceptions still apply.
+
+"Gate result" in "Waves completed" records **PASS once every gate outside Step 6's named
+mid-build exceptions is clean** — not "every one of the seventeen gates," which (see Step 6)
+no wave before the last one can ever produce. Wave 1 and wave 2 above both legitimately show
+PASS with gate 2 excepted throughout, and gates 7/8 additionally excepted before "Anchors" is
+recorded; that is not a weaker PASS, it is what "clean" is defined to mean before the room
+reaches its final size.
+
+A wave is only added to the "Waves completed" table once its gate run is clean **against the
+gates that are not currently excepted** (see Step 6) — that is what the "(... excepted)" note
+in the table above records, so a resumed build (or a human reading the file) can tell a
+genuinely clean wave from one that was accepted with a named, expected gap.
 
 ## Per wave
 
@@ -83,6 +102,14 @@ At most **5 subagents**, roughly 40–50 slots each, drawn from `_key/anchors.cs
 `_key/findings.yaml` and `_key/distractors.yaml` for which slots in this batch carry a
 finding's `source`/`corroboration` or a distractor's `location`/`resolution` — those are this
 wave's registry rows.
+
+**Note the exact wave this batch selection first has to reach into a tier-`F` slot because no
+tier-`A` slot is left.** That is "anchors complete" — see Steps 5–7 below, which behave
+differently before and after it. For an `M`-size room (200 documents) this is usually wave 1
+itself, since a wave's capacity (up to 250 slots) already exceeds the whole room; for `L`/`XL`
+it can take several waves. Record it in `_key/build-status.md`'s `## Anchors` line the moment
+it happens (see the literal shape in "Resume" above) — this is the one fact Steps 5–7 need
+that nothing else in the file states directly.
 
 ### 2. Dispatch the authors
 
@@ -250,10 +277,19 @@ Reconcile any new canonical fact a subagent's manifest reported into the fact sh
 `## Canonical figures` table. New facts go in the fact sheet **first**; grep the room before
 introducing a value gate 13 has not seen yet.
 
-### 5. Rebuild the flagged tree
+### 5. Rebuild the flagged tree — only once Anchors is complete
 
-This is the *only* writer of the flagged tree in the whole plugin; nothing a subagent
-produced touches it directly:
+**Skip this step entirely for every wave before the one you recorded in `_key/build-status.md`'s
+`## Anchors` line (Step 1).** `build_flagged_tree` requires every finding's and every
+distractor's evidence path to already exist under `BLIND_TREE` and raises `TwinError` naming
+whichever ones do not — correct behaviour once the room is meant to be complete, but a wave
+that has not yet authored every tier-`A` slot has not yet planted every finding's evidence by
+definition, so calling this before "Anchors" is recorded always raises. This is not a corpus
+bug at that stage; it is simply too early to build the tree at all. Gates 7 and 8 (Step 6)
+SKIP as a direct consequence — see there.
+
+From the wave "Anchors" names onward, this is the *only* writer of the flagged tree in the
+whole plugin; nothing a subagent produced touches it directly:
 
 ```bash
 python3 -c "
@@ -275,9 +311,31 @@ document's path against `distractor.location` by string equality, so a distracto
 document that was never written can never be flagged by scoring a tool's output; it can only be
 caught here, at build time, or by gate 8's carrier census afterwards.
 
-### 6. Run the gates
+### 6. Run the gates — with named, mid-build exceptions
 
 `bash tools/check.sh .`
+
+**Multi-wave is the normal case** (`M` = 200 documents, `L` = 800, `XL` = 2,000+): most builds
+take several waves, and two of the seventeen gates check something that genuinely does not
+exist yet before the room is finished. Naming both exactly, rather than leaving "do not
+proceed on any failure" as a rule the room's own size makes impossible to satisfy:
+
+- **Gate 2 (tree counts)** compares the blind/flagged tree's actual document count against
+  `BLIND_TOTAL`/`FLAGGED_TOTAL` — the room's *finished* size, fixed by `/vdr-scope` before a
+  single document existed. It is **expected to FAIL on every wave except the last one**, and
+  clearing on the last wave (not before) is exactly what tells you the room is done.
+- **Gates 7 (twin diff) and 8 (carrier census)** both require the flagged tree to exist. Before
+  the wave "Anchors" names, Step 5 above is skipped on purpose, so the flagged tree does not
+  exist yet and both gates **SKIP** — this is not the "we forgot to build something" SKIP
+  `--strict` should ever convert to a failure at release, it is the expected shape of every
+  wave before Anchors. From the Anchors wave onward, Step 5 runs every wave, the flagged tree
+  exists, and gate 8 is a real, un-excepted check: a FAIL from that point on is a genuine
+  corpus defect (a wrongly authored evidence path, a stripped block), never an artefact of
+  build order.
+
+**Every gate other than these two is a real check on every wave, including the first**, and a
+FAIL on any of them is always a real defect — never wave the whole gate run through because
+"gate 2 usually fails mid-build" without checking which gate actually failed.
 
 ### 7. Update the build status
 
@@ -285,10 +343,15 @@ Update `_key/build-status.md`: append this wave's number, the slots it authored,
 result to the "Waves completed" table, then rewrite "Next wave" to name exactly one more than
 the wave you just appended (see the literal shape above) — never leave the file pointing at a
 wave number that has already run, and never skip a number. "New findings" is **not** touched
-here — Step 3 already appended to it, unconditionally, before this wave's gate even ran.
+here — Step 3 already appended to it, unconditionally, before this wave's gate even ran. If
+this wave is the one Step 1 identified as anchors-complete and `## Anchors` is not yet
+recorded, write it now.
 
-Do not start the next wave while any gate is failing. A wave whose gate run failed is not
-recorded in "Waves completed" at all; it stays the resume target until it passes.
+**Do not start the next wave while any gate is failing OUTSIDE Step 6's named exceptions.** A
+wave whose gate run failed on anything else is not recorded in "Waves completed" at all; it
+stays the resume target until it passes. A wave that fails ONLY on the excepted gates (gate 2
+always; gates 7/8 before Anchors) is recorded as PASS — see the "Gate result" note above the
+literal example for what PASS means at that point in a build.
 
 ## After the last wave
 

@@ -480,6 +480,22 @@ def test_build_skill_states_the_findings_first_ordering_rule():
     assert "resume" in body
 
 
+def test_build_skill_names_which_gates_legitimately_fail_mid_build():
+    """Final review, F5: Step 6 used to run all seventeen gates every wave and Step 7
+    forbade proceeding on ANY failure, but gate 2 checks the room's FINISHED size
+    (fixed by /vdr-scope before authoring starts) against what has only been authored
+    so far — it must fail on every wave but the last for a multi-wave build (M/L/XL
+    all take more than one wave), so the documented stop condition was unsatisfiable
+    as written. This pins that the skill now names gate 2 (and gates 7/8's SKIP before
+    anchors are complete) as expected exceptions, rather than silently reintroducing
+    an impossible "clean on every wave" rule.
+    """
+    body = (ROOT / "skills" / "vdr-build" / "SKILL.md").read_text()
+    assert "Multi-wave is the normal case" in body
+    assert "expected to FAIL on every wave except the last" in body
+    assert "## Anchors" in body
+
+
 def _normalise_whitespace(text: str) -> str:
     """Collapse all whitespace runs to single spaces, so a sentence that happens to wrap
     across a markdown line break can still be matched as one literal string.
