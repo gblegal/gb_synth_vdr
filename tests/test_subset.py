@@ -8,12 +8,19 @@ wrong silently:
     call in the same one — a same-process check cannot see reliance on
     PYTHONHASHSEED-salted `hash()` or on set/dict iteration order, because
     both are stable for the life of one process;
-  - out_dir safety — out_dir is a build_subset PARAMETER, not a room.conf
-    key, so load_room_conf's path validation never sees it, and
-    build_subset deletes-and-rebuilds it with shutil.rmtree;
+  - out_dir safety inside the room — out_dir is a build_subset PARAMETER,
+    not a room.conf key, so load_room_conf's path validation never sees
+    it, and build_subset deletes-and-rebuilds it with shutil.rmtree;
+  - out_dir safety OUTSIDE the room — the same rmtree can just as easily
+    destroy a caller's own, wholly unrelated directory. This is guarded by
+    synthvdr.ownership's marker-file check, the same algorithm
+    synthvdr.twin uses for the flagged tree (Task 7), reused rather than
+    re-derived;
   - the flagged tree's marker file (synthvdr.twin.MARKER_NAME) must never
     leak into a subset, confirmed rather than assumed, because the subset
-    is built from the blind tree and the marker has no blind counterpart.
+    is built from the blind tree and the marker has no blind counterpart —
+    and the subset's OWN marker (SUBSET_MARKER_NAME) must never be counted
+    as a subset document either.
 """
 
 from __future__ import annotations
@@ -29,7 +36,14 @@ import pytest
 
 from synthvdr.roomconf import load_room_conf
 from synthvdr.schema import Finding, FindingSet
-from synthvdr.subset import SubsetError, build_subset, check_subset, select_subset
+from synthvdr.subset import (
+    SUBSET_MARKER_NAME,
+    SUBSET_MARKER_TEXT,
+    SubsetError,
+    build_subset,
+    check_subset,
+    select_subset,
+)
 from synthvdr.twin import MARKER_NAME, build_flagged_tree
 
 CONF = '''ROOM_CODENAME="Project Testbed"
@@ -293,4 +307,120 @@ def test_check_subset_writes_nothing(room, monkeypatch):
     monkeypatch.setattr(shutil, "move", _forbidden("shutil.move"), raising=True)
 
     report = check_subset(room, conf_for(room), findings())
+    assert report.complete
+
+
+# --- Ownership guard: build_subset must refuse to rmtree a non-empty
+# directory it did not create, wherever that directory lives — including
+# entirely outside the room. _assert_safe_out_dir (above) only knows about
+# paths inside the room; a caller-supplied out_dir under, say, /tmp/mine is
+# invisible to it. This reuses synthvdr.ownership — the same algorithm
+# synthvdr.twin uses for the flagged tree (Task 7) — rather than a second,
+# independently-written copy of "prove ownership before deleting". -------
+
+
+def test_build_refuses_a_non_empty_foreign_directory_without_the_marker(room, tmp_path_factory):
+    # A directory entirely outside the room, holding data build_subset had
+    # no part in creating — exactly the shape of the coordinator's report:
+    # out_dir pointed at a user's own folder, silently emptied by rmtree.
+    foreign = tmp_path_factory.mktemp("foreign")
+    victim = foreign / "precious.txt"
+    victim.write_text("someone else's data\n")
+
+    with pytest.raises(SubsetError, match="was not created by this tool"):
+        build_subset(room, conf_for(room), findings(), total=6, out_dir=foreign)
+
+    assert victim.read_text(encoding="utf-8") == "someone else's data\n"
+
+
+def test_build_rebuilds_a_target_carrying_the_marker(room, tmp_path_factory):
+    foreign = tmp_path_factory.mktemp("foreign")
+    (foreign / SUBSET_MARKER_NAME).write_text(SUBSET_MARKER_TEXT, encoding="utf-8")
+    stale = foreign / "stale.md"
+    stale.write_text("leftover\n")
+
+    report = build_subset(room, conf_for(room), findings(), total=6, out_dir=foreign)
+
+    assert report.complete
+    assert not stale.exists()
+    assert (foreign / paths()[0]).is_file()
+
+
+def test_build_proceeds_when_the_target_is_empty(room, tmp_path_factory):
+    # An empty directory holds nothing to destroy, so it needs no marker —
+    # this is what lets a caller pre-create out_dir themselves.
+    foreign = tmp_path_factory.mktemp("foreign")
+
+    report = build_subset(room, conf_for(room), findings(), total=6, out_dir=foreign)
+
+    assert report.complete
+    assert (foreign / paths()[0]).is_file()
+
+
+def test_build_two_consecutive_builds_succeed(room, tmp_path_factory):
+    foreign = tmp_path_factory.mktemp("foreign")
+
+    first = build_subset(room, conf_for(room), findings(), total=6, out_dir=foreign)
+    second = build_subset(room, conf_for(room), findings(), total=6, out_dir=foreign)
+
+    assert first.complete
+    assert second.complete
+
+
+def test_build_writes_the_marker_naming_the_tool(room, tmp_path_factory):
+    foreign = tmp_path_factory.mktemp("foreign")
+
+    build_subset(room, conf_for(room), findings(), total=6, out_dir=foreign)
+
+    marker = foreign / SUBSET_MARKER_NAME
+    assert marker.read_text(encoding="utf-8") == SUBSET_MARKER_TEXT
+    assert "synthvdr" in SUBSET_MARKER_TEXT
+    assert "deleted and rebuilt" in SUBSET_MARKER_TEXT
+
+
+def test_marker_is_not_counted_in_the_report_and_is_not_a_subset_document(room, tmp_path_factory):
+    foreign = tmp_path_factory.mktemp("foreign")
+
+    report = build_subset(room, conf_for(room), findings(), total=6, out_dir=foreign)
+
+    # The marker genuinely exists on disk...
+    assert (foreign / SUBSET_MARKER_NAME).is_file()
+    # ...but adds nothing to any of the report's counts...
+    assert report.total == 6
+    assert report.evidence + report.filler == report.total
+    # ...and check_subset's own recount agrees, whether or not the marker
+    # is present in the directory it scans.
+    recheck = check_subset(room, conf_for(room), findings(), out_dir=foreign)
+    assert recheck.total == 6
+    # ...and it was never treated as a selectable document in the first
+    # place, evidence or filler.
+    manifest = (room / "_key" / "subset-manifest.csv").read_text(encoding="utf-8")
+    assert SUBSET_MARKER_NAME not in manifest
+
+
+def test_marker_is_written_before_any_document_so_a_partial_failure_is_recoverable(
+    room, monkeypatch, tmp_path_factory
+):
+    # Task 7's own reasoning, reapplied: if the marker went down AFTER
+    # documents were copied, a build that died partway through would leave
+    # a non-empty, unmarked directory — and the NEXT build would refuse it
+    # as foreign, a permanent lockout rather than a retryable failure.
+    foreign = tmp_path_factory.mktemp("foreign")
+    real_copyfile = shutil.copyfile
+    calls = {"n": 0}
+
+    def _flaky_copyfile(src, dst):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("simulated failure partway through the build")
+        return real_copyfile(src, dst)
+
+    monkeypatch.setattr(shutil, "copyfile", _flaky_copyfile)
+    with pytest.raises(OSError):
+        build_subset(room, conf_for(room), findings(), total=6, out_dir=foreign)
+    monkeypatch.undo()
+
+    assert (foreign / SUBSET_MARKER_NAME).is_file()
+
+    report = build_subset(room, conf_for(room), findings(), total=6, out_dir=foreign)
     assert report.complete

@@ -24,6 +24,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Set, Tuple
 
+from .ownership import NotOwnedError
+from .ownership import assert_target_is_ours as _assert_target_is_ours
+from .ownership import write_marker
 from .roomconf import (
     PATH_KEYS,
     RoomConf,
@@ -136,42 +139,17 @@ MARKER_TEXT = (
 
 
 def assert_target_is_ours(flagged_root: Path) -> None:
-    """The positive rule: only delete a directory this tool created.
-
-    A target that does not exist, is empty, or carries MARKER_NAME may be
-    deleted. Anything else is someone's data — refuse and say so, naming the
-    path. This is a pure prohibition with no exceptions, unlike the
-    config-level policy checks, which must permit one nesting.
-
-    Also converts the "FLAGGED_TREE names an existing file" case into a
-    TwinError here rather than letting shutil.rmtree raise a bare
-    NotADirectoryError out of a module that otherwise raises TwinError.
+    """TwinError-raising wrapper around the shared ownership guard in
+    synthvdr.ownership (Task 7's own guard, extracted so synthvdr.subset
+    can reuse the identical algorithm rather than re-deriving it — see
+    that module's docstring for why). Kept as a named function here,
+    rather than inlined at its one call site, because tests/test_twin.py
+    imports and calls this name directly.
     """
     try:
-        if not flagged_root.exists():
-            return
-        is_dir = flagged_root.is_dir()
-        has_marker = (flagged_root / MARKER_NAME).is_file()
-        entries = list(flagged_root.iterdir()) if is_dir else []
-    except OSError as exc:
-        raise TwinError(
-            f"refusing to delete {flagged_root}: FLAGGED_TREE could not be "
-            f"inspected ({exc.__class__.__name__}: {exc})"
-        ) from exc
-
-    if not is_dir:
-        raise TwinError(
-            f"refusing to delete {flagged_root}: FLAGGED_TREE names an "
-            "existing file, not a directory"
-        )
-    if has_marker or not entries:
-        return
-    raise TwinError(
-        f"refusing to delete {flagged_root}: it is not empty and carries no "
-        f"{MARKER_NAME} marker, so it was not created by this tool. "
-        "FLAGGED_TREE is deleted and rebuilt in full on every build — point "
-        "it at a directory synthvdr owns, or empty this one yourself first."
-    )
+        _assert_target_is_ours(flagged_root, MARKER_NAME)
+    except NotOwnedError as exc:
+        raise TwinError(str(exc)) from exc
 
 
 def assert_safe_delete_target(
@@ -251,7 +229,7 @@ def build_flagged_tree(room: Path, conf: RoomConf, findings: FindingSet) -> Twin
         if flagged_root.exists():
             shutil.rmtree(flagged_root)
         flagged_root.mkdir(parents=True, exist_ok=True)
-        (flagged_root / MARKER_NAME).write_text(MARKER_TEXT, encoding="utf-8")
+        write_marker(flagged_root, MARKER_NAME, MARKER_TEXT)
     except OSError as exc:
         raise TwinError(
             f"could not prepare FLAGGED_TREE at {flagged_root} "
