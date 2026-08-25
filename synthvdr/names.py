@@ -23,19 +23,28 @@ can manufacture a candidate — the false-positive class goes structurally, with
 no stoplist and no bound. Whatever the regex still finds carries a corporate
 suffix that no cast entry accounts for, which is the definition of unchecked.
 
-ACCEPTED RESIDUAL. If a genuine cast entry is a strict trailing sub-phrase of a
-different entity's full name — cast "Holdings Limited", room text "Ashfell
-Trading Holdings Limited" — masking removes the shorter name and the longer,
-unchecked one no longer carries a suffix, so it is not flagged. This is not
-chased, for two reasons. Guarding the mask's left edge (refuse to mask when a
+ACCEPTED RESIDUAL, in its full form. Masking hides an unchecked entity whenever,
+after masking, no capitalised word remains immediately before its suffix. That
+condition is reachable two ways: a cast entry covering the suffix itself (cast
+"Holdings Limited" against the different, unchecked "Ashfell Trading Holdings
+Limited"), or cast entries covering ALL the capitalised words in front of the
+suffix ("Daniel Oyelaran" plus the bare "Ltd" that follows it). Scoping
+`cast_list` to entity rows removes the routine generator of the second shape,
+since the name check emits person names for exactly those front words. Where
+both nested names are genuine cast entries, hiding one is harmless — both are
+checked, and longest-first masking removes the container before the part.
+
+The rest is not chased. Guarding the mask's left edge (refuse to mask when a
 capitalised word precedes the occurrence) reopens the exact false-positive class
 above, since "See" and "Registered" are capitalised too. And gate 14 is a safety
 net, not a proof: the primary control is /vdr-scope checking every fact-sheet
 name at Gate A, and invented fact-sheet casts do not produce nested names. The
-degenerate end of the same shape — a one-word or bare-suffix cast row, which
+degenerate end of the same shape — a one-word or bare-suffix ENTITY row, which
 would blanket-mask a whole suffix family — is malformed input rather than a
 matching problem, and `malformed_cast_entries` makes gate 14 reject it loudly
-instead of silently degrading into a gate that cannot fail.
+instead of silently degrading into a gate that cannot fail. A one-word PERSON
+row is an ordinary mononym and reaches neither check, because the cast the gate
+masks with and vets is entity-scoped.
 """
 
 from __future__ import annotations
@@ -127,13 +136,41 @@ def malformed_cast_entries(cast: Set[str]) -> List[str]:
     )
 
 
-def cast_list(path: Path) -> Set[str]:
-    """Names from the first column of a pipe table (the name-check record)."""
+def cast_list(path: Path, kind: str = "entity") -> Set[str]:
+    """Names from the first column of a pipe table (the name-check record),
+    restricted by default to the rows whose Kind cell reads "entity".
+
+    The Kind filter is not cosmetic. The name check emits person rows by
+    design, and under masking a cast row is an active deletion from the
+    document text rather than an inert thing to compare against: person
+    rows named "Marta Vinceau" and "Daniel Oyelaran" would delete every
+    capitalised word in front of the suffix in "A deed with Daniel Oyelaran
+    Ltd", and the gate would go blind to an unchecked entity. Person rows
+    were never needed here in the first place — `entity_tokens` cannot emit
+    a name without a corporate suffix, so a person's name was never going
+    to become a candidate. The residual risk runs the safe way for this
+    gate: an entity row miscategorised as a person is simply not masked,
+    which produces a false positive rather than a silent miss.
+
+    Pass kind=None (or "") to take every row regardless of Kind.
+
+    Separator rows are skipped by testing the first cell's character set,
+    the same guard namecheck.load_name_check uses, because the tighter
+    startswith("|---") test this replaced missed the spaced form
+    ("| --- | --- |") that a markdown formatter produces — read as a name
+    it is a one-word row, which then surfaced as a hygiene failure naming
+    '---'.
+    """
     names: Set[str] = set()
     for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.startswith("|") or line.startswith("|---"):
+        if not line.startswith("|"):
             continue
         cells = [c.strip() for c in line.strip("|").split("|")]
-        if cells and cells[0] and cells[0].lower() != "name":
-            names.add(cells[0])
+        if not cells or not cells[0] or cells[0].lower() == "name":
+            continue
+        if set(cells[0]) <= {"-", ":"}:
+            continue
+        if kind and (len(cells) < 2 or cells[1].lower() != kind.lower()):
+            continue
+        names.add(cells[0])
     return names

@@ -205,14 +205,22 @@ def gate_14_unchecked_names(ctx):
     the content, since the sweep is the same regex over the same kind of
     text.
 
+    Only the cast's entity rows are masked, and only they are vetted for
+    hygiene — see `cast_list` for why a person row is an active hazard here
+    and a mononym is not a defect.
+
     A malformed cast list is rejected before any file is read: a single-word
-    or bare-suffix row would blanket-mask a whole suffix family, and a gate
-    that silently cannot fail is worse than one that reports the row.
+    or bare-suffix entity row would blanket-mask a whole suffix family, and
+    a gate that silently cannot fail is worse than one that reports the row.
     """
     name_check = ctx.key_root / "name-check.md"
     if not name_check.is_file():
         return skip("14", "unchecked names", "_key/name-check.md absent — run /vdr-scope name check")
-    cast = cast_list(name_check)
+    # Entity rows only, stated explicitly at the call site because it is
+    # load-bearing rather than a default worth inheriting silently: a person
+    # row would delete its own words out of the document text and blind the
+    # sweep to an unchecked entity standing behind them.
+    cast = cast_list(name_check, kind="entity")
     malformed = malformed_cast_entries(cast)
     if malformed:
         return fail(
@@ -220,7 +228,7 @@ def gate_14_unchecked_names(ctx):
             "unchecked names",
             "malformed cast row(s) in _key/name-check.md: "
             + _truncated([repr(name) for name in malformed], sep=", ")
-            + " — a single-word or bare-suffix row masks every name ending in it;"
+            + " — a single-word or bare-suffix entity row masks every name ending in it;"
             " regenerate the name check from the fact sheet",
         )
     files = ctx.blind_files()
@@ -240,4 +248,9 @@ def gate_14_unchecked_names(ctx):
     if unchecked:
         detail = _truncated(sorted(unchecked), sep=", ") + " — not on the cast list; check or remove"
         return fail("14", "unchecked names", detail + _fallback_note(replaced))
-    return ok("14", "unchecked names", f"{len(cast)} cast names, none unchecked" + _fallback_note(replaced))
+    return ok(
+        "14",
+        "unchecked names",
+        f"{len(cast)} entity cast name{'' if len(cast) == 1 else 's'}, none unchecked"
+        + _fallback_note(replaced),
+    )

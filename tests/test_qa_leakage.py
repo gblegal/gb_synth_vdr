@@ -418,3 +418,98 @@ def test_gate_05_detail_is_not_marked_truncated_when_hits_fit(room):
     result = gate_05_index_vocabulary(ctx_for(room))
     assert result.status == "FAIL"
     assert "more" not in result.detail
+
+
+# ---------------------------------------------------------------------------
+# Round 5 — the cast must be scoped by Kind. Under the round-3 comparison
+# these rows were inert; under masking they are active deletions from the
+# document text, so a person row silently removes the capitalised words in
+# front of an unchecked entity's suffix. Person rows never needed masking
+# in the first place: entity_tokens cannot emit a suffix-less name, so a
+# person's name was never going to become a candidate. Scoping also fixes
+# hygiene, which was diagnosing a legitimate mononym person as malformed
+# and offering a remedy (regenerate) that reproduces the row. The direction
+# of risk is deliberate: an entity row miscategorised as a person is no
+# longer masked, which produces a false positive rather than a silent miss.
+# ---------------------------------------------------------------------------
+
+
+def write_name_check(room, *rows):
+    """Write _key/name-check.md from (name, kind) pairs."""
+    body = "".join(f"| {name} | {kind} | clear | 2026-08-24 |\n" for name, kind in rows)
+    (room / "_key" / "name-check.md").write_text(
+        "| Name | Kind | Verdict | Checked |\n|---|---|---|---|\n" + body
+    )
+
+
+def test_gate_14_flags_an_entity_whose_words_a_person_row_would_have_masked(room):
+    # The person rows spell every capitalised word in front of this
+    # entity's suffix. Masked, "Daniel Oyelaran Ltd" loses the two words
+    # that make it entity-shaped and the gate goes blind to it.
+    write_name_check(
+        room,
+        ("Marta Vinceau", "person"),
+        ("Daniel Oyelaran", "person"),
+        ("Ashfell Holdings Limited", "entity"),
+    )
+    blind_doc(room).write_text("# Articles\n\nA deed with Daniel Oyelaran Ltd.\n")
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "FAIL", result.detail
+    assert "Daniel Oyelaran Ltd" in result.detail
+
+
+def test_cast_list_returns_only_entity_rows(room):
+    write_name_check(
+        room,
+        ("Marta Vinceau", "person"),
+        ("Ashfell Holdings Limited", "entity"),
+    )
+    assert cast_list(room / "_key" / "name-check.md") == {"Ashfell Holdings Limited"}
+
+
+@pytest.mark.parametrize(
+    "kind, expected",
+    [
+        # A mononym is an ordinary person, not a defect, and "regenerate the
+        # name check" would only reproduce the row.
+        ("person", "PASS"),
+        # A one-word ENTITY row is still genuinely malformed: it would
+        # blanket-mask every name ending in that word.
+        ("entity", "FAIL"),
+    ],
+)
+def test_gate_14_hygiene_is_scoped_to_entity_rows(room, kind, expected):
+    write_name_check(room, ("Cher", kind), ("Ashfell Holdings Limited", "entity"))
+    blind_doc(room).write_text("# Articles\n\nA deed with Ashfell Holdings Limited.\n")
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == expected, result.detail
+
+
+@pytest.mark.parametrize("separator", ["|---|---|---|---|", "| --- | --- | --- | --- |"])
+def test_cast_list_ignores_a_separator_row_in_any_spacing(room, separator):
+    (room / "_key" / "name-check.md").write_text(
+        "| Name | Kind | Verdict | Checked |\n"
+        f"{separator}\n"
+        "| Ashfell Holdings Limited | entity | clear | 2026-08-24 |\n"
+    )
+    path = room / "_key" / "name-check.md"
+    assert cast_list(path) == {"Ashfell Holdings Limited"}
+    # kind=None is what isolates the separator guard. With the Kind filter
+    # on, a separator row is dropped anyway because its second cell does
+    # not read "entity" — so the entity-scoped assertion above would keep
+    # passing with no separator guard at all, and would not be a pin.
+    assert cast_list(path, kind=None) == {"Ashfell Holdings Limited"}
+
+
+def test_gate_14_does_not_report_a_separator_row_as_malformed(room):
+    # The spaced form is the one a formatter produces and the one the old
+    # startswith("|---") guard missed; read as a name it is a one-word row,
+    # so it surfaced as a hygiene FAIL naming '---'.
+    (room / "_key" / "name-check.md").write_text(
+        "| Name | Kind | Verdict | Checked |\n"
+        "| --- | --- | --- | --- |\n"
+        "| Ashfell Holdings Limited | entity | clear | 2026-08-24 |\n"
+    )
+    blind_doc(room).write_text("# Articles\n\nA deed with Ashfell Holdings Limited.\n")
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "PASS", result.detail
