@@ -271,7 +271,7 @@ d = load_distractors(Path("_key/distractors.yaml"))
 errors = validate(f, d)
 assert not errors, errors
 
-# _key/findings.md is GENERATED from findings.yaml (README's own invariant) — regenerate it
+# _key/findings.md is GENERATED from findings.yaml (see ARCHITECTURE.md §7) — regenerate it
 # every time this step touches findings.yaml, not just at Gate B. Without this, a wave that
 # discovers ENV-2/OPS-1 updates the YAML but leaves findings.md showing only the Gate-B
 # registry, and anyone reading findings.md (rather than the YAML) sees a stale, incomplete
