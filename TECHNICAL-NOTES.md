@@ -68,7 +68,10 @@ a failure. **2** if `room.conf` or the answer key could not be loaded; if the to
 (or `--baseline` file) could not be read or parsed; if the tool output's `room_hash`
 provably names a different room than the one being scored; or if `_key/adjudications.yaml`
 exists but is malformed. All of these are grouped together because in every one of them, no
-trustworthy scorecard was produced at all.
+trustworthy scorecard was produced at all. **There is deliberately no exit code 1 here**:
+unlike the gate runner, the scorer has no "ran fine, found problems" state — a scorecard
+reporting poor recall is a successful run, so the only two outcomes are a trustworthy
+scorecard and none at all.
 
 ---
 
@@ -83,7 +86,10 @@ Three JSON Schemas ship under `schemas/`:
 - **`schemas/tool-output.schema.json`** — the shape a tool's output is read in as for
   `/vdr-score`: JSON with `tool`, an optional `room_hash` (the packaged manifest's content
   hash, for provenance verification), and a `findings` list of
-  `{title, severity, documents, summary}`.
+  `{title, severity, documents, summary}`. `severity` is a closed enum — **`critical`,
+  `high`, `medium` or `low`**, and nothing else. Of the four finding fields only `summary`
+  is optional; `title`, `severity` and `documents` are all required, and no additional
+  properties are accepted at either level.
 
 A lenient markdown fallback is also accepted — one `##`/`###`/`####` heading per finding —
 but **a tool that genuinely found nothing must say so with the JSON format's explicit empty
