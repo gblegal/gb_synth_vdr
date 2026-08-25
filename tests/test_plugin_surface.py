@@ -759,6 +759,34 @@ def test_package_skill_requires_strict_before_freezing():
     assert "manifest" in body
 
 
+def test_package_skill_subset_total_is_derived_not_hardcoded():
+    """Final review, F6: the skill hardcoded a subset total of 900 against a default room
+    of 200 documents, so build_subset's cap-at-what-exists behaviour made subset/ a byte
+    copy of the whole room and gate 11 passed trivially — a "bounded run" that was not
+    bounded at all, silently. Pins that the shipped script derives the total from the
+    room's own BLIND_TOTAL instead of a fixed number.
+    """
+    body = (ROOT / "skills" / "vdr-package" / "SKILL.md").read_text()
+    assert "900" not in body
+    assert "BLIND_TOTAL" in body
+    assert "subset_total" in body
+
+
+def test_package_skill_step_1_is_not_circular():
+    """Final review, F7: Step 1 used to say run `--strict` and re-run it until clean
+    before doing anything else, but gates 11/16 SKIP until Steps 2-3 build their inputs
+    and `--strict` converts every skip to a failure — a literal reader could never get a
+    clean Step 1 to "unlock" Step 2. Pins that the first QA run in the skill is explicitly
+    non-strict, and that exactly one later step is named as the real, strict release gate.
+    """
+    body = (ROOT / "skills" / "vdr-package" / "SKILL.md")
+    text = body.read_text()
+    assert "not yet strict" in text.lower()
+    assert "the actual release gate" in text.lower()
+    # exactly one `--strict` gate run in the whole skill, not two competing ones
+    assert text.count("python3 -m synthvdr.qa --room . --strict") == 1
+
+
 def test_score_skill_records_adjudications_rather_than_re_deriving_them():
     body = (ROOT / "skills" / "vdr-score" / "SKILL.md").read_text().lower()
     assert "adjudicat" in body
