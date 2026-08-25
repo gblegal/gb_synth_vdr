@@ -144,10 +144,10 @@ findings:
     severity: high
     workstream: operations
     multi_document: true
-    source: 14_operations/14.2_supply-chain/14.2.5_supplier-list.md
+    source: 16_operations-quality/16.3_supply-chain/16.3.5_supplier-list.md
     location: "Row 3, annual spend column"
     corroboration:
-      - 06_commercial/6.3_supplier-contracts/6.3.1_master-supply-agreement.md
+      - 05_commercial/5.2_supplier-contracts/5.2.1_master-supply-agreement.md
     substance: >
       One supplier accounts for the majority of a key input's annual spend, and the master
       supply agreement contains no minimum-volume or exclusivity carve-out addressing that

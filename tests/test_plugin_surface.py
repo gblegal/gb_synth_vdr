@@ -33,6 +33,7 @@ import pytest
 import yaml
 
 import synthvdr
+from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
 from synthvdr.qa.structural import SLOT_REF, parse_gaps_allowlist
 from synthvdr.roomconf import load_room_conf
 from synthvdr.schema import (
@@ -198,14 +199,32 @@ SECTION_DIRS="."
 """
 
 
-def _without_blind_tree_prefix(rel: str, blind_tree_name: str) -> str:
-    """The path `rel` SHOULD have named if it is already blind-tree-relative, used only to
-    decide where this helper's throwaway blind tree puts its real files — never fed back
-    into the code under test, which must see the example's own raw string, prefix bug and
-    all, or the check below would prove nothing about it.
+def _real_section_dirs() -> set:
+    """The one oracle an example cannot influence: the real section directory names the M&A
+    domain pack declares, read fresh via `synthvdr.domain.load_domain` — the same function
+    every real room-building step reads them through.
+
+    Fix round 2, coordinator ruling: fix round 1's semantic check built its throwaway blind
+    tree FROM the example's own paths (stripping one hard-coded `data-room/` prefix), so it
+    validated the example's self-consistency, not its correctness — any internally
+    consistent path passed, and a peer session found a `blind/`-prefixed path and a
+    `14_operations` section that does not exist at all (the real one is
+    `16_operations-quality`) both slipped through untouched. Neither is caught by asking
+    "does this path resolve in a world I built from itself" — only by asking a question the
+    example gets no say in: is this a real section?
     """
-    prefix = blind_tree_name.rstrip("/") + "/"
-    return rel[len(prefix):] if rel.startswith(prefix) else rel
+    return set(load_domain(DEFAULT_DOMAIN_ROOT).section_dirs())
+
+
+def _assert_first_segment_is_a_real_section(rel: str, owner: str, field: str) -> None:
+    real_dirs = _real_section_dirs()
+    first_segment = rel.split("/", 1)[0]
+    assert first_segment in real_dirs, (
+        f"{owner}: {field} {rel!r} starts with {first_segment!r}, which is not a real "
+        f"section directory (domain/ma/sections.yaml declares: {sorted(real_dirs)}) — every "
+        "source/corroboration/location/resolution path must start with one, never with "
+        "BLIND_TREE's own name or any other invented segment"
+    )
 
 
 def assert_evidence_paths_resolve_under_blind_tree(
@@ -215,67 +234,63 @@ def assert_evidence_paths_resolve_under_blind_tree(
 ) -> None:
     """SEMANTIC validation for a findings/distractors example — reusable across every test
     that extracts one from a shipped skill file, and left in this shape so Task 20's
-    end-to-end acceptance test can import and call it directly rather than re-deriving it,
-    since it is the same real-room construction that test needs at a larger scale.
+    end-to-end acceptance test can import and call it directly rather than re-deriving it.
 
-    Fix round 1, coordinator ruling: `load_findings`/`validate()` (used by every other
-    example test in this file) check the answer key's SCHEMA — required fields,
-    cross-reference consistency — but never touch a real blind tree, so neither can see
-    whether a `source`/`corroboration`/`location`/`resolution` path is actually shaped the
-    way the room-building code expects. That gap is exactly how Tasks 17 and 18 shipped
-    skill examples with every evidence path prefixed `data-room/`: schema-valid, every
-    existing test green, and yet `synthvdr.twin.build_flagged_tree` — the function
-    `/vdr-build` actually calls to consolidate a wave — raised TwinError on every single one
-    of them, because it keys each real file by its path RELATIVE TO BLIND_TREE, which never
-    includes BLIND_TREE's own name (confirmed by reproduction, not just by reading the code).
+    Two independent checks, deliberately kept separate because they catch different things
+    (fix round 2, coordinator ruling):
 
-    The check does not trust the example's own paths to build its ground truth — that would
-    make a prefixed path match a prefixed path and prove nothing. Instead it builds a real
-    file at what the path would be with any `data-room/`-style prefix stripped (the
-    convention design spec §5.1 and both skills now state explicitly), then hands the
-    example's RAW, unmodified paths to the real `build_flagged_tree`. A prefixed path then
-    names a file that was never created at that location, and `build_flagged_tree` raises
-    TwinError naming it — exactly the failure an author following a bad example would hit.
+    1. **The oracle** (`_assert_first_segment_is_a_real_section`). Every `source`/
+       `corroboration`/`location`/`resolution` path's first segment must name a real section
+       directory from `synthvdr.domain.load_domain` — a fact the example cannot influence.
+       Fix round 1's check built its throwaway blind tree FROM the example's own paths
+       (stripping one hard-coded `data-room/` prefix) and so only ever validated the example
+       against itself; this is what catches a `blind/`-prefixed path and an invented section
+       name like `14_operations`, neither of which fix round 1 saw.
+    2. **The twin derivation** (`build_flagged_tree`, kept from fix round 1, no longer doing
+       any path correction). Once every path names a real section, a real file is created at
+       each of the example's own, completely unmodified paths, and the real
+       `synthvdr.twin.build_flagged_tree` — what `/vdr-build` actually calls — is run over
+       the result. This catches a path that is well-formed and in a real section but still
+       cannot actually be built into a room (a filesystem-level collision between two
+       evidence paths, for instance), which neither the schema check nor the oracle above
+       would see.
+
     `build_flagged_tree` has no notion of distractors at all (only finding evidence gets
-    annotated), so a distractor's `location`/`resolution` gets its own, separate existence
-    check against the same real tree, or the identical prefix bug in a distractor's path
-    would pass here silently.
+    annotated), so a distractor's `location`/`resolution` gets the oracle check and its own,
+    separate existence check against the same real tree.
     """
-    (tmp_path / "room.conf").write_text(_SEMANTIC_ROOM_CONF, encoding="utf-8")
-    blind_tree_name = "data-room"
-    blind_root = tmp_path / blind_tree_name
-
-    raw_paths = set()
+    finding_paths = []
     for finding in findings.findings:
-        raw_paths.update(finding.evidence_paths())
+        finding_paths.append((finding.id, "source", finding.source))
+        for corroboration_path in finding.corroboration:
+            finding_paths.append((finding.id, "corroboration", corroboration_path))
+    distractor_paths = []
     for distractor in distractors:
-        raw_paths.add(distractor.location)
-        raw_paths.add(distractor.resolution)
-    assert raw_paths, "no evidence paths to verify — the example has no findings or distractors"
+        distractor_paths.append((distractor.id, "location", distractor.location))
+        distractor_paths.append((distractor.id, "resolution", distractor.resolution))
+    all_paths = finding_paths + distractor_paths
+    assert all_paths, "no evidence paths to verify — the example has no findings or distractors"
 
-    for rel in raw_paths:
-        real_rel = _without_blind_tree_prefix(rel, blind_tree_name)
-        target = blind_root / real_rel
+    for owner, field, rel in all_paths:
+        _assert_first_segment_is_a_real_section(rel, owner, field)
+
+    (tmp_path / "room.conf").write_text(_SEMANTIC_ROOM_CONF, encoding="utf-8")
+    blind_root = tmp_path / "data-room"
+    for _, _, rel in all_paths:
+        target = blind_root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(f"Placeholder content for {real_rel}.\n", encoding="utf-8")
+        target.write_text(f"Placeholder content for {rel}.\n", encoding="utf-8")
 
     conf = load_room_conf(tmp_path / "room.conf")
     try:
         build_flagged_tree(tmp_path, conf, findings)
     except TwinError as exc:
-        pytest.fail(
-            f"a findings example's evidence paths do not resolve under BLIND_TREE — {exc}. "
-            "This is almost always a `data-room/`-style prefix left in `source` or "
-            "`corroboration`: those paths must be relative to the blind tree root, never "
-            "prefixed with BLIND_TREE's own name."
-        )
+        pytest.fail(f"a findings example's evidence paths do not resolve under BLIND_TREE — {exc}.")
 
-    for distractor in distractors:
-        for field, rel in (("location", distractor.location), ("resolution", distractor.resolution)):
-            assert (blind_root / rel).is_file(), (
-                f"{distractor.id}: {field} {rel!r} does not resolve under BLIND_TREE "
-                f"({blind_root}) — check for a `data-room/`-style prefix"
-            )
+    for owner, field, rel in distractor_paths:
+        assert (blind_root / rel).is_file(), (
+            f"{owner}: {field} {rel!r} does not resolve under BLIND_TREE ({blind_root})"
+        )
 
 
 @pytest.mark.parametrize("name", [_pending_param(n, PENDING_SKILLS) for n in SKILL_NAMES])
