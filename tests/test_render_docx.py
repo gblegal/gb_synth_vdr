@@ -263,3 +263,113 @@ def test_pdf_mjs_rotation_matches_python_exactly():
     assert js_values == py_values
     assert any(v > 0 for v in py_values), "fixture pairs must cover the positive case"
     assert any(v < 0 for v in py_values), "fixture pairs must cover the negative case"
+
+
+# --- F1: ATX heading detection must require whitespace (round 2, fix 1) ----
+
+
+def test_heading_requires_whitespace_after_hashes(tmp_path):
+    """CommonMark requires whitespace between a '#' run and heading text --
+    '#MeToo' and '#1 supplier' are paragraphs, not headings, in any
+    dialect. The old `stripped.startswith('#')` check got both wrong, and
+    `lstrip('# ')` then ate real content from any heading whose own title
+    legitimately started with '#'. Exercises every documented failure mode
+    plus a correctly-untouched control, by inspecting the actual .docx
+    paragraphs and styles produced."""
+    lines = [
+        "#MeToo campaign details go here.",
+        "#1 supplier by volume in the region.",
+        "Ref #4821 was closed in March.",
+        "#",
+        "####### Beyond H6, still a paragraph.",
+        "#\tTabbed heading.",
+        "# #1 priority",
+    ]
+    src = tmp_path / "data-room" / "01_corporate"
+    src.mkdir(parents=True)
+    (src / "1.1.1_mixed.md").write_text("\n".join(lines) + "\n")
+    out = tmp_path / "data-room-docx"
+
+    render_tree_docx(tmp_path / "data-room", out)
+
+    document = docx_module.Document(str(out / "01_corporate" / "1.1.1_mixed.docx"))
+    by_text = {p.text: p.style.name for p in document.paragraphs}
+
+    def is_heading(style_name):
+        return style_name.lower().startswith("heading") or style_name.lower() == "title"
+
+    # Paragraphs, not headings: no whitespace after the '#' run.
+    assert not is_heading(by_text["#MeToo campaign details go here."])
+    assert not is_heading(by_text["#1 supplier by volume in the region."])
+    assert not is_heading(by_text["#"])
+    assert not is_heading(by_text["####### Beyond H6, still a paragraph."])
+    # Control: a '#' mid-line was never mistaken for a heading marker.
+    assert not is_heading(by_text["Ref #4821 was closed in March."])
+    # Genuine headings: whitespace (including a tab) after the '#' run,
+    # and a heading whose title legitimately starts with '#' survives.
+    assert is_heading(by_text["Tabbed heading."])
+    assert is_heading(by_text["#1 priority"])
+
+
+# --- F3: rotation_for's formula must be pinned by a non-skippable test ----
+
+
+def test_rotation_matches_hardcoded_golden_values():
+    """Hard-coded, non-skippable pin for rotation_for's exact formula.
+
+    The cross-language check against pdf.mjs
+    (test_pdf_mjs_rotation_matches_python_exactly) is a valuable
+    ADDITIONAL guard, but it SKIPs wherever `node` is absent -- including
+    plenty of CI containers -- so a skippable test must never be the sole
+    pin for this invariant. These values were computed once, from the
+    sha256-based formula, and are asserted byte-for-byte here; if the
+    formula ever changes, this test fails everywhere, unconditionally,
+    node or no node.
+    """
+    golden = {
+        ("11.1.1", 1): -0.7211764705882353,
+        ("11.1.1", 2): 1.0313725490196077,
+        ("2.2.2", 1): -0.4494117647058824,
+        ("a", 1): 0.5180392156862745,
+        ("zulu", 3): 0.7294117647058824,
+    }
+    for (slot, page), expected in golden.items():
+        assert rotation_for(slot, page) == expected
+
+
+# --- F2: scanned_slots' sha256 keying must be pinned by a golden order ----
+
+
+def _finding_with_source(fid, source):
+    return Finding(
+        id=fid, title="t", severity="high", workstream="corporate",
+        multi_document=False, source=source, location="x", substance="s",
+    )
+
+
+def test_scanned_slots_golden_order_is_hash_driven_not_alphabetical():
+    """Pins the ordering as hash-driven, not alphabetical. This fixture's
+    alphabetical order and its sha256-digest order genuinely differ (the
+    second and third entries swap), so dropping the
+    `key=lambda p: hashlib.sha256(...)` from scanned_slots's second sort --
+    collapsing selection to plain alphabetical order -- makes this test
+    fail. A fixture where the two orders coincide would prove nothing."""
+    paths = [
+        "01_corp/1.1_x/1.1.1_alpha.md",
+        "02_fin/2.1_y/2.1.1_beta.md",
+        "03_ops/3.1_z/3.1.1_gamma.md",
+        "04_env/4.1_w/4.1.1_delta.md",
+    ]
+    expected_hash_order = [
+        "01_corp/1.1_x/1.1.1_alpha.md",
+        "03_ops/3.1_z/3.1.1_gamma.md",
+        "04_env/4.1_w/4.1.1_delta.md",
+        "02_fin/2.1_y/2.1.1_beta.md",
+    ]
+    assert sorted(paths) != expected_hash_order  # the fixture's whole point
+
+    fs = FindingSet(
+        [_finding_with_source(f"CORP-{i}", p) for i, p in enumerate(paths, start=1)],
+        "Project Testbed",
+    )
+    assert scanned_slots(fs, count=4) == expected_hash_order

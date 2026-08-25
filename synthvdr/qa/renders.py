@@ -18,7 +18,7 @@ different fixes, and a single combined number tells a room author neither.
 
 from __future__ import annotations
 
-from typing import Dict, List, Set
+from typing import Dict, List
 
 from .runner import fail, ok, skip
 
@@ -40,24 +40,36 @@ def gate_16_render_parity(ctx):
     # design (marker dotfiles included) — the suffix filter is this gate's
     # own job, same as every other gate that walks blind_files().
     sources = [p for p in ctx.blind_files() if p.suffix == ".md"]
-    source_rels: Set = {p.relative_to(ctx.blind_root) for p in sources}
 
     missing: Dict[str, List[str]] = {}
     orphaned: Dict[str, List[str]] = {}
     for tree, extension in trees:
-        tree_missing = []
-        for source in sources:
-            rel = source.relative_to(ctx.blind_root).with_suffix(extension)
-            if not (tree / rel).is_file():
-                tree_missing.append(rel.stem)
+        # Both directions are built the SAME way: a set of relative Path
+        # objects, taken from what is actually listed on disk, compared
+        # with plain (case-sensitive) Path equality. Earlier this gate
+        # checked "missing" via `(tree / rel).is_file()` — a filesystem
+        # lookup whose case sensitivity depends on the host (APFS/NTFS
+        # resolve case-insensitively; ext4 does not) — while "orphaned"
+        # used an in-memory set, which pathlib always compares
+        # case-sensitively regardless of platform. A render differing from
+        # its source only in case (e.g. "Articles.md" / "articles.docx")
+        # then passed one direction and failed the other, on macOS: the
+        # same "trust the filesystem's name lookup instead of the literal
+        # name" bug synthvdr.ownership already guards against for marker
+        # files. Using literal Path-set membership on both sides here
+        # means the verdict for a case-only mismatch (still a mismatch —
+        # it is reported as both a missing AND an orphaned file) is the
+        # same on every platform, not just this one.
+        expected = {
+            source.relative_to(ctx.blind_root).with_suffix(extension) for source in sources
+        }
+        actual = {p.relative_to(tree) for p in tree.rglob(f"*{extension}") if p.is_file()}
+
+        tree_missing = sorted(rel.as_posix() for rel in expected - actual)
         if tree_missing:
             missing[tree.name] = tree_missing
 
-        tree_orphaned = []
-        for render in sorted(p for p in tree.rglob(f"*{extension}") if p.is_file()):
-            rel_source = render.relative_to(tree).with_suffix(".md")
-            if rel_source not in source_rels:
-                tree_orphaned.append(render.relative_to(tree).as_posix())
+        tree_orphaned = sorted(rel.as_posix() for rel in actual - expected)
         if tree_orphaned:
             orphaned[tree.name] = tree_orphaned
 

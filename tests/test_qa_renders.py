@@ -135,3 +135,48 @@ def test_fails_naming_which_tree_has_the_problem(room):
     assert result.status == "FAIL"
     assert "data-room-pdf" in result.detail
     assert "data-room-docx" not in result.detail
+
+
+# --- F4: a case-only mismatch must not contradict itself ------------------
+
+
+def test_case_only_mismatch_is_consistent_across_both_directions(room):
+    """A render whose filename differs from its source only in case must
+    not pass one direction's check while failing the other's -- that
+    combination previously told an author to delete their only render.
+    Both directions now compare literal, case-sensitive relative paths
+    built from directory listings (see the comment in gate_16_render_parity
+    for why), so a case-only mismatch is reported consistently: as BOTH a
+    missing render (no correctly-cased file exists) and an orphaned one
+    (the wrongly-cased file matches no source) -- never one verdict from
+    one direction and its opposite from the other."""
+    out = room / "data-room-docx" / "01_corporate"
+    out.mkdir(parents=True)
+    (out / "1.1.1_ARTICLES.docx").write_bytes(b"stub")  # source is 1.1.1_articles.md
+
+    result = gate_16_render_parity(ctx_for(room))
+
+    assert result.status == "FAIL"
+    assert "source(s) with no render" in result.detail
+    assert "render(s) with no source" in result.detail
+
+
+# --- F5: both directions must identify files the same way -----------------
+
+
+def test_missing_direction_uses_full_relative_paths_not_bare_stems(room):
+    """Two sources sharing a basename in different directories must not
+    collapse to the same identifier in the message -- gate 16 must print
+    full relative paths on the missing side, exactly as it already does
+    on the orphaned side, so an author can tell which one is broken."""
+    other = room / "data-room" / "02_other"
+    other.mkdir(parents=True)
+    (other / "1.1.1_articles.md").write_text("# Also Articles\n")
+
+    (room / "data-room-docx").mkdir()  # both renders missing
+
+    result = gate_16_render_parity(ctx_for(room))
+
+    assert result.status == "FAIL"
+    assert "01_corporate/1.1.1_articles.docx" in result.detail
+    assert "02_other/1.1.1_articles.docx" in result.detail

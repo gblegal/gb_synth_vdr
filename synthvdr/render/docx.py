@@ -17,6 +17,7 @@ both directions: sources missing a render, and renders missing a source.
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 from typing import List
 
@@ -25,6 +26,18 @@ from ..schema import FindingSet
 
 class RenderUnavailable(Exception):
     """A render toolchain is not installed."""
+
+
+# CommonMark requires whitespace between the '#' run and the heading text —
+# `#MeToo` or `#1 supplier` are NOT headings in any markdown dialect, they
+# are paragraphs that happen to start with a hash. A bare `stripped.startswith
+# ("#")` check (this module's original implementation) got that wrong, and
+# `lstrip("# ")` compounded it by eating any further leading '#'/' ' pairs —
+# a heading whose own title legitimately starts with '#' (e.g. "# #1
+# priority") lost that leading character too. Bounded at 6 hashes, per
+# CommonMark ATX headings — a 7th leading '#' means the line has no opening
+# sequence at all, and stays a plain paragraph, hashes and all.
+_ATX_HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 
 
 def rotation_for(slot_id: str, page: int) -> float:
@@ -82,9 +95,14 @@ def render_tree_docx(src: Path, out: Path) -> int:
         document = Document()
         for line in path.read_text(encoding="utf-8").splitlines():
             stripped = line.rstrip()
-            if stripped.startswith("#"):
-                level = min(len(stripped) - len(stripped.lstrip("#")), 4)
-                document.add_heading(stripped.lstrip("# ").strip(), level=level)
+            heading = _ATX_HEADING.match(stripped)
+            if heading:
+                # group(1) is exactly the matched hashes (1-6 of them, by
+                # construction of the regex); group(2) is exactly what
+                # follows the required whitespace — never a blanket
+                # lstrip, so a title starting with '#' is preserved.
+                level = min(len(heading.group(1)), 4)
+                document.add_heading(heading.group(2), level=level)
             elif stripped:
                 document.add_paragraph(stripped)
         document.save(str(target))
