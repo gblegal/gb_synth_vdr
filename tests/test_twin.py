@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from synthvdr.roomconf import RoomConf, load_room_conf
@@ -241,3 +243,70 @@ def test_build_flagged_tree_refuses_a_flagged_root_that_resolves_outside_the_roo
         build_flagged_tree(room, escaping_conf, findings)
 
     assert (victim / "sentinel.txt").read_text(encoding="utf-8") == "must survive\n"
+
+
+def test_build_flagged_tree_refuses_a_flagged_root_that_is_the_room_root(tmp_path):
+    # "." and "./" pass load_room_conf's non-empty / non-absolute / no-'..'
+    # checks and pass simple containment (the room root is trivially
+    # "inside" the room) — only the dedicated room-root check catches them.
+    # Simulate a hand-built RoomConf, since load_room_conf itself now
+    # rejects a FLAGGED_TREE that normalises to the room root.
+    room, conf = make_room(tmp_path)
+    write_blind(room, "01_corporate/1.1_articles/1.1.1_articles.md", "# Articles\n")
+    (room / "_key").mkdir()
+    (room / "_key" / "findings.yaml").write_text("findings: []\n")
+
+    escaping_conf = RoomConf(values={**conf.values, "FLAGGED_TREE": "."}, path=conf.path)
+    findings = FindingSet(findings=[], room="Project Testbed")
+
+    # Matched on the room-root wording specifically, not just "FLAGGED_TREE"
+    # generically: BLIND_TREE is always nested under the room, so if the
+    # dedicated room-root check were removed, the blind-tree-overlap check
+    # below it would also fire (blind is trivially "inside" a flagged root
+    # that IS the room) and this test would pass for the wrong reason.
+    with pytest.raises(TwinError, match="room root itself"):
+        build_flagged_tree(room, escaping_conf, findings)
+
+    # The whole room — room.conf, the blind tree, and the key root — must
+    # be exactly as it was: nothing must have been deleted.
+    assert conf.path.exists()
+    assert (room / "_key" / "findings.yaml").read_text(encoding="utf-8") == "findings: []\n"
+    assert (room / "data-room/01_corporate/1.1_articles/1.1.1_articles.md").read_text(
+        encoding="utf-8"
+    ) == "# Articles\n"
+
+
+def test_build_flagged_tree_refuses_a_flagged_root_that_is_the_blind_tree(tmp_path):
+    # load_room_conf now rejects FLAGGED_TREE == BLIND_TREE too, so this
+    # again requires a hand-built RoomConf to reach the backstop.
+    room, conf = make_room(tmp_path)
+    write_blind(room, "01_corporate/1.1_articles/1.1.1_articles.md", "# Articles\n")
+
+    escaping_conf = RoomConf(
+        values={**conf.values, "FLAGGED_TREE": conf.get("BLIND_TREE")},
+        path=conf.path,
+    )
+    findings = FindingSet(findings=[], room="Project Testbed")
+
+    with pytest.raises(TwinError, match="FLAGGED_TREE"):
+        build_flagged_tree(room, escaping_conf, findings)
+
+    assert (room / "data-room/01_corporate/1.1_articles/1.1.1_articles.md").read_text(
+        encoding="utf-8"
+    ) == "# Articles\n"
+
+
+def test_build_flagged_tree_raises_for_a_finding_with_a_nonexistent_evidence_path(tmp_path):
+    # A mistyped path in findings.yaml must not be silently dropped — the
+    # finding would never actually be planted in the corpus, and nothing
+    # would say so. Same silent-failure shape as a stripped annotation
+    # block, one stage further upstream.
+    room, conf = make_room(tmp_path)
+    write_blind(room, "01_corporate/1.1_articles/1.1.1_articles.md", "# Articles\n")
+    missing_path = "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md"
+    f = finding(source=missing_path, corroboration=[], multi_document=False)
+    findings = FindingSet(findings=[f], room="Project Testbed")
+
+    with pytest.raises(TwinError, match=re.escape(missing_path)):
+        build_flagged_tree(room, conf, findings)
+

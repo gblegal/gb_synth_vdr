@@ -5,6 +5,7 @@ Shell-sourceable KEY="VALUE" so tools/check.sh can source the same file.
 
 from __future__ import annotations
 
+import posixpath
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,7 +29,8 @@ REQUIRED_KEYS = (
 # Keys whose values are relative filesystem paths under the room root. Tools
 # that turn these into real paths (e.g. synthvdr.twin.build_flagged_tree)
 # call shutil.rmtree on the result, so a bad value here is a destructive-path
-# risk, not just a cosmetic one — every one of them is checked at load time.
+# risk, not just a cosmetic one — every one of them is checked at load time,
+# both individually and for how they sit relative to each other.
 PATH_KEYS = (
     "BLIND_TREE",
     "FLAGGED_TREE",
@@ -40,11 +42,40 @@ class RoomConfError(Exception):
     """room.conf is missing, malformed, or missing a required key."""
 
 
+def _segments(value: str) -> List[str]:
+    """The real path segments of `value`, with '.' components normalised
+    away. Returns [] if `value` normalises to the room root itself (e.g.
+    '.', './', './.'). Callers must already have rejected an absolute value
+    and a raw '..' segment — normalising a value that still contains '..'
+    would silently walk it out of the room instead of catching it.
+    """
+    normalised = posixpath.normpath(value)
+    if normalised == ".":
+        return []
+    return normalised.split("/")
+
+
+def _is_inside_or_equal(inner: List[str], outer: List[str]) -> bool:
+    """True if `inner` names the same tree as `outer`, or a tree nested
+    under it."""
+    return inner[: len(outer)] == outer
+
+
+def _overlaps(a: List[str], b: List[str]) -> bool:
+    """True if `a` and `b` name the same tree, or either is nested under
+    the other — in other words, they are not two genuinely separate trees.
+    """
+    return _is_inside_or_equal(a, b) or _is_inside_or_equal(b, a)
+
+
 def _check_relative_path(path: Path, key: str, value: str) -> None:
     """Reject a path-valued room.conf entry that could escape the room root.
 
-    A value must be non-empty, must not be absolute, and must not contain a
-    '..' segment. Segment membership is checked after splitting on '/', not
+    A value must be non-empty, must not be absolute, must not contain a
+    '..' segment, and must not normalise to the room root itself (e.g. '.'
+    or './' — those name the room, not a subdirectory of it, and a tool
+    that deletes-and-rebuilds "the tree at this path" would delete the
+    whole room). Segment membership is checked after splitting on '/', not
     by substring search — subsection directories legitimately contain dots
     (e.g. '11.2_site-reports'), and a substring check would misfire on them.
     """
@@ -59,6 +90,59 @@ def _check_relative_path(path: Path, key: str, value: str) -> None:
         raise RoomConfError(
             f"{path}: {key} {value!r} contains a '..' segment — "
             "it must stay inside the room root"
+        )
+    if not _segments(value):
+        raise RoomConfError(
+            f"{path}: {key} {value!r} normalises to the room root itself — "
+            "it must name a real subdirectory of the room"
+        )
+
+
+def _check_tree_layout(path: Path, values: Dict[str, str]) -> None:
+    """BLIND_TREE, FLAGGED_TREE and KEY_ROOT must sit far enough apart that
+    build_flagged_tree's delete-and-rebuild of FLAGGED_TREE can never
+    destroy or leak into the wrong tree.
+
+    BLIND_TREE must not equal, contain, or be contained by either of the
+    other two: overlapping with FLAGGED_TREE means rebuilding the flagged
+    tree could delete the blind room handed to the tool under test, or —
+    if FLAGGED_TREE is nested inside BLIND_TREE — plant answer-key
+    material inside it, which is a leak, not just a delete. Overlapping
+    with KEY_ROOT means rebuilding the flagged tree could delete other
+    answer-key material (findings.yaml, the subset manifest, ...) that
+    happens to live above it.
+
+    FLAGGED_TREE nested *inside* KEY_ROOT is the intended layout, not a
+    hazard — the flagged twin is answer-key material, and answer-key
+    material lives under KEY_ROOT by project convention (e.g.
+    KEY_ROOT="_key", FLAGGED_TREE="_key/flagged"). The dangerous direction
+    is the reverse: KEY_ROOT at or under FLAGGED_TREE, which would mean
+    rebuilding the flagged tree deletes KEY_ROOT — and everything else
+    under it — right along with it.
+    """
+    blind = _segments(values["BLIND_TREE"])
+    flagged = _segments(values["FLAGGED_TREE"])
+    key = _segments(values["KEY_ROOT"])
+
+    if _overlaps(blind, flagged):
+        raise RoomConfError(
+            f"{path}: BLIND_TREE {values['BLIND_TREE']!r} and FLAGGED_TREE "
+            f"{values['FLAGGED_TREE']!r} must be separate trees — neither "
+            "may equal, contain, or be contained by the other"
+        )
+    if _overlaps(blind, key):
+        raise RoomConfError(
+            f"{path}: BLIND_TREE {values['BLIND_TREE']!r} and KEY_ROOT "
+            f"{values['KEY_ROOT']!r} must be separate trees — neither may "
+            "equal, contain, or be contained by the other"
+        )
+    if _is_inside_or_equal(key, flagged):
+        raise RoomConfError(
+            f"{path}: KEY_ROOT {values['KEY_ROOT']!r} must not equal or sit "
+            f"inside FLAGGED_TREE {values['FLAGGED_TREE']!r} — rebuilding "
+            "the flagged tree would delete the rest of the room's "
+            "answer-key material along with it (FLAGGED_TREE nested inside "
+            "KEY_ROOT is fine; the reverse is not)"
         )
 
 
@@ -139,10 +223,10 @@ class RoomConf:
 
     def get_relative_path(self, key: str) -> str:
         """Like get(), but for a key whose value must be a safe relative
-        path. Applies the same non-empty / non-absolute / no-'..' rule as
-        the required PATH_KEYS, on demand — for path-valued keys a later
-        tool reads that aren't in REQUIRED_KEYS and so aren't checked by
-        load_room_conf automatically.
+        path. Applies the same non-empty / non-absolute / no-'..' / not-the-
+        room-root rule as the required PATH_KEYS, on demand — for
+        path-valued keys a later tool reads that aren't in REQUIRED_KEYS
+        and so aren't checked by load_room_conf automatically.
         """
         value = self.get(key)
         _check_relative_path(self.path, key, value)
@@ -177,5 +261,6 @@ def load_room_conf(path: Path) -> RoomConf:
 
     for key in PATH_KEYS:
         _check_relative_path(path, key, values[key])
+    _check_tree_layout(path, values)
 
     return RoomConf(values=values, path=path)

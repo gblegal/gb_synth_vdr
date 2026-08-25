@@ -128,7 +128,9 @@ _ORIGINAL_PATH_LINE = {
 
 
 @pytest.mark.parametrize("key", ["BLIND_TREE", "FLAGGED_TREE", "KEY_ROOT"])
-@pytest.mark.parametrize("bad_value", ["", "/", "/tmp/x", "../../escape"])
+@pytest.mark.parametrize(
+    "bad_value", ["", "/", "/tmp/x", "../../escape", ".", "./", "./."]
+)
 def test_path_valued_key_rejects_unsafe_value(tmp_path, key, bad_value):
     conf_text = SAMPLE.replace(_ORIGINAL_PATH_LINE[key], f'{key}="{bad_value}"')
     assert conf_text != SAMPLE
@@ -153,6 +155,59 @@ def test_path_valued_key_does_not_false_positive_on_a_dotted_segment(tmp_path, k
     assert conf.get(key) == "11.2_site-reports/x"
 
 
+# ---------------------------------------------------------------------------
+# Tree layout: containment alone isn't enough — the room root itself is
+# trivially "inside the room", and BLIND_TREE, FLAGGED_TREE and KEY_ROOT
+# must additionally be genuinely separate trees, or build_flagged_tree's
+# delete-and-rebuild of FLAGGED_TREE can destroy or leak into whichever one
+# it overlaps. FLAGGED_TREE nested *inside* KEY_ROOT is the one exception:
+# that's the intended layout (the flagged twin is answer-key material, and
+# answer-key material lives under KEY_ROOT), so only the reverse direction
+# (KEY_ROOT at or under FLAGGED_TREE) is rejected for that pair.
+# ---------------------------------------------------------------------------
+
+
+def _conf_text_with_trees(blind, flagged, key_root):
+    text = SAMPLE
+    text = text.replace('BLIND_TREE="data-room"', f'BLIND_TREE="{blind}"')
+    text = text.replace('FLAGGED_TREE="_key/flagged"', f'FLAGGED_TREE="{flagged}"')
+    text = text.replace('KEY_ROOT="_key"', f'KEY_ROOT="{key_root}"')
+    return text
+
+
+@pytest.mark.parametrize(
+    "blind, flagged, key_root, expected_match",
+    [
+        ("data-room", "data-room", "_key", "BLIND_TREE"),
+        ("data-room", "data-room/sub", "_key", "BLIND_TREE"),
+        ("data-room/sub", "data-room", "_key", "BLIND_TREE"),
+        ("data-room", "_key/flagged", "data-room/sub", "BLIND_TREE"),
+        ("data-room/sub", "_key/flagged", "data-room", "BLIND_TREE"),
+        ("data-room", "_key", "_key/flagged", "KEY_ROOT"),
+    ],
+    ids=[
+        "flagged==blind",
+        "flagged-inside-blind",
+        "blind-inside-flagged",
+        "key-inside-blind",
+        "blind-inside-key",
+        "key-inside-flagged",
+    ],
+)
+def test_pairwise_tree_overlap_is_rejected(tmp_path, blind, flagged, key_root, expected_match):
+    conf_text = _conf_text_with_trees(blind, flagged, key_root)
+    with pytest.raises(RoomConfError, match=expected_match):
+        load_room_conf(write(tmp_path, conf_text))
+
+
+def test_flagged_nested_inside_key_root_is_accepted(tmp_path):
+    # The one legitimate overlap: FLAGGED_TREE living under KEY_ROOT, since
+    # the flagged twin is itself answer-key material.
+    conf_text = _conf_text_with_trees("data-room", "_key/nested/flagged", "_key")
+    conf = load_room_conf(write(tmp_path, conf_text))
+    assert conf.get("FLAGGED_TREE") == "_key/nested/flagged"
+
+
 def test_get_relative_path_validates_a_non_required_key_on_demand(tmp_path):
     conf = load_room_conf(write(tmp_path, SAMPLE + 'SUBSET_OUT="_key/subset"\n'))
     assert conf.get_relative_path("SUBSET_OUT") == "_key/subset"
@@ -165,4 +220,16 @@ def test_get_relative_path_rejects_unsafe_value_on_demand(tmp_path, bad_value):
     # check only happens when a later tool calls get_relative_path on it.
     conf = load_room_conf(write(tmp_path, SAMPLE + f'SUBSET_OUT="{bad_value}"\n'))
     with pytest.raises(RoomConfError, match="SUBSET_OUT"):
+        conf.get_relative_path("SUBSET_OUT")
+
+
+@pytest.mark.parametrize("bad_value", [".", "./", "./."])
+def test_get_relative_path_rejects_a_value_that_normalises_to_the_room_root(tmp_path, bad_value):
+    # Isolates the "normalises to the room root" rule in _check_relative_path
+    # from _check_tree_layout's pairwise checks: SUBSET_OUT is a standalone
+    # key outside BLIND_TREE/FLAGGED_TREE/KEY_ROOT, so this can only be
+    # caught by get_relative_path's own check, not by a coincidental overlap
+    # with one of the three core trees.
+    conf = load_room_conf(write(tmp_path, SAMPLE + f'SUBSET_OUT="{bad_value}"\n'))
+    with pytest.raises(RoomConfError, match="normalises to the room root"):
         conf.get_relative_path("SUBSET_OUT")
