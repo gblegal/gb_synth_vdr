@@ -6,6 +6,8 @@ import pytest
 from synthvdr.roomconf import PATH_KEYS, ROOM_ROOT_LABEL, RoomConf, load_room_conf
 from synthvdr.schema import Finding, FindingSet
 from synthvdr.twin import (
+    MARKER_NAME,
+    MARKER_TEXT,
     SUBJECT_KEY,
     TwinError,
     _is_inside,
@@ -13,6 +15,7 @@ from synthvdr.twin import (
     _same_file,
     annotation_block,
     assert_safe_delete_target,
+    assert_target_is_ours,
     build_flagged_tree,
     derive_twin,
     is_valid_twin,
@@ -210,6 +213,11 @@ def test_build_flagged_tree_only_touches_the_configured_flagged_root(tmp_path):
     stale = room / "_key/flagged/stale.md"
     stale.parent.mkdir(parents=True, exist_ok=True)
     stale.write_text("leftover from a previous run\n")
+    # ...and "a previous run" means synthvdr's own, which leaves the marker
+    # that licenses the next build to clear the tree. Without it this is
+    # someone else's directory and the build must refuse instead (see
+    # test_build_flagged_tree_refuses_a_non_empty_target_it_did_not_create).
+    (room / "_key/flagged" / MARKER_NAME).write_text(MARKER_TEXT)
     # ...but a sibling file under KEY_ROOT, outside FLAGGED_TREE, must survive.
     sibling = room / "_key/manifest.txt"
     sibling.write_text("keep-me\n")
@@ -648,6 +656,199 @@ def test_delete_precondition_refuses_a_same_inode_alias_of_the_target(tmp_path, 
     )
     with pytest.raises(TwinError, match="same directory on disk"):
         assert_safe_delete_target(subject, resolved)
+
+
+# ---------------------------------------------------------------------------
+# "We only delete what we made."
+#
+# Properties 1 and 2 bind the delete to the *declared* path. Nothing in a path
+# binds it to data this tool owns: FLAGGED_TREE may legitimately name any
+# directory in the room — '_key/index-src', '_key/incoming', 'scratch', a
+# mount point holding another volume — and its contents are deleted. Note
+# that the sanctioned FLAGGED_TREE-under-KEY_ROOT exception has nothing to do
+# with it: 'scratch' and 'docs-elsewhere' go the same way with KEY_ROOT
+# untouched. The marker file is the positive rule that closes this.
+# ---------------------------------------------------------------------------
+
+
+def _conf_with_flagged(room, flagged):
+    """A loaded RoomConf whose FLAGGED_TREE is `flagged`, with a blind tree
+    holding one document."""
+    conf_path = room / "room.conf"
+    conf_path.write_text(CONF_TEMPLATE.replace('FLAGGED_TREE="_key/flagged"', f'FLAGGED_TREE="{flagged}"'))
+    (room / "data-room").mkdir(exist_ok=True)
+    write_blind(room, "01_corporate/1.1_articles/1.1.1_articles.md", "# Articles\n")
+    return load_room_conf(conf_path)
+
+
+@pytest.mark.parametrize(
+    "flagged",
+    ["_key/index-src", "_key/incoming", "scratch", "docs-elsewhere"],
+    ids=["under-key-root", "under-key-root-2", "plain-room-dir", "plain-room-dir-2"],
+)
+def test_build_flagged_tree_refuses_a_non_empty_target_it_did_not_create(tmp_path, flagged):
+    room = tmp_path
+    conf = _conf_with_flagged(room, flagged)
+    target = room / flagged
+    target.mkdir(parents=True)
+    victim = target / "precious.txt"
+    victim.write_text("someone else's data\n")
+
+    with pytest.raises(TwinError, match="was not created by this tool"):
+        build_flagged_tree(room, conf, FindingSet(findings=[], room="Project Testbed"))
+
+    assert victim.read_text(encoding="utf-8") == "someone else's data\n"
+
+
+def test_build_flagged_tree_refuses_a_second_build_after_the_marker_is_deleted(tmp_path):
+    # The marker is the licence, and it can be revoked by hand. Once it is
+    # gone the tree is indistinguishable from someone else's directory, and
+    # the build must stop rather than clear it.
+    room = tmp_path
+    conf = _conf_with_flagged(room, "_key/flagged")
+    findings = FindingSet(findings=[], room="Project Testbed")
+    build_flagged_tree(room, conf, findings)
+
+    target = room / "_key/flagged"
+    (target / MARKER_NAME).unlink()
+    survivor = target / "01_corporate/1.1_articles/1.1.1_articles.md"
+    assert survivor.exists()
+
+    with pytest.raises(TwinError, match="was not created by this tool"):
+        build_flagged_tree(room, conf, findings)
+
+    assert survivor.read_text(encoding="utf-8") == "# Articles\n"
+
+
+def test_build_flagged_tree_rebuilds_a_target_carrying_the_marker(tmp_path):
+    room = tmp_path
+    conf = _conf_with_flagged(room, "_key/flagged")
+    target = room / "_key/flagged"
+    target.mkdir(parents=True)
+    (target / MARKER_NAME).write_text(MARKER_TEXT)
+    stale = target / "stale.md"
+    stale.write_text("leftover\n")
+
+    build_flagged_tree(room, conf, FindingSet(findings=[], room="Project Testbed"))
+
+    assert not stale.exists()
+    assert (target / "01_corporate/1.1_articles/1.1.1_articles.md").exists()
+
+
+def test_build_flagged_tree_proceeds_when_the_target_is_empty(tmp_path):
+    # An empty directory holds nothing to destroy, so it needs no marker —
+    # this is what lets a user pre-create the flagged root themselves.
+    room = tmp_path
+    conf = _conf_with_flagged(room, "_key/flagged")
+    (room / "_key/flagged").mkdir(parents=True)
+
+    build_flagged_tree(room, conf, FindingSet(findings=[], room="Project Testbed"))
+
+    assert (room / "_key/flagged/01_corporate/1.1_articles/1.1.1_articles.md").exists()
+
+
+def test_build_flagged_tree_writes_the_marker_naming_the_tool(tmp_path):
+    room = tmp_path
+    conf = _conf_with_flagged(room, "_key/flagged")
+    build_flagged_tree(room, conf, FindingSet(findings=[], room="Project Testbed"))
+
+    marker = room / "_key/flagged" / MARKER_NAME
+    assert marker.read_text(encoding="utf-8") == MARKER_TEXT
+    assert "synthvdr" in MARKER_TEXT
+    assert "deleted and rebuilt" in MARKER_TEXT
+
+
+def test_two_consecutive_builds_succeed_and_agree(tmp_path):
+    # The marker the first build writes must license the second, not block
+    # it — and must not leak into the tally or the tree's contents.
+    room = tmp_path
+    conf = _conf_with_flagged(room, "_key/flagged")
+    findings = FindingSet(findings=[], room="Project Testbed")
+
+    first = build_flagged_tree(room, conf, findings)
+    listing_after_first = sorted(p.name for p in (room / "_key/flagged").rglob("*"))
+    second = build_flagged_tree(room, conf, findings)
+
+    assert first == second
+    assert sorted(p.name for p in (room / "_key/flagged").rglob("*")) == listing_after_first
+    assert first.written == 1
+
+
+def test_marker_is_not_counted_in_the_tally(tmp_path):
+    room = tmp_path
+    conf = _conf_with_flagged(room, "_key/flagged")
+    report = build_flagged_tree(room, conf, FindingSet(findings=[], room="Project Testbed"))
+    # One blind document in, one document out — the marker is infrastructure,
+    # not a twin, and must never inflate .written or .identical.
+    assert (report.written, report.carriers, report.identical) == (1, 0, 1)
+
+
+# ---------------------------------------------------------------------------
+# Bare OSErrors escaping a module that otherwise raises TwinError. Neither
+# case destroys anything; both are the wrong exception type reaching a caller.
+# The symlink-loop cases are the residue Property 1 provably cannot reach: a
+# loop resolves to itself, so there is no redirect for it to detect.
+# ---------------------------------------------------------------------------
+
+
+def test_build_flagged_tree_raises_twin_error_when_the_target_is_an_existing_file(tmp_path):
+    room = tmp_path
+    conf = _conf_with_flagged(room, "_key/flagged")
+    (room / "_key").mkdir()
+    (room / "_key/flagged").write_text("i am a file, not a directory\n")
+
+    with pytest.raises(TwinError, match="names an existing file"):
+        build_flagged_tree(room, conf, FindingSet(findings=[], room="Project Testbed"))
+
+    assert (room / "_key/flagged").read_text(encoding="utf-8") == "i am a file, not a directory\n"
+
+
+@pytest.mark.parametrize(
+    "flagged", ["loop-a/inner", "loop-a"], ids=["loop-in-ancestor", "loop-is-target"]
+)
+def test_build_flagged_tree_raises_twin_error_for_a_symlink_loop(tmp_path, flagged):
+    room = tmp_path
+    conf = _conf_with_flagged(room, flagged)
+    (room / "loop-a").symlink_to(room / "loop-b")
+    (room / "loop-b").symlink_to(room / "loop-a")
+
+    with pytest.raises(TwinError, match="could not prepare FLAGGED_TREE"):
+        build_flagged_tree(room, conf, FindingSet(findings=[], room="Project Testbed"))
+
+
+def test_target_ownership_check_accepts_a_missing_target(tmp_path):
+    # A target that does not exist yet is the ordinary first-build case.
+    assert assert_target_is_ours(tmp_path / "nothing-here") is None
+
+
+def test_build_flagged_tree_raises_twin_error_when_the_target_cannot_be_read(tmp_path):
+    # The third bare-OSError route, found by mutating the inspection's own
+    # wrap: exists()/is_dir()/is_file() all swallow OSError and answer False,
+    # but iterdir() does not, so an unreadable flagged tree raises
+    # PermissionError straight out of the guard. Probed for capability rather
+    # than guessed from the OS — running as root, or on a filesystem that
+    # ignores modes, the directory stays readable and there is nothing here
+    # to test.
+    room = tmp_path
+    conf = _conf_with_flagged(room, "_key/flagged")
+    target = room / "_key/flagged"
+    target.mkdir(parents=True)
+    (target / "precious.txt").write_text("someone else's data\n")
+    target.chmod(0o000)
+    try:
+        try:
+            list(target.iterdir())
+        except PermissionError:
+            pass
+        else:
+            pytest.skip("this user can read a mode-000 directory; nothing to test")
+
+        with pytest.raises(TwinError, match="could not be inspected"):
+            build_flagged_tree(room, conf, FindingSet(findings=[], room="Project Testbed"))
+    finally:
+        target.chmod(0o755)
+
+    assert (target / "precious.txt").read_text(encoding="utf-8") == "someone else's data\n"
 
 
 def test_build_flagged_tree_reports_a_missing_path_key_as_a_twin_error(tmp_path):
