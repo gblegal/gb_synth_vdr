@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import List
 
@@ -31,22 +31,34 @@ class CanonicalFigure:
     superseded: List[str] = field(default_factory=list)
 
 
-_DASH_ONLY_RE = re.compile(r"^[-\u2014\u2013\s]*$")  # hyphen, em dash, en dash, whitespace
+def _is_dash_char(ch: str) -> bool:
+    """True for any dash-like character, checked as a property, not a list.
+
+    Unicode category "Pd" (Dash Punctuation) already covers HYPHEN-MINUS,
+    HYPHEN, NON-BREAKING HYPHEN, FIGURE DASH, EN DASH, EM DASH and the rest
+    of that family in one test. U+2212 MINUS SIGN is the one dash-shaped
+    character Unicode puts outside "Pd" — it is category "Sm" (Symbol,
+    math) — so it is named explicitly rather than folded into the
+    category check.
+    """
+    return unicodedata.category(ch) == "Pd" or ch == "\u2212"
 
 
 def _cell_has_no_superseded_values(cell: str) -> bool:
     """True for any cell that carries no real superseded value.
 
     This is a property of the cell's content, not a fixed list of accepted
-    sentinel strings: the target set (dashes and whitespace, any count, any
-    mix of hyphen/em dash/en dash) is open-ended, while the false-positive
-    set is empty — no legitimate figure value is made up solely of dashes.
-    A cell of "--" must mean "none" exactly as much as "\u2014" does, and a
-    literal list of accepted sentinels ("\u2014", "-", "") would leave "--"
-    treated as a real value, which is then found "surviving" inside the
-    separator row of any ordinary markdown table anywhere in the room.
+    sentinel strings: the target set (any dash-like character, any count,
+    any mix, plus whitespace) is open-ended, while the false-positive set
+    is empty — no legitimate figure value is made up solely of dashes and
+    whitespace. A single ASCII "-" must mean "none" exactly as much as a
+    NON-BREAKING HYPHEN or FIGURE DASH does; a literal list of accepted
+    dash characters would always be one character behind whatever a fact
+    sheet's editing tool happens to autocorrect punctuation into. A
+    genuine negative figure like "-5m" is not dash-only — "5m" is neither
+    a dash nor whitespace — and correctly survives as a real value.
     """
-    return bool(_DASH_ONLY_RE.match(cell))
+    return all(_is_dash_char(ch) or ch.isspace() for ch in cell)
 
 
 def parse_canonical_figures(fact_sheet_text: str) -> List[CanonicalFigure]:
@@ -78,6 +90,66 @@ def _has_canonical_figures_heading(fact_sheet_text: str) -> bool:
     )
 
 
+def _diagnose_malformed_table(fact_sheet_text: str) -> str:
+    """Explain why the '## Canonical figures' table produced no figures.
+
+    Distinguishes the shapes an author is actually likely to hit, rather
+    than guessing "missing column" for every empty-figures result: that
+    diagnosis is right for a 2-column header, but wrong — and misleading —
+    for a well-formed 3-column header that simply has no data rows under
+    it yet, or for a heading with no table beneath it at all.
+    """
+    in_table = False
+    rows: List[List[str]] = []
+    for line in fact_sheet_text.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("## canonical figures"):
+            in_table = True
+            continue
+        if in_table and stripped.startswith("##"):
+            break
+        if not in_table or not stripped.startswith("|"):
+            continue
+        rows.append([c.strip() for c in stripped.strip("|").split("|")])
+
+    if not rows:
+        return "'## Canonical figures' heading found but no table rows beneath it"
+
+    header = rows[0]
+    if len(header) < 3:
+        return (
+            "'## Canonical figures' table present but malformed — its header row "
+            "has fewer than 3 columns (Key | Value | Superseded); check for a "
+            "missing column"
+        )
+
+    data_rows = [r for r in rows if r[0].lower() != "key" and not (set(r[0]) <= {"-", ":"})]
+    if not data_rows:
+        return (
+            "'## Canonical figures' table present with a valid 3-column header but "
+            "no data rows beneath it"
+        )
+
+    return "'## Canonical figures' table present but malformed"
+
+
+def _would_extend_a_token(ch) -> bool:
+    """True iff `ch` sitting next to a match would extend it into a longer
+    number or word — the only thing `_isolated_contains` exists to detect.
+
+    Deliberately `isdecimal() or isalpha()`, not `isalnum()`. `isalnum()`
+    is Unicode-wide and also true for category "No" (Number, other), which
+    includes superscript and subscript digits such as footnote markers
+    ("²", "¹") — those are annotations glued onto a figure, not digits
+    extending it, and must not disqualify a match. `isdecimal()` still
+    catches genuine embedding by a non-ASCII decimal digit (full-width
+    "０", Arabic-Indic "٣"), and `isalpha()` still catches embedding inside
+    a word — between them they express the actual invariant, no broader
+    and no narrower: a figure must not sit inside a longer number or word.
+    """
+    return ch is not None and (ch.isdecimal() or ch.isalpha())
+
+
 def _isolated_contains(needle: str, haystack: str) -> bool:
     """True if `needle` occurs in `haystack` at a real word boundary.
 
@@ -86,12 +158,14 @@ def _isolated_contains(needle: str, haystack: str) -> bool:
     itself non-word, so "\b£64.0m" never matches right after a space —
     neither side of that boundary is a word character, so every
     currency-prefixed figure would silently stop matching. This checks the
-    actual neighbouring character instead: a match is rejected only when
-    the character immediately before or after it is alphanumeric, which is
-    exactly the case that makes "700m" a false hit inside "GBP 3700m" or
-    "25m" a false miss inside "1725m" (the digit '7' butts right up
-    against it) while still accepting a figure that starts or ends with
-    punctuation, or sits at the very start or end of the text.
+    actual neighbouring character instead, via `_would_extend_a_token`: a
+    match is rejected only when the character immediately before or after
+    it would extend it into a longer number or word, which is exactly the
+    case that makes "700m" a false hit inside "GBP 3700m" or "25m" a false
+    miss inside "1725m" (the digit '7' butts right up against it), while
+    still accepting a figure that starts or ends with punctuation — or a
+    footnote marker like "GBP 725m¹" — or sits at the very start or end of
+    the text.
     """
     if not needle:
         return False
@@ -103,9 +177,7 @@ def _isolated_contains(needle: str, haystack: str) -> bool:
         before = haystack[idx - 1] if idx > 0 else None
         after_idx = idx + len(needle)
         after = haystack[after_idx] if after_idx < len(haystack) else None
-        before_is_alnum = before is not None and before.isalnum()
-        after_is_alnum = after is not None and after.isalnum()
-        if not before_is_alnum and not after_is_alnum:
+        if not _would_extend_a_token(before) and not _would_extend_a_token(after):
             return True
         start = idx + 1
 
@@ -144,12 +216,7 @@ def gate_13_fact_sheet(ctx):
     figures = parse_canonical_figures(text)
     if not figures:
         if _has_canonical_figures_heading(text):
-            return skip(
-                "13",
-                "fact-sheet reconciliation",
-                "'## Canonical figures' table present but malformed — no parsable "
-                "Key | Value | Superseded row (check for a missing column)",
-            )
+            return skip("13", "fact-sheet reconciliation", _diagnose_malformed_table(text))
         return skip("13", "fact-sheet reconciliation", "no '## Canonical figures' table in fact sheet")
     corpus = "\n".join(p.read_text(encoding="utf-8", errors="ignore") for p in files)
     problems = []

@@ -1,6 +1,7 @@
 import pytest
 
 from synthvdr.qa.integrity import (
+    _cell_has_no_superseded_values,
     _isolated_contains,
     gate_13_fact_sheet,
     gate_15_discoverability,
@@ -238,10 +239,44 @@ def test_gate_13_fails_when_a_later_superseded_value_survives_not_just_the_first
         ("£64.0m", "a £64.0m shortfall", True),
         ("31 March 2026", "at 31 March 2026.", True),
         ("725m", "725m", True),  # needle is the whole haystack: boundary at both ends
+        ("GBP 725m", "GBP 725million", False),
+        ("725", "７２５０ yen", False),  # full-width digits: still an embedding
+        ("725", "٣725٤", False),  # Arabic-Indic digits: still an embedding
+        # Findings 1 & 2 (fix round 2): a footnote superscript glued onto a
+        # figure is an annotation, not more digits — it must not disqualify
+        # the match in either direction.
+        ("700m", "GBP 700m², restated", True),
+        ("GBP 725m", "stated GBP 725m¹", True),
     ],
 )
 def test_isolated_contains_matches_word_boundaries_not_embedded_tokens(needle, haystack, want):
     assert _isolated_contains(needle, haystack) is want
+
+
+@pytest.mark.parametrize(
+    "cell",
+    [
+        "-",  # HYPHEN-MINUS
+        "‐",  # HYPHEN
+        "‑",  # NON-BREAKING HYPHEN
+        "‒",  # FIGURE DASH
+        "–",  # EN DASH
+        "—",  # EM DASH
+        "−",  # MINUS SIGN (category Sm, not Pd — named explicitly)
+        "--",
+        "- - -",
+        "",
+        "   ",
+    ],
+)
+def test_cell_has_no_superseded_values_for_any_dash_character(cell):
+    assert _cell_has_no_superseded_values(cell) is True
+
+
+def test_cell_has_no_superseded_values_is_false_for_a_negative_figure():
+    # A negative figure is a legitimate superseded value; it must not be
+    # swallowed by the dash-only check just because it starts with one.
+    assert _cell_has_no_superseded_values("-5m") is False
 
 
 def test_gate_13_passes_when_a_dash_only_superseded_cell_shares_the_room_with_an_ordinary_table(room):
@@ -328,3 +363,74 @@ def test_gate_13_skip_reason_names_a_malformed_table_not_a_missing_one(room):
     assert result.status == "SKIP"
     assert "malformed" in result.detail.lower()
     assert "no '## canonical figures' table" not in result.detail.lower()
+
+
+# --- Fix round 2: superscript footnote markers (Findings 1 & 2), the dash
+# character set (Finding 3), and an honest Fix-D hint for a header-only table ---
+
+
+def test_gate_13_fails_when_a_superseded_value_survives_with_a_footnote_marker_glued_on(room):
+    # Finding 1: a superscript footnote marker directly after a surviving
+    # superseded value must not hide it from the isolated-match check.
+    # 'isalnum()' treats '²' as alphanumeric, which would wrongly disqualify
+    # this as "embedded in a longer token" and let the gate PASS — the
+    # false-PASS shape, on the anti-thin-filler gate, is the worse direction.
+    p = room / "data-room/01_corporate/1.1_constitutional/1.1.1_articles.md"
+    p.write_text(
+        "# Articles\n\nEnterprise value of GBP 725m (previously GBP 700m², "
+        "restated), 31 March 2026.\n"
+    )
+    result = gate_13_fact_sheet(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "GBP 700m" in result.detail
+
+
+def test_gate_13_passes_when_canonical_value_has_a_footnote_marker_glued_on(room):
+    # Finding 2: a correct room must not fail gate 13 just because a
+    # footnote superscript sits directly against the canonical figure —
+    # "GBP 725m¹" is GBP 725m at a real word boundary followed by an
+    # annotation, not GBP 725m embedded inside some longer figure.
+    p = room / "data-room/01_corporate/1.1_constitutional/1.1.1_articles.md"
+    p.write_text(
+        "# Articles\n\nStated GBP 725m¹ in the accounts, locked box at "
+        "31 March 2026.\n"
+    )
+    result = gate_13_fact_sheet(ctx_for(room))
+    assert result.status == "PASS"
+
+
+def test_gate_13_passes_when_superseded_cell_uses_a_non_hyphen_dash_near_a_matching_dash_in_prose(room):
+    # Finding 3: NON-BREAKING HYPHEN (and FIGURE DASH, MINUS SIGN, HYPHEN)
+    # must mean "no superseded values" too, not just ASCII hyphen-minus and
+    # em/en dash. A fact sheet using one of those as its "none" sentinel
+    # must PASS even when the room's own prose happens to use the very same
+    # dash character elsewhere as ordinary stylistic punctuation — under the
+    # old literal character set, that stray dash would be read as a
+    # "surviving" superseded value and false-FAIL the gate.
+    (room / "_key" / "fact-sheet.md").write_text(
+        "# Fact sheet\n\n## Canonical figures\n\n"
+        "| Key | Value | Superseded |\n|---|---|---|\n"
+        "| locked_box_date | 31 March 2026 | ‑ |\n"
+    )
+    p = room / "data-room/01_corporate/1.1_constitutional/1.1.1_articles.md"
+    p.write_text(
+        "# Articles\n\nLocked box at 31 March 2026, price range ‑ subject to "
+        "review ‑ remains provisional.\n"
+    )
+    result = gate_13_fact_sheet(ctx_for(room))
+    assert result.status == "PASS"
+
+
+def test_gate_13_skip_reason_matches_a_valid_header_with_no_data_rows(room):
+    # Fix D: a well-formed 3-column header with zero data rows underneath it
+    # is a different problem from a missing column, and the SKIP reason must
+    # say so rather than reusing the "missing column" hint regardless of
+    # what's actually wrong.
+    (room / "_key" / "fact-sheet.md").write_text(
+        "# Fact sheet\n\n## Canonical figures\n\n"
+        "| Key | Value | Superseded |\n|---|---|---|\n"
+    )
+    result = gate_13_fact_sheet(ctx_for(room))
+    assert result.status == "SKIP"
+    assert "no data rows" in result.detail.lower()
+    assert "missing column" not in result.detail.lower()
