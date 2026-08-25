@@ -278,3 +278,6 @@ another. This is an interlock against misconfiguration, not a security control; 
 against it. Without that check, scoring one room's output against another room's key
 produces a confident, precise, entirely meaningless number that nothing in the pipeline
 could catch.
+
+The rulings behind these invariants, including options deliberately not taken, are in the
+build ledger — kept outside this repository.
