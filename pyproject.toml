@@ -1,0 +1,13 @@
+[project]
+name = "synthvdr"
+version = "0.1.0"
+description = "Synthetic M&A data room generator with a verified ground-truth answer key"
+requires-python = ">=3.9"
+dependencies = ["PyYAML>=6.0"]
+
+[project.optional-dependencies]
+docx = ["python-docx>=1.1"]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

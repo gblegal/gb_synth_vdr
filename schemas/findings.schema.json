@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://synthvdr/schemas/findings.schema.json",
+  "title": "synth-vdr findings",
+  "description": "The answer-key document listing every planted finding in a synthetic data room. YAML is canonical; this schema documents the shape for anyone authoring or generating a key by hand.",
+  "type": "object",
+  "required": ["findings"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "description": "Schema version of this document."
+    },
+    "room": {
+      "type": "string",
+      "description": "The room's codename, e.g. \"Project Testbed\"."
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/finding" }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "finding": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "severity",
+        "workstream",
+        "multi_document",
+        "source",
+        "substance"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable identifier for the finding, e.g. \"ENV-1\"."
+        },
+        "title": {
+          "type": "string",
+          "description": "Short human-readable title."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low"]
+        },
+        "workstream": {
+          "type": "string",
+          "description": "The DD workstream this finding belongs to, e.g. \"environmental\"."
+        },
+        "multi_document": {
+          "type": "boolean",
+          "description": "True if the finding requires corroboration across more than one document. Must be true if and only if corroboration is non-empty."
+        },
+        "source": {
+          "type": "string",
+          "description": "Relative path to the primary evidence document."
+        },
+        "location": {
+          "type": "string",
+          "description": "Where within the source document the finding sits, e.g. \"Table 4\"."
+        },
+        "corroboration": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Relative paths to documents that corroborate the finding. Non-empty if and only if multi_document is true."
+        },
+        "substance": {
+          "type": "string",
+          "description": "What the finding actually says — the fact being planted."
+        },
+        "cross_links": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "IDs of other findings this one relates to. Every id must resolve to a finding in this document."
+        },
+        "discoverable_from_blind": {
+          "type": ["boolean", "null"],
+          "description": "Whether an audit confirmed the finding is discoverable from the blind (unflagged) room. Null until audited."
+        },
+        "audit_note": {
+          "type": "string",
+          "description": "Free-text note left by the discoverability audit."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

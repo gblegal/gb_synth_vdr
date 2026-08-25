@@ -1,0 +1,445 @@
+import pathlib
+import tempfile
+import textwrap
+
+import pytest
+
+from synthvdr.namecheck import (
+    KINDS,
+    CandidateName,
+    NameCheckError,
+    Verdict,
+    extract_candidates,
+    load_name_check,
+    names_needing_check,
+    render_name_check_md,
+    unresolved,
+)
+from synthvdr.names import cast_list
+
+FACT_SHEET = textwrap.dedent(
+    """
+    # Fact sheet
+
+    The target is Ashfell Advanced Materials Limited, with a subsidiary
+    Kessler Werke GmbH.
+
+    ## Cast
+
+    | Name | Role |
+    |---|---|
+    | Marta Vinceau | Chief executive |
+    | Daniel Oyelaran | Finance director |
+    """
+).strip()
+
+
+def test_extracts_entities_by_corporate_suffix():
+    names = {c.text for c in extract_candidates(FACT_SHEET) if c.kind == "entity"}
+    assert names == {"Ashfell Advanced Materials Limited", "Kessler Werke GmbH"}
+
+
+def test_extracts_people_from_the_cast_table():
+    names = {c.text for c in extract_candidates(FACT_SHEET) if c.kind == "person"}
+    assert names == {"Marta Vinceau", "Daniel Oyelaran"}
+
+
+def test_names_needing_check_excludes_already_checked():
+    candidates = extract_candidates(FACT_SHEET)
+    existing = [Verdict("Kessler Werke GmbH", "entity", "clear", "2026-08-24", "")]
+    todo = {c.text for c in names_needing_check(candidates, existing)}
+    assert "Kessler Werke GmbH" not in todo
+    assert "Ashfell Advanced Materials Limited" in todo
+
+
+def test_render_and_load_round_trip(tmp_path):
+    verdicts = [
+        Verdict("Ashfell Advanced Materials Limited", "entity", "clear", "2026-08-24", ""),
+        Verdict("Marta Vinceau", "person", "ambiguous", "2026-08-24", "shares a name with an author"),
+    ]
+    path = tmp_path / "name-check.md"
+    path.write_text(render_name_check_md(verdicts, "Project Testbed"))
+    assert load_name_check(path) == verdicts
+
+
+def test_unresolved_returns_anything_not_clear():
+    verdicts = [
+        Verdict("A Limited", "entity", "clear", "2026-08-24", ""),
+        Verdict("B Limited", "entity", "collision", "2026-08-24", "real company"),
+        Verdict("C Limited", "entity", "ambiguous", "2026-08-24", "unclear"),
+    ]
+    assert [v.text for v in unresolved(verdicts)] == ["B Limited", "C Limited"]
+
+
+def test_rendered_table_is_parseable_by_the_gate_14_cast_reader():
+    verdicts = [Verdict("Ashfell Advanced Materials Limited", "entity", "clear", "2026-08-24", "")]
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "name-check.md"
+        path.write_text(render_name_check_md(verdicts, "Project Testbed"))
+        assert "Ashfell Advanced Materials Limited" in cast_list(path)
+
+
+# ---------------------------------------------------------------------------
+# Beyond-the-floor coverage: the `## Invented names` declared source, the
+# person/entity tagging discipline, dedup precedence, and a real round trip
+# through the actual gate-14 reader (not a reimplementation of it).
+# ---------------------------------------------------------------------------
+
+DECLARED_FACT_SHEET = textwrap.dedent(
+    """
+    # Fact sheet
+
+    The target group trades under the Solmark brand and sells the
+    Vantiq Edge product line from its Harrowgate Fulfilment Site,
+    reachable at solmark-edge.example.
+
+    ## Invented names
+
+    | Name | Kind |
+    |---|---|
+    | Ashfell Holdings Limited | entity |
+    | Solmark | brand |
+    | Vantiq Edge | product |
+    | Harrowgate Fulfilment Site | site |
+    | solmark-edge.example | domain |
+
+    ## Cast
+
+    | Name | Role |
+    |---|---|
+    | Marta Vinceau | Chief executive |
+    """
+).strip()
+
+
+def test_declared_table_round_trips_through_render_and_load_for_every_kind():
+    declared_kinds = {"entity": "Ashfell Holdings Limited",
+                       "brand": "Solmark",
+                       "product": "Vantiq Edge",
+                       "site": "Harrowgate Fulfilment Site",
+                       "domain": "solmark-edge.example"}
+    candidates = {c.text: c.kind for c in extract_candidates(DECLARED_FACT_SHEET)}
+    for kind, text in declared_kinds.items():
+        assert candidates[text] == kind
+
+    verdicts = [
+        Verdict(text, kind, "clear", "2026-08-24", "")
+        for kind, text in declared_kinds.items()
+    ]
+    path_dir = tempfile.mkdtemp()
+    path = pathlib.Path(path_dir) / "name-check.md"
+    path.write_text(render_name_check_md(verdicts, "Project Testbed"))
+    assert load_name_check(path) == verdicts
+
+
+def test_cast_person_is_not_returned_by_entity_scoped_cast_list(tmp_path):
+    candidates = extract_candidates(DECLARED_FACT_SHEET)
+    person_rows = [c for c in candidates if c.text == "Marta Vinceau"]
+    assert [c.kind for c in person_rows] == ["person"]
+
+    verdicts = [Verdict(c.text, c.kind, "clear", "2026-08-24", "") for c in candidates]
+    path = tmp_path / "name-check.md"
+    path.write_text(render_name_check_md(verdicts, "Project Testbed"))
+    assert "Marta Vinceau" not in cast_list(path, kind="entity")
+    # but is present under the unrestricted read
+    assert "Marta Vinceau" in cast_list(path, kind=None)
+
+
+def test_name_in_both_declared_table_and_prose_appears_once_with_declared_kind():
+    fact_sheet = textwrap.dedent(
+        """
+        # Fact sheet
+
+        The subsidiary Ashfell Holdings Limited is wholly owned.
+
+        ## Invented names
+
+        | Name | Kind |
+        |---|---|
+        | Ashfell Holdings Limited | entity |
+        """
+    ).strip()
+    candidates = extract_candidates(fact_sheet)
+    matches = [c for c in candidates if c.text == "Ashfell Holdings Limited"]
+    assert len(matches) == 1
+    assert matches[0].kind == "entity"
+
+
+def test_entity_beats_person_when_no_declared_table_disambiguates():
+    # The same text reaches both the entity_tokens net (corporate suffix in
+    # the prose) and a ## Cast row. With nothing declared, "entity" must
+    # win — masking and searching it as a company is the conservative
+    # treatment for gate 14.
+    fact_sheet = textwrap.dedent(
+        """
+        # Fact sheet
+
+        Ashfell Holdings Limited is the buyer.
+
+        ## Cast
+
+        | Name | Role |
+        |---|---|
+        | Ashfell Holdings Limited | Oddly named signatory |
+        """
+    ).strip()
+    candidates = {c.text: c.kind for c in extract_candidates(fact_sheet)}
+    assert candidates["Ashfell Holdings Limited"] == "entity"
+
+
+def test_declared_kind_wins_over_entity_token_suffix_match():
+    # A declared kind other than "entity" must override the entity_tokens
+    # net when the same text also happens to carry a corporate suffix.
+    fact_sheet = textwrap.dedent(
+        """
+        # Fact sheet
+
+        Solmark Trading Limited is the operating subsidiary.
+
+        ## Invented names
+
+        | Name | Kind |
+        |---|---|
+        | Solmark Trading Limited | brand |
+        """
+    ).strip()
+    candidates = {c.text: c.kind for c in extract_candidates(fact_sheet)}
+    assert candidates["Solmark Trading Limited"] == "brand"
+
+
+
+# ---------------------------------------------------------------------------
+# Fix round 1: a person declared with a non-person Kind, and an unrecognised
+# or blank Kind, are both authoring errors that must stop /vdr-scope rather
+# than resolve silently. Both raise NameCheckError.
+# ---------------------------------------------------------------------------
+
+
+def test_person_declared_as_non_person_kind_is_a_contradiction():
+    # Declaring "entity" for a name that ## Cast says is a person is a
+    # self-contradictory fact sheet. Silently preferring the declared kind
+    # (the ordinary precedence rule) would mask this name out of the room
+    # as a company and blind gate 14 to unchecked names beside it.
+    fact_sheet = textwrap.dedent(
+        """
+        # Fact sheet
+
+        ## Invented names
+
+        | Name | Kind |
+        |---|---|
+        | Marta Vinceau | entity |
+
+        ## Cast
+
+        | Name | Role |
+        |---|---|
+        | Marta Vinceau | Chief executive |
+        """
+    ).strip()
+    with pytest.raises(NameCheckError, match="Marta Vinceau"):
+        extract_candidates(fact_sheet)
+
+
+def test_person_declared_as_person_and_also_cast_is_not_a_contradiction():
+    # This is the case the guard above must NOT overfire on: declaring the
+    # row as Kind "person" is exactly how an author states the overlap
+    # with ## Cast is deliberate, not an error.
+    fact_sheet = textwrap.dedent(
+        """
+        # Fact sheet
+
+        ## Invented names
+
+        | Name | Kind |
+        |---|---|
+        | Marta Vinceau | person |
+
+        ## Cast
+
+        | Name | Role |
+        |---|---|
+        | Marta Vinceau | Chief executive |
+        """
+    ).strip()
+    candidates = {c.text: c.kind for c in extract_candidates(fact_sheet)}
+    assert candidates["Marta Vinceau"] == "person"
+
+
+@pytest.mark.parametrize("bad_kind", ["prodcut", ""])
+def test_unrecognised_or_blank_declared_kind_raises(bad_kind):
+    fact_sheet = textwrap.dedent(
+        f"""
+        # Fact sheet
+
+        ## Invented names
+
+        | Name | Kind |
+        |---|---|
+        | Veltrix | {bad_kind} |
+        """
+    ).strip()
+    with pytest.raises(NameCheckError, match="Veltrix"):
+        extract_candidates(fact_sheet)
+
+
+def test_all_recognised_kinds_are_accepted_without_raising():
+    # Pins the valid set so a future edit to KINDS is deliberate, not an
+    # accidental typo that starts rejecting a previously-valid Kind.
+    assert set(KINDS) == {"entity", "brand", "product", "site", "domain", "person"}
+
+
+
+# ---------------------------------------------------------------------------
+# Fix round 2: duplicate declared rows with a genuine kind conflict, a Name
+# the pipe-table format cannot carry as a key (a literal '|', or text that
+# would vanish as a separator row), a Note sanitised rather than rejected,
+# and a pin proving names_needing_check is exact-match, not folded.
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_declared_rows_with_different_kinds_raise():
+    fact_sheet = textwrap.dedent(
+        """
+        # Fact sheet
+
+        ## Invented names
+
+        | Name | Kind |
+        |---|---|
+        | Solmark | brand |
+        | Solmark | product |
+        """
+    ).strip()
+    # Tightened per re-review finding 5: matching only "Solmark" would still
+    # pass under a mutation that raised for an unrelated reason. Pin that
+    # the message names the offending text AND both conflicting kinds.
+    with pytest.raises(NameCheckError) as excinfo:
+        extract_candidates(fact_sheet)
+    message = str(excinfo.value)
+    assert "Solmark" in message
+    assert "brand" in message
+    assert "product" in message
+
+
+def test_duplicate_declared_rows_with_the_same_kind_do_not_raise():
+    # The negative case: repetition alone is not the defect, a genuine
+    # kind conflict is.
+    fact_sheet = textwrap.dedent(
+        """
+        # Fact sheet
+
+        ## Invented names
+
+        | Name | Kind |
+        |---|---|
+        | Solmark | brand |
+        | Solmark | brand |
+        """
+    ).strip()
+    candidates = {c.text: c.kind for c in extract_candidates(fact_sheet)}
+    assert candidates["Solmark"] == "brand"
+
+
+def test_render_raises_on_a_pipe_in_the_name():
+    verdicts = [Verdict("Ashfell | Corp", "entity", "clear", "2026-08-24", "")]
+    with pytest.raises(NameCheckError, match="literal"):
+        render_name_check_md(verdicts, "Project Testbed")
+
+
+def test_render_raises_on_a_name_that_would_vanish_as_a_separator_row():
+    # Verdict("---", ...) must not silently round-trip to zero rows.
+    verdicts = [Verdict("---", "entity", "clear", "2026-08-24", "")]
+    with pytest.raises(NameCheckError, match="separator"):
+        render_name_check_md(verdicts, "Project Testbed")
+
+
+def test_render_raises_on_an_empty_name():
+    verdicts = [Verdict("", "entity", "clear", "2026-08-24", "")]
+    # Tightened per re-review finding 5: matching only "separator" is a
+    # message a sibling test (the "---" case) shares, so this test did not
+    # actually pin the empty-specific path. Anchor on the empty-string
+    # repr too, so the test fails if the guard stops recognising blank
+    # text as its own case.
+    with pytest.raises(NameCheckError, match=r"''.*empty"):
+        render_name_check_md(verdicts, "Project Testbed")
+
+
+def test_render_sanitises_a_pipe_in_the_note_without_truncating(tmp_path):
+    long_note = "shares a name with a public figure | possible false positive"
+    verdicts = [
+        Verdict("Ashfell Holdings Limited", "entity", "ambiguous", "2026-08-24", long_note)
+    ]
+    path = tmp_path / "name-check.md"
+    path.write_text(render_name_check_md(verdicts, "Project Testbed"))
+    loaded = load_name_check(path)
+    assert len(loaded) == 1
+    # Sanitised, not truncated at the first pipe: the whole note survives.
+    assert loaded[0].note == long_note.replace("|", "/")
+    assert "possible false positive" in loaded[0].note
+
+
+@pytest.mark.parametrize(
+    "existing_text",
+    ["ashfell holdings limited", " Ashfell Holdings Limited ", "ASHFELL HOLDINGS LIMITED"],
+)
+def test_names_needing_check_does_not_fold_case_or_whitespace(existing_text):
+    # Pin for the exact-match behaviour already shipped: folding case or
+    # whitespace here would create a false "already checked" when the
+    # fact sheet's exact text differs from what was actually searched.
+    candidates = [CandidateName("Ashfell Holdings Limited", "entity")]
+    existing = [Verdict(existing_text, "entity", "clear", "2026-08-24", "")]
+    todo = names_needing_check(candidates, existing)
+    assert [c.text for c in todo] == ["Ashfell Holdings Limited"]
+
+
+
+# ---------------------------------------------------------------------------
+# Fix round 3: the guard is the round trip itself, not a checklist of
+# forbidden shapes. Six bypasses the re-review found against round 2's
+# shape-based guard, plus a positive list of plausible names that must
+# render and load cleanly — a guard that overfires on any of those is a
+# worse outcome than the bug it closes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    [
+        "---",  # already caught by round 2; kept as the control case
+        " - ",
+        "   ---   ",
+        "   ",
+        " : ",
+        "Corrupt\nName Corp Limited",
+        "Carriage\rReturn Ltd",
+    ],
+)
+def test_render_raises_on_names_that_do_not_survive_the_round_trip(bad_name):
+    verdicts = [Verdict(bad_name, "entity", "clear", "2026-08-24", "")]
+    with pytest.raises(NameCheckError):
+        render_name_check_md(verdicts, "Project Testbed")
+
+
+@pytest.mark.parametrize(
+    "good_name",
+    [
+        "Ashfell Ltd",
+        "Ashfell-Brandt Limited",
+        "Ashfell & Co",
+        "Kessler Werke GmbH & Co. KG",
+        "ashfell.example",
+        "Ashfell 2 Limited",
+        "Tab	Separated Ltd",
+        "O’Ashfell Limited",  # curly apostrophe
+        "Ashfell Inc.",  # trailing full stop
+    ],
+)
+def test_render_round_trips_plausible_names_cleanly(good_name, tmp_path):
+    verdicts = [Verdict(good_name, "entity", "clear", "2026-08-24", "a note")]
+    path = tmp_path / "name-check.md"
+    path.write_text(render_name_check_md(verdicts, "Project Testbed"))
+    loaded = load_name_check(path)
+    # Field for field, not just "some row came back" — the whole Verdict
+    # must survive unchanged.
+    assert loaded == verdicts

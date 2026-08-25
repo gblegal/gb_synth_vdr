@@ -1,0 +1,53 @@
+schema_version: 1
+room: "Project Testbed"
+findings:
+  - id: "CORP-1"
+    title: "Change-of-control consent not obtained under the core facility agreement"
+    severity: "critical"
+    workstream: "corporate"
+    multi_document: false
+    source: "01_corporate/1.1_constitutional/1.1.1_constitutional-01.md"
+    location: "Board minute dated 15 December 2025, clause 14.2 cross-reference"
+    substance: "As at the Completion Accounts Date of 31 December 2025, the board minutes of Halstead Fasteners Limited record that the change-of-control notice required under the facility agreement with its senior lender had not yet been served, and completion of the proposed sale would trigger a mandatory prepayment event without that consent."
+    corroboration: []
+    cross_links: []
+    discoverable_from_blind: true
+    audit_note: "Reachable from 1.1.1 without the key: the board minute is headed 'Facility change-of-control consent' and names the same lender and clause reference an auditor can follow independently."
+  - id: "FIN-1"
+    title: "Net debt understated through undisclosed invoice discounting"
+    severity: "high"
+    workstream: "financial"
+    multi_document: false
+    source: "02_financial/2.1_statutory-accounts/2.1.1_statutory-accounts-01.md"
+    location: "Note 18, statutory accounts"
+    substance: "The statutory accounts disclose net debt of GBP 6.2m at the balance sheet date, but the accompanying management commentary omits invoice-discounting drawn against receivables owed by Corvane Retail Group Limited, which understates leverage for the purpose of the completion mechanics."
+    corroboration: []
+    cross_links: []
+    discoverable_from_blind: true
+    audit_note: "Reachable from 2.1.1 without the key: Note 18 states the drawn invoice-discounting facility and cross-refers to the same receivables ledger."
+  - id: "COMM-1"
+    title: "Most-favoured-customer term not mirrored in the supplier agreement"
+    severity: "medium"
+    workstream: "commercial"
+    multi_document: true
+    source: "05_commercial/5.1_customer-contracts/5.1.1_customer-contracts-01.md"
+    location: "Clause 9.3, customer agreement"
+    substance: "The customer agreement with Corvane Retail Group Limited grants a most-favoured-customer pricing right, but the supplier agreement covering the same product range contains no equivalent step-down, so a future price reduction to Corvane Retail Group Limited cannot be passed upstream."
+    corroboration:
+      - "05_commercial/5.2_supplier-contracts/5.2.1_supplier-contracts-01.md"
+    cross_links: []
+    discoverable_from_blind: true
+    audit_note: "Reachable from 5.1.1 + 5.2.1 without the key: both agreements name the same product range, and the supplier agreement's pricing schedule has no matching clause."
+  - id: "ENV-1"
+    title: "Site permit variance at Wexbury not reflected in the compliance register"
+    severity: "low"
+    workstream: "environmental"
+    multi_document: true
+    source: "11_environmental-hs/11.1_permits/11.1.1_permits-01.md"
+    location: "Permit variance letter, Wexbury Industrial Estate"
+    substance: "The environmental permit for the Wexbury Industrial Estate site was varied to reduce a discharge limit, but the variance is not reflected in the most recent site inspection report, which still records the original, higher limit as the operating condition."
+    corroboration:
+      - "11_environmental-hs/11.2_site-reports/11.2.1_site-reports-01.md"
+    cross_links: []
+    discoverable_from_blind: true
+    audit_note: "Reachable from 11.1.1 + 11.2.1 without the key: the permit variance letter and the site report both name the same discharge point and date range."

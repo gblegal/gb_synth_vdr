@@ -1,0 +1,21 @@
+sections:
+  - {number: 1,  dir_name: 01_corporate,               title: Corporate,                     workstream: corporate,     weight: 0.06, subsections: [constitutional, share-capital, board-minutes, group-structure, subsidiaries]}
+  - {number: 2,  dir_name: 02_financial,               title: Financial,                     workstream: financial,     weight: 0.06, subsections: [statutory-accounts, management-accounts, budgets, provisions, working-capital]}
+  - {number: 3,  dir_name: 03_tax,                     title: Tax,                           workstream: tax,           weight: 0.04, subsections: [corporation-tax, vat, employment-taxes, transfer-pricing, correspondence]}
+  - {number: 4,  dir_name: 04_financing-banking,       title: Financing and banking,         workstream: financing,     weight: 0.04, subsections: [facilities, security, guarantees, hedging, covenant-certificates]}
+  - {number: 5,  dir_name: 05_commercial,              title: Commercial,                    workstream: commercial,    weight: 0.11, subsections: [customer-contracts, supplier-contracts, distribution, framework-agreements, ndas]}
+  - {number: 6,  dir_name: 06_intellectual-property,   title: Intellectual property,         workstream: ip,            weight: 0.04, subsections: [registrations, assignments, licences-in, licences-out, disputes]}
+  - {number: 7,  dir_name: 07_information-technology,  title: Information technology,        workstream: it,            weight: 0.03, subsections: [systems, software-licences, hosting, open-source, incidents]}
+  - {number: 8,  dir_name: 08_property,                title: Property,                      workstream: property,      weight: 0.06, subsections: [title, leases, cpse-replies, planning, dilapidations]}
+  - {number: 9,  dir_name: 09_employment,              title: Employment,                    workstream: employment,    weight: 0.07, subsections: [contracts, policies, share-schemes, consultations, disputes]}
+  - {number: 10, dir_name: 10_regulatory-trade,        title: Regulatory and trade,          workstream: regulatory,    weight: 0.06, subsections: [authorisations, correspondence, export-control, sanctions, anti-bribery]}
+  - {number: 11, dir_name: 11_environmental-hs,        title: Environmental and H&S,         workstream: environmental, weight: 0.07, subsections: [permits, site-reports, remediation, hse-notices, waste]}
+  - {number: 12, dir_name: 12_insurance,               title: Insurance,                     workstream: insurance,     weight: 0.03, subsections: [schedule, policies, claims-history, broker-reports, run-off]}
+  - {number: 13, dir_name: 13_pensions,                title: Pensions,                      workstream: pensions,      weight: 0.04, subsections: [trust-deed, valuations, recovery-plans, correspondence, dc-governance]}
+  - {number: 14, dir_name: 14_data-protection,         title: Data protection,               workstream: data,          weight: 0.03, subsections: [ropa, dpias, processor-agreements, breaches, transfers]}
+  - {number: 15, dir_name: 15_litigation,              title: Litigation,                    workstream: litigation,    weight: 0.04, subsections: [schedule, pleadings, correspondence, settlements, provisions]}
+  - {number: 16, dir_name: 16_operations-quality,      title: Operations and quality,        workstream: operations,    weight: 0.05, subsections: [qms, ncr-capa, supply-chain, capacity, business-continuity]}
+  - {number: 17, dir_name: 17_management-presentations, title: Management presentations,     workstream: management,    weight: 0.03, subsections: [information-memorandum, management-presentation, trading-updates]}
+  - {number: 18, dir_name: 18_transaction,             title: Transaction,                   workstream: transaction,   weight: 0.06, subsections: [process-letters, draft-spa, disclosure, qa-log, w-and-i]}
+  - {number: 19, dir_name: 19_esg,                     title: ESG,                           workstream: esg,           weight: 0.03, subsections: [policies, reporting, supply-chain-diligence, climate, assurance]}
+  - {number: 20, dir_name: 20_jv-minority-interests,   title: JV and minority interests,     workstream: jv,            weight: 0.05, subsections: [jv-agreements, board-papers, accounts, correspondence, exit-rights]}

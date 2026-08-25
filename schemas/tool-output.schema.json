@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://synthvdr/schemas/tool-output.schema.json",
+  "title": "synth-vdr tool output",
+  "description": "The shape a diligence tool's findings are read in as, for scoring against a room's answer key via `python3 -m synthvdr score`. room_hash should be the room's `_key/manifest.json` content_hash at the time the tool was run against it — carried through so a scorecard can state whether it was produced against the room it is being scored against.",
+  "type": "object",
+  "required": ["tool", "findings"],
+  "properties": {
+    "tool": {
+      "type": "string",
+      "description": "Name and version of the tool under test, e.g. \"acme/1.0\"."
+    },
+    "room_hash": {
+      "type": "string",
+      "description": "The room's `_key/manifest.json` content_hash at the time this output was produced, if known. Empty or omitted means provenance cannot be verified — the scorecard reports this as UNVERIFIED rather than silently assuming a match."
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/finding" }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "finding": {
+      "type": "object",
+      "required": ["title", "severity", "documents"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Short human-readable title for the reported finding."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low"]
+        },
+        "documents": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Relative paths to the documents this finding cites. Used for the deterministic pre-match against a finding's source and corroboration documents."
+        },
+        "summary": {
+          "type": "string",
+          "description": "Free-text description of the reported finding."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

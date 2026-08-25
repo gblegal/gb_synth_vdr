@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://synthvdr/schemas/distractors.schema.json",
+  "title": "synth-vdr distractors",
+  "description": "The answer-key document listing every planted distractor (an alarming-looking item that resolves to nothing) in a synthetic data room. YAML is canonical; this schema documents the shape for anyone authoring or generating a key by hand.",
+  "type": "object",
+  "required": ["distractors"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "description": "Schema version of this document."
+    },
+    "distractors": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/distractor" }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "distractor": {
+      "type": "object",
+      "required": ["id", "title", "location", "resolution"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable identifier for the distractor, e.g. \"DX-1\"."
+        },
+        "title": {
+          "type": "string",
+          "description": "Short human-readable title."
+        },
+        "shape_matches": {
+          "type": ["string", "null"],
+          "description": "ID of a real finding this distractor is shaped to resemble. Must resolve to a finding id when set."
+        },
+        "location": {
+          "type": "string",
+          "description": "Relative path to the document that raises the alarm."
+        },
+        "resolution": {
+          "type": "string",
+          "description": "Relative path to the document that resolves the alarm. Must differ from location — the resolving evidence must live in a separate document."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
