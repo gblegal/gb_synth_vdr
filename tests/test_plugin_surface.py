@@ -27,11 +27,14 @@ resolution is forced to be noticed, not quietly tolerated forever.
 import json
 import re
 from pathlib import Path
+from typing import List
 
 import pytest
 import yaml
 
 import synthvdr
+from synthvdr.qa.structural import SLOT_REF, parse_gaps_allowlist
+from synthvdr.schema import load_distractors, load_findings, render_findings_md, validate
 
 ROOT = Path(__file__).resolve().parent.parent
 SKILL_NAMES = ("vdr-scope", "vdr-findings", "vdr-build", "vdr-qa", "vdr-package", "vdr-score")
@@ -45,6 +48,7 @@ PENDING_SKILLS = ("vdr-build", "vdr-qa", "vdr-package", "vdr-score")
 PENDING_AGENTS = ("vdr-author", "vdr-auditor")
 
 FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
+FENCED_YAML = re.compile(r"```yaml\n(.*?)\n```", re.DOTALL)
 
 
 def _pending_param(name: str, pending: tuple) -> "pytest.param":
@@ -77,6 +81,44 @@ def body_after_frontmatter(path: Path) -> str:
     match = FRONTMATTER.match(text)
     assert match, f"{path} has no YAML frontmatter"
     return text[match.end():]
+
+
+def yaml_examples(path: Path) -> List[str]:
+    """Every fenced ` ```yaml ` code block's raw text in a skill/agent markdown file.
+
+    Reusable across tasks: a skill that documents a YAML artefact by literal example
+    (findings.yaml, distractors.yaml, gaps.yaml here in Task 17; wave manifests,
+    adjudications.yaml, tool-output reports, etc. in Tasks 18-19) is checked by finding its
+    example among these blocks and running it through the real loader — never by the test
+    carrying its own copy of the expected content, the same rule the cross-language rotation
+    test in tests/test_render_docx.py follows by reading its formula out of the shipped
+    pdf.mjs rather than a Python re-implementation of it.
+    """
+    return FENCED_YAML.findall(_read(path))
+
+
+def find_example_by_top_level_key(blocks: List[str], key: str, source: Path) -> str:
+    """The one fenced YAML block, among `blocks`, whose parsed top-level mapping has `key`.
+
+    Fails loudly rather than guessing if zero or more than one block matches: a skill is
+    expected to carry exactly one complete, canonical example per artefact it documents, and
+    either failure mode here means the skill and this test have drifted apart in a way worth
+    seeing immediately, not silently taking "whichever matched first".
+    """
+    matches = []
+    for block in blocks:
+        try:
+            doc = yaml.safe_load(block)
+        except yaml.YAMLError:
+            continue
+        if isinstance(doc, dict) and key in doc:
+            matches.append(block)
+    assert matches, f"{source}: no fenced ```yaml block with a top-level {key!r} key"
+    assert len(matches) == 1, (
+        f"{source}: {len(matches)} fenced ```yaml blocks have a top-level {key!r} key — "
+        "expected exactly one canonical example"
+    )
+    return matches[0]
 
 
 @pytest.mark.parametrize("name", [_pending_param(n, PENDING_SKILLS) for n in SKILL_NAMES])
@@ -134,6 +176,19 @@ def test_findings_skill_states_the_hard_gate_before_authoring():
     assert "no authoring" in body or "before any authoring" in body
 
 
+def test_scope_skill_checks_for_an_existing_room_before_overwriting():
+    """Fix round 1, F3: a literal re-run of /vdr-scope must not silently overwrite a fact
+    sheet and name-check record that may already be signed off at Gate A — the name-check
+    verdicts each cost a real WebSearch, so silently discarding them is the same destructive-
+    silent-write shape this project has fixed at the code level three times already (see the
+    ledger's Task 7 rulings). Pinning the language rather than just the earlier prose fix,
+    since a future edit could easily soften this back into "just skip the interview".
+    """
+    body = _read(ROOT / "skills" / "vdr-scope" / "SKILL.md").lower()
+    assert "already exist" in body
+    assert "overwrit" in body
+
+
 def test_no_skill_tells_the_reader_to_hand_over_key_material():
     for name in SKILL_NAMES:
         path = ROOT / "skills" / name / "SKILL.md"
@@ -143,3 +198,60 @@ def test_no_skill_tells_the_reader_to_hand_over_key_material():
             # missing file is not itself an instance of that property being violated.
             continue
         assert "hand over _key" not in _read(path).lower()
+
+
+def test_findings_and_distractors_examples_in_skill_validate_cleanly(tmp_path):
+    """The findings.yaml/distractors.yaml examples `/vdr-findings` tells an author to copy
+    must themselves load and validate through the real `synthvdr.schema` functions.
+
+    Fix round 1 found the skill described these fields in prose without ever showing the
+    shape, and an omitted `title`/`severity`/`workstream` breaks `load_findings` immediately
+    for whoever follows the prose literally. Reading the examples straight out of the shipped
+    skill file (not a copy kept here) means a future edit that drifts the example — drops a
+    required field, breaks `validate()`'s cross-checks between findings and distractors — is
+    caught in the commit that drifts it, instead of three tasks later when an author copies a
+    now-broken example into a real room and Gate B's own validate step rejects it.
+    """
+    path = ROOT / "skills" / "vdr-findings" / "SKILL.md"
+    blocks = yaml_examples(path)
+    findings_yaml = find_example_by_top_level_key(blocks, "findings", path)
+    distractors_yaml = find_example_by_top_level_key(blocks, "distractors", path)
+
+    findings_path = tmp_path / "findings.yaml"
+    findings_path.write_text(findings_yaml, encoding="utf-8")
+    distractors_path = tmp_path / "distractors.yaml"
+    distractors_path.write_text(distractors_yaml, encoding="utf-8")
+
+    findings = load_findings(findings_path)
+    distractors = load_distractors(distractors_path)
+    assert findings.findings, "the findings.yaml example in the skill has no findings"
+    assert distractors, "the distractors.yaml example in the skill has no distractors"
+
+    errors = validate(findings, distractors)
+    assert errors == [], f"the skill's own example fails validate(): {errors}"
+
+    # render_findings_md is the other real consumer step 5 of the skill tells an author to
+    # call; it must not raise on the skill's own example either.
+    render_findings_md(findings, "Project Example")
+
+
+def test_gaps_example_in_skill_matches_gate_9s_real_parser():
+    """The gaps.yaml example `/vdr-findings` tells an author to copy must parse through the
+    exact function gate 9 uses (`synthvdr.qa.structural.parse_gaps_allowlist`) — not a
+    reimplementation of its shape kept in this test — and the `ref` it declares must actually
+    be a slot-shaped token gate 9's `SLOT_REF` would recognise, or the example teaches the
+    wrong lesson even though it happens to parse.
+    """
+    path = ROOT / "skills" / "vdr-findings" / "SKILL.md"
+    gaps_yaml = find_example_by_top_level_key(yaml_examples(path), "gaps", path)
+
+    allowed = parse_gaps_allowlist(gaps_yaml)
+    assert allowed, "the gaps.yaml example in the skill allowlists nothing"
+    for ref in allowed:
+        assert SLOT_REF.fullmatch(ref), f"{ref!r} is not a slot-shaped ref gate 9 would recognise"
+
+    # "reason" is this skill's own discipline, not gate 9's — parse_gaps_allowlist
+    # deliberately never reads it, so it is checked here, straight off the parsed document.
+    doc = yaml.safe_load(gaps_yaml)
+    for row in doc["gaps"]:
+        assert row.get("reason"), f"gaps.yaml example row {row!r} has no reason"

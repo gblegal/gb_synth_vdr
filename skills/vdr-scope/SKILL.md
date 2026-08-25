@@ -9,6 +9,19 @@ Produces the room's foundations — the fact sheet, `room.conf`, the slot index,
 name-collision record — and stops at **Gate A**. Nothing after this skill runs until the
 user signs Gate A off.
 
+## 0. Check whether this room is already scoped
+
+Before touching anything, check the current directory for `room.conf`, `_key/fact-sheet.md`
+and `_key/name-check.md`. If any of them already exist, **stop and tell the user exactly
+what you found** — the room codename, and (if `_key/name-check.md` exists) how many names it
+already has verdicts for — rather than silently proceeding into step 1. A fresh run of this
+skill invents a brand-new deal from scratch, and writing over an already-scoped room
+overwrites a fact sheet that may already be signed off at Gate A, and a name-check record
+whose verdicts each cost a real WebSearch — work a silent re-run would throw away with
+nothing to show for it. Only continue past an existing room after the user explicitly says
+to rescope or start over; otherwise stop here and ask what they want instead (e.g. resume at
+`/vdr-findings`, since Gate A may already be closed).
+
 ## 1. One question, then get on with it
 
 This is not a questionnaire. Ask the user roughly one thing:
@@ -21,7 +34,9 @@ otherwise, and that the other sizes are `XS` 40 / `S` 60 / `L` 800 / `XL` 2,000+
 line of reply, or no reply beyond "make one up", is enough to proceed. Invent everything
 else yourself: deal structure, entity tree, cast, sites, financials, dates, section budget.
 
-If the user supplies an existing `room.conf`, skip the interview entirely and scope from it.
+If the user hands you a `room.conf` to seed a repeatable build (distinct from step 0's case
+of one already sitting in the working directory from a prior run), skip the interview
+entirely and scope from the values it supplies.
 
 ## 2. Invent the deal and write the fact sheet
 

@@ -275,6 +275,28 @@ def gate_08_carrier_census(ctx):
     )
 
 
+def parse_gaps_allowlist(gaps_yaml_text: str) -> set:
+    """The set of allowlisted cross-reference refs from a `_key/gaps.yaml` document's text.
+
+    This is the exact shape gate 9 requires — a mapping with a `gaps` list, each row a
+    mapping with at least a `ref` (coerced to `str`, so a numeric-looking ref YAML would
+    otherwise hand back as a float or int still compares correctly against the string refs
+    `SLOT_REF` extracts from prose):
+
+        gaps:
+          - ref: "3.2.9"
+            reason: "..."
+
+    `reason` is not read here — it exists for whoever maintains the allowlist, not for this
+    gate. Factored out of `gate_09_xrefs` so a skill's own literal `gaps.yaml` example can be
+    checked against this exact parser (see tests/test_plugin_surface.py) rather than a
+    hand-written reimplementation of it that could silently drift from what the gate does.
+    Raises the same `KeyError`/`TypeError` a malformed row always raised inline here.
+    """
+    doc = yaml.safe_load(gaps_yaml_text) or {}
+    return {str(row["ref"]) for row in (doc.get("gaps") or [])}
+
+
 def gate_09_xrefs(ctx):
     """Flag a slot-shaped reference (N.N.N) in the blind tree's prose that
     resolves to no known slot and no allowlisted gap.
@@ -325,8 +347,7 @@ def gate_09_xrefs(ctx):
     gaps_path = ctx.key_root / "gaps.yaml"
     allowed = set()
     if gaps_path.is_file():
-        doc = yaml.safe_load(gaps_path.read_text(encoding="utf-8")) or {}
-        allowed = {str(row["ref"]) for row in (doc.get("gaps") or [])}
+        allowed = parse_gaps_allowlist(gaps_path.read_text(encoding="utf-8"))
     dangling = []
     out_of_range = []
     for path in files:
