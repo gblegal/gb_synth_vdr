@@ -20,7 +20,7 @@ from the first.**
   document is **byte-identical** to its blind twin; a document carrying evidence is the
   blind file plus **one trailing annotation block** naming the finding.
 - **The answer key** (`_key/`) is everything else: the invented facts, the findings
-  registry, the distractors, the build record and the release manifest.
+  registry, the distractors, the build status and the release manifest.
 
 Two consequences fall out of this and drive most of the code:
 
@@ -178,8 +178,10 @@ judgement-shaped work. Anything that must be identical across runs lives here.
 | `qa/` | The seventeen gates (`structural`, `leakage`, `depth`, `integrity`, `renders`) and the runner that enforces how they report. |
 | `render/` | The optional DOCX (`docx.py`) and PDF (`pdf.mjs`, a separate Node process) renders. Never imported at core-build time. |
 
-Two separate CLIs, deliberately not sharing conventions beyond their general shape:
-`python3 -m synthvdr.qa` runs the gates; `python3 -m synthvdr score` marks a tool's output.
+Two separate CLIs, sharing no conventions beyond their general shape: `python3 -m
+synthvdr.qa` runs the gates; `python3 -m synthvdr score` marks a tool's output. The split is
+structural rather than chosen — `synthvdr.qa` is a package carrying its own `__main__.py`,
+so it never executes `synthvdr/__main__.py`. See [TECHNICAL-NOTES.md](TECHNICAL-NOTES.md) §2.
 
 ### Why `names` reads the room backwards
 
@@ -236,14 +238,15 @@ the only mode that verifies a room end-to-end — the plain mode is a mid-build 
 that legitimately skips gates whose inputs do not exist yet.
 
 Gate caveats — what each gate can and cannot see — are in
-[TECHNICAL-NOTES.md](TECHNICAL-NOTES.md).
+[TECHNICAL-NOTES.md](TECHNICAL-NOTES.md) §6.
 
 ---
 
 ## 7. Invariants
 
 These are the properties everything else assumes. Breaking one is a design change, not a
-refactor.
+refactor. The rulings behind them, including options deliberately not taken, are in the
+build ledger — kept outside this repository.
 
 **YAML is canonical.** `_key/findings.yaml` and `_key/distractors.yaml` are the answer key;
 `_key/findings.md` is generated from them and must never be hand-edited. Nothing else in the
@@ -278,6 +281,3 @@ another. This is an interlock against misconfiguration, not a security control; 
 against it. Without that check, scoring one room's output against another room's key
 produces a confident, precise, entirely meaningless number that nothing in the pipeline
 could catch.
-
-The rulings behind these invariants, including options deliberately not taken, are in the
-build ledger — kept outside this repository.
