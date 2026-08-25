@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import List, Set
+from typing import Set
 
 ENTITY_SUFFIXES = (
     "Limited", "Ltd", "PLC", "LLP", "LLC", "Inc", "Incorporated",
@@ -44,30 +44,34 @@ def entity_tokens(text: str) -> Set[str]:
     return {match.group(1).strip() for match in _ENTITY.finditer(text)}
 
 
-def trailing_subphrases(candidate: str) -> List[str]:
-    """`candidate`'s trailing word sub-phrases, longest to shortest.
-
-    For "See Kessler Werke GmbH": ["See Kessler Werke GmbH", "Kessler Werke
-    GmbH", "Werke GmbH", "GmbH"]. Internal whitespace is normalised via
-    `str.split()` before re-joining with a single space, since a candidate
-    captured by entity_tokens may carry a tab between words where a
-    cast-list entry is written with a plain space.
-    """
-    words = candidate.split()
-    return [" ".join(words[i:]) for i in range(len(words))]
-
-
 def covered_by_cast(candidate: str, cast: Set[str]) -> bool:
-    """True if some trailing sub-phrase of `candidate` is on the cast list.
+    """True if `candidate` is on the cast list, or becomes a cast entry once
+    exactly one leading word is dropped.
 
-    This is the property that replaces trying to guess which leading words
-    can precede a real name: a candidate is accounted for the moment ANY
-    suffix of its word sequence — down to its last word alone — matches an
-    entry the cast list already vouches for, regardless of what leading
-    word(s) the regex greedily pulled in ahead of it. A candidate is only
-    "unchecked" when none of its trailing sub-phrases is on the list.
+    Bounded to one word deliberately, and NOT an unbounded walk of every
+    trailing sub-phrase — an earlier version of this function tried that
+    and it was too weak in the other direction: it also matched a
+    genuinely different, unchecked entity whose name happened to end in a
+    checked one's words ("Ashfell Trading Holdings Limited" against a cast
+    entry of just "Holdings Limited"), and let a single stray one-word cast
+    row ("GmbH") blanket-cover an entire suffix family. The regex only ever
+    absorbs *capitalised* words ahead of a recognised suffix, so the
+    false-positive shape this exists to fix is a single sentence-initial or
+    preposition-like word ("The", "See", "Under", "Per", "Registered") in
+    front of a genuine name — one word is the right bound for that. A real
+    entity's distinguishing prefix is essentially always more than one
+    word; where it is not, flagging is the safe direction for this gate.
+    Internal whitespace is normalised via `str.split()` before re-joining
+    with a single space, since a candidate captured by entity_tokens may
+    carry a tab between words where a cast-list entry is written with a
+    plain space.
     """
-    return any(phrase in cast for phrase in trailing_subphrases(candidate))
+    if candidate in cast:
+        return True
+    words = candidate.split()
+    if len(words) < 2:
+        return False
+    return " ".join(words[1:]) in cast
 
 
 def cast_list(path: Path) -> Set[str]:

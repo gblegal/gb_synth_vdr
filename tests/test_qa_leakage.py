@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from synthvdr.names import covered_by_cast, entity_tokens, trailing_subphrases
+from synthvdr.names import covered_by_cast, entity_tokens
 from synthvdr.qa.leakage import (
     ANSWER_KEY_NOUNS,
     BUILD_VOCABULARY,
@@ -208,35 +208,49 @@ def test_entity_tokens_matches_suffixes_case_insensitively():
 
 
 # ---------------------------------------------------------------------------
-# Review finding D (reopened) — the first fix enumerated leading words
-# ("The") instead of stating the property. The property: a candidate is
-# only "unchecked" if NO trailing sub-phrase of it is on the cast list —
-# this needs no list of words that might precede a real name, because it
-# reconciles from the right-hand end of the phrase, not the left.
+# Review finding D (reopened twice) — round 2's fix enumerated leading words
+# ("The") instead of stating a property. Its replacement property — cover a
+# candidate if ANY trailing sub-phrase of it is on the cast list — was
+# itself too weak: it also covers a genuinely different, unchecked entity
+# whose name happens to end in a checked one's words ("Ashfell Trading
+# Holdings Limited" against a cast entry of just "Holdings Limited"), and
+# lets one stray one-word cast row ("GmbH") blanket-cover a whole suffix
+# family. The tightened property: a candidate is covered only if it is
+# itself on the cast list, or becomes a cast entry once exactly ONE leading
+# word is dropped — bounded because the regex only ever absorbs a single
+# sentence-initial or preposition-like word ahead of a genuine name.
 # ---------------------------------------------------------------------------
 
 
-def test_trailing_subphrases_runs_longest_to_shortest():
-    assert trailing_subphrases("See Kessler Werke GmbH") == [
-        "See Kessler Werke GmbH",
-        "Kessler Werke GmbH",
-        "Werke GmbH",
-        "GmbH",
-    ]
+@pytest.mark.parametrize(
+    "candidate, cast, expected",
+    [
+        ("See Kessler Werke GmbH", {"Kessler Werke GmbH"}, True),
+        ("The Ashfell Holdings Limited", {"Ashfell Holdings Limited"}, True),
+        ("Registered Ashfell Holdings Limited", {"Ashfell Holdings Limited"}, True),
+        ("Kessler Werke GmbH", {"Kessler Werke GmbH"}, True),
+        # A different, unchecked entity whose name happens to end in a
+        # checked one's words must still be flagged — not covered.
+        ("Ashfell Trading Holdings Limited", {"Holdings Limited"}, False),
+        # A bare one-word cast row must not blanket-cover a suffix family.
+        ("Ashfell Trading GmbH", {"GmbH"}, False),
+    ],
+)
+def test_covered_by_cast_drops_at_most_one_leading_word(candidate, cast, expected):
+    assert covered_by_cast(candidate, cast) is expected
 
 
-def test_covered_by_cast_is_true_for_every_cast_entry_under_any_leading_word():
-    # Property, not examples: for EVERY name actually on the cast list, that
-    # name preceded by an arbitrary capitalised leading word must register
-    # as covered — the mechanism must not depend on which leading words
-    # anyone happened to think of.
+def test_covered_by_cast_property_one_leading_word_covered_two_flagged():
+    # Property, not examples: for EVERY name on the cast list, prefixing it
+    # with exactly one capitalised word must register as covered, and
+    # prefixing it with two must register as flagged — the bound is on the
+    # NUMBER of leading words removed, not on which words they are.
     cast = {"Ashfell Holdings Limited", "Kessler Werke GmbH", "Vantage Underwriting PLC"}
-    leading_words = ("See", "Under", "Per", "Registered", "Formerly", "Regarding")
     for name in cast:
-        for leading in leading_words:
-            candidate = f"{leading} {name}"
-            assert covered_by_cast(candidate, cast), candidate
-    assert not covered_by_cast("Completely Unrelated Entity Limited", cast)
+        one_word = f"See {name}"
+        two_words = f"We See {name}"
+        assert covered_by_cast(one_word, cast), one_word
+        assert not covered_by_cast(two_words, cast), two_words
 
 
 @pytest.mark.parametrize(
