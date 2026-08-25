@@ -54,10 +54,10 @@ findings:
     severity: critical
     workstream: environmental
     multi_document: true
-    source: 11_environmental-hs/11.2_site-reports/11.2.4_phase-2.md
+    source: 11_environmental-hs/11.2_site-reports/11.2.4_site-reports-04.md
     location: "Table 4, remediation estimate"
     corroboration:
-      - 02_financial/2.4_provisions/2.4.2_environmental-provision.md
+      - 02_financial/2.4_provisions/2.4.2_provisions-02.md
     substance: >
       Phase 2 estimates a remediation cost far above the balance-sheet provision, and the
       indemnity that would have covered the gap expired before signing.
@@ -66,7 +66,7 @@ findings:
     severity: high
     workstream: financial
     multi_document: false
-    source: 02_financial/2.4_provisions/2.4.1_provisions-note.md
+    source: 02_financial/2.4_provisions/2.4.1_provisions-01.md
     location: "Note 14"
     substance: >
       The disclosed provision does not reflect the remediation estimate carried elsewhere in
@@ -86,7 +86,7 @@ token you declared in `room.conf`'s `FINDING_PREFIXES` at scope time.
 
 **`source` and every `corroboration` entry are paths relative to the blind tree root —
 never prefixed with `BLIND_TREE`'s own name (`data-room` by convention).** A path like
-`11_environmental-hs/11.2_site-reports/11.2.4_phase-2.md` is correct; the same path with a
+`11_environmental-hs/11.2_site-reports/11.2.4_site-reports-04.md` is correct; the same path with a
 leading `data-room/` is not, and is silently wrong in a way nothing here catches: it still
 loads, still validates, and only fails later, when `/vdr-build` calls
 `synthvdr.twin.build_flagged_tree` and it raises `TwinError: finding evidence path(s) not
@@ -128,8 +128,8 @@ distractors:
   - id: DX-1
     title: Alarming-looking regulator notice, fully remediated
     shape_matches: ENV-1
-    location: 11_environmental-hs/11.4_hse-notices/11.4.2_improvement-notice.md
-    resolution: 11_environmental-hs/11.4_hse-notices/11.4.3_closure-letter.md
+    location: 11_environmental-hs/11.4_hse-notices/11.4.2_hse-notices-02.md
+    resolution: 11_environmental-hs/11.4_hse-notices/11.4.3_hse-notices-03.md
 ```
 
 `id`, `title`, `location` and `resolution` are required — `load_distractors` raises

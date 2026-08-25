@@ -64,6 +64,21 @@ def _subsection_name(section: Section, position: int) -> str:
     return f"{section.number}.{index + 1}_{section.subsections[index]}"
 
 
+def slot_slug(section: Section, sub_index: int, ordinal: int) -> str:
+    """The exact filename stem (no `.md`) `build_slot_manifest` gives the `ordinal`-th
+    (1-based) slot at `section`'s `sub_index`-th (0-based) subsection.
+
+    Factored out of the loop below so anything that needs to know "what filename would
+    this tool actually emit for this position" — a test validating a skill's example
+    evidence paths against the real naming scheme, say — calls this rather than keeping a
+    second copy of the `f"{slot_id}_{name}-{ordinal:02d}"` format that could silently drift
+    from it. Same discipline as `_subsection_name` above, which this shares its two inputs
+    with.
+    """
+    slot_id = f"{section.number}.{sub_index + 1}.{ordinal}"
+    return f"{slot_id}_{section.subsections[sub_index]}-{ordinal:02d}"
+
+
 def build_slot_manifest(pack: DomainPack, preset: SizePreset) -> List[Slot]:
     allocation = _allocate(pack, preset.docs)
     slots: List[Slot] = []
@@ -76,7 +91,7 @@ def build_slot_manifest(pack: DomainPack, preset: SizePreset) -> List[Slot]:
             ordinal = per_sub[sub_index]
             subsection = _subsection_name(section, position)
             slot_id = f"{section.number}.{sub_index + 1}.{ordinal}"
-            slug = f"{slot_id}_{section.subsections[sub_index]}-{ordinal:02d}"
+            slug = slot_slug(section, sub_index, ordinal)
             tier = TIER_ANCHOR if position < max(1, round(count * 0.35)) else TIER_FILLER
             slots.append(
                 Slot(

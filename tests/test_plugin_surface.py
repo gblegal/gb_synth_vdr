@@ -56,7 +56,7 @@ from synthvdr.score import (
     load_adjudications,
     validate_adjudications,
 )
-from synthvdr.slots import _subsection_name
+from synthvdr.slots import _subsection_name, slot_slug
 from synthvdr.twin import TwinError, build_flagged_tree
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -272,11 +272,27 @@ def _valid_subsection_names(section) -> set:
     return {_subsection_name(section, i) for i in range(len(section.subsections))}
 
 
+FILENAME_SLOT_ID = re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{1,3})_")
+
+
 def _assert_path_matches_the_domain_pack(rel: str, owner: str, field: str) -> None:
-    """The section- and subsection-level oracle: `rel`'s first segment must be a real
-    section directory, and — if a second segment is present — it must be one of that
-    section's real subsection folder names, in the domain pack's own ordering. Neither fact
-    comes from the example; both come from `_domain_pack()` / `_valid_subsection_names()`.
+    """The section-, subsection- and FILENAME-level oracle: `rel`'s first segment must be a
+    real section directory, its second segment (if present) one of that section's real
+    subsection folder names, and — for a markdown path with all three segments — its
+    filename must be EXACTLY what `synthvdr.slots.build_slot_manifest` would emit for that
+    section/subsection/ordinal. None of these three facts comes from the example; all three
+    come from `_domain_pack()` and `synthvdr.slots.slot_slug`.
+
+    Final review, F10: every prior round of this oracle checked the section and subsection
+    segments but never the filename itself, so every shipped evidence-path example used an
+    invented, descriptive filename (`11.2.4_phase-2.md`, `5.2.1_master-supply-agreement.md`,
+    ...) that `build_slot_manifest` can never actually produce — it only ever emits
+    `<slot-id>_<subsection-name>-<NN>.md`, never a freely chosen name. An author who copied
+    one of those examples literally would author a document at a path `_key/anchors.csv`
+    never lists, so it could never be selected as a real slot to author against. Checked only
+    for `.md` paths: `Slot.rel_path` always ends `.md` (see slots.py), so a `.csv` evidence
+    path is necessarily hand-authored outside the slot manifest and has no "expected filename"
+    this oracle could check it against.
     """
     pack = _domain_pack()
     real_dirs = set(pack.section_dirs())
@@ -296,6 +312,23 @@ def _assert_path_matches_the_domain_pack(rel: str, owner: str, field: str) -> No
     assert subsection in valid_subsections, (
         f"{owner}: {field} {rel!r} names subsection {subsection!r}, which {section_dir} does "
         f"not have — its real subsections, in order, are: {sorted(valid_subsections)}"
+    )
+    if len(segments) < 3 or not rel.endswith(".md"):
+        return
+    filename = segments[2]
+    stem = filename[: -len(".md")]
+    match = FILENAME_SLOT_ID.match(stem)
+    assert match, (
+        f"{owner}: {field} {rel!r}'s filename {filename!r} does not start with a "
+        "<section>.<subsection>.<ordinal>_ slot id, which every real slot's filename does"
+    )
+    sub_number, ordinal = int(match.group(2)), int(match.group(3))
+    expected_stem = slot_slug(section, sub_number - 1, ordinal)
+    assert stem == expected_stem, (
+        f"{owner}: {field} {rel!r} names a filename build_slot_manifest can never emit for "
+        f"this position — expected {expected_stem + '.md'!r}. build_slot_manifest only ever "
+        "names a slot <slot-id>_<subsection-name>-<NN>.md; a descriptive filename like this "
+        "one is not a real, authorable slot"
     )
 
 

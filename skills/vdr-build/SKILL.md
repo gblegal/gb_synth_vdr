@@ -161,7 +161,7 @@ findings:
     severity: medium
     workstream: financial
     multi_document: false
-    source: 02_financial/2.1_statutory-accounts/2.1.3_escrow-notice.md
+    source: 02_financial/2.1_statutory-accounts/2.1.3_statutory-accounts-03.md
     location: "Clause 4.2"
     substance: >
       The escrow release notice references a completion accounts adjustment mechanism that
@@ -171,10 +171,10 @@ findings:
     severity: high
     workstream: operations
     multi_document: true
-    source: 16_operations-quality/16.3_supply-chain/16.3.5_supplier-list.md
+    source: 16_operations-quality/16.3_supply-chain/16.3.5_supply-chain-05.md
     location: "Row 3, annual spend column"
     corroboration:
-      - 05_commercial/5.2_supplier-contracts/5.2.1_master-supply-agreement.md
+      - 05_commercial/5.2_supplier-contracts/5.2.1_supplier-contracts-01.md
     substance: >
       One supplier accounts for the majority of a key input's annual spend, and the master
       supply agreement contains no minimum-volume or exclusivity carve-out addressing that
@@ -185,7 +185,7 @@ new_findings:
     severity: high
     workstream: environmental
     multi_document: false
-    source: 11_environmental-hs/11.1_permits/11.1.2_variation-notice.md
+    source: 11_environmental-hs/11.1_permits/11.1.2_permits-02.md
     location: "Condition 7"
     substance: >
       A permit variation notice tightens a discharge limit the room's other environmental
