@@ -162,6 +162,32 @@ Use `render_name_check_md` rather than hand-writing the table: it is the exact f
 raises rather than silently corrupting the record if a name cannot survive being written into
 a pipe-table cell and read back unchanged.
 
+Then run gate 14's own mechanism over the fact sheet, against the record you just wrote:
+
+```bash
+python3 -c "
+from pathlib import Path
+from synthvdr.names import cast_list, mask_cast_names, entity_tokens
+text = Path('_key/fact-sheet.md').read_text(encoding='utf-8')
+residue = entity_tokens(mask_cast_names(text, cast_list(Path('_key/name-check.md'))))
+print(sorted(residue) or 'clean')
+"
+```
+
+This is not the same check as the extractor above and does not replace it. `extract_candidates`
+asks what the fact sheet declares; this asks what gate 14 will still see once every declared
+entity has been masked out — the two disagree exactly where a name is present in the prose but
+missing from, or miscategorised in, the record. Anything it prints is a name gate 14 will fail
+on later, found now, before a single document exists to have inherited it. Every hit is one of
+three things, and all three are fixed here rather than at build time:
+
+- an entity you invented and never declared — add it to `## Cast` or `## Invented names`, and
+  check it like any other name;
+- an entity declared with a non-`entity` Kind, so `cast_list` never masked it — correct the
+  Kind;
+- a fragment of a name the mask could not match as written. Reflowing the fact sheet so the
+  name sits on one line is the usual fix.
+
 Tell the user the check's real limit, in these terms or close to them: a search returning
 nothing is not proof a name doesn't exist — dormant companies, non-UK registers and
 non-English markets won't surface, and a company register only covers companies, so a brand
