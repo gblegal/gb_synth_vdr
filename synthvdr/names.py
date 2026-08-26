@@ -133,12 +133,37 @@ def mask_cast_names(text: str, cast: Set[str]) -> str:
     Matching allows any run of spaces or tabs between a name's words, since
     a name wrapped across a table cell or padded in a document is the same
     name as the one the cast list writes with single spaces.
+
+    Matching is also CASE-INSENSITIVE, for the same reason and to the same
+    end as `entity_tokens` matching its suffixes that way. The two are one
+    mechanism — mask, then scan the residue — and while they disagreed
+    about case the scan could report a name the mask had been handed. An
+    execution block ("SIGNED for and on behalf of ASHFELL HOLDINGS
+    LIMITED", which is how a deed conventionally signs) failed to mask
+    against the cast's "Ashfell Holdings Limited", then matched
+    `entity_tokens`' own case-insensitive suffix and came back as an
+    unchecked name. So did any half-way rendering: "Ashfell Holdings
+    LIMITED", "Kessler Werke GMBH".
+
+    This widens what a cast entry deletes, which is worth stating against
+    the accepted residual in the module docstring — but it cannot widen it
+    into a new blind spot, because every extra occurrence it now removes is
+    a rendering of a name that was already checked. What the residue loses
+    is text `entity_tokens` would have attributed to a registered entity
+    anyway; a genuinely unknown name in any case still survives to be
+    reported, which the two all-caps controls in
+    `test_gate_14_masks_the_cast_before_scanning_the_residue` pin.
     """
     for name in sorted(cast, key=lambda entry: (-len(entry), entry)):
         words = name.split()
         if not words:
             continue
-        text = re.sub(r"[ \t]+".join(re.escape(word) for word in words), " ", text)
+        text = re.sub(
+            r"[ \t]+".join(re.escape(word) for word in words),
+            " ",
+            text,
+            flags=re.IGNORECASE,
+        )
     return text
 
 

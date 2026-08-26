@@ -273,8 +273,19 @@ def test_entity_tokens_still_detects_the_real_suffix_in_its_canonical_case():
         ("Duly Registered Ashfell Holdings Limited filed.", "PASS"),
         ("The Ashfell Holdings Limited signed.", "PASS"),
         ("Ashfell Holdings Limited signed.", "PASS"),
+        # An execution block names the same registered company in capitals,
+        # which is how deeds conventionally sign. Masking was case-sensitive
+        # while the suffix match was not, so the cast entry failed to mask
+        # and the caps rendering came back as an unchecked name.
+        ("SIGNED for and on behalf of ASHFELL HOLDINGS LIMITED", "PASS"),
+        ("EXECUTED as a deed by KESSLER WERKE GMBH", "PASS"),
+        # The same asymmetry with only the suffix in capitals.
+        ("The deed was sealed by Ashfell Holdings LIMITED.", "PASS"),
         # ...and an entity nobody checked is still caught.
         ("A deed with Unlisted Trading Limited.", "FAIL"),
+        # Caps must not become a way to smuggle an unchecked entity past the
+        # gate: the widened mask must still leave a genuinely unknown name.
+        ("A DEED WITH UNLISTED TRADING LIMITED.", "FAIL"),
     ],
 )
 def test_gate_14_masks_the_cast_before_scanning_the_residue(room, prose, expected):
@@ -334,6 +345,22 @@ def test_mask_cast_names_removes_the_longest_entry_first():
     )
     assert "Ashfell" not in residue
     assert entity_tokens(residue) == set()
+
+
+def test_mask_cast_names_matches_a_cast_entry_whatever_its_case():
+    # entity_tokens matches the SUFFIX case-insensitively by design
+    # ("Kessler Werke GMBH" and "Ashfell Trading limited" must both be
+    # detected), but the mask that runs first matched the cast entry
+    # exactly. The two halves of one mechanism disagreed, so any rendering
+    # of a registered name other than the cast list's own survived masking
+    # and was reported as unchecked.
+    for rendering in (
+        "ASHFELL HOLDINGS LIMITED",
+        "Ashfell Holdings LIMITED",
+        "ashfell holdings limited",
+    ):
+        residue = mask_cast_names(rendering, {"Ashfell Holdings Limited"})
+        assert entity_tokens(residue) == set(), rendering
 
 
 def test_gate_14_reports_the_right_name_when_a_shorter_cast_entry_is_nested(room):
