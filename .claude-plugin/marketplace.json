@@ -1,11 +1,14 @@
 {
   "name": "synth-vdr",
   "owner": { "name": "Greg Baker" },
+  "description": "Generate synthetic M&A virtual data rooms with a verified ground-truth answer key, for evaluating document-review and due-diligence AI.",
   "plugins": [
     {
       "name": "synth-vdr",
       "source": "./",
-      "description": "Generate synthetic M&A virtual data rooms with a verified ground-truth answer key, for evaluating document-review and due-diligence AI."
+      "version": "0.2.1",
+      "description": "Generate synthetic M&A virtual data rooms with a verified ground-truth answer key, for evaluating document-review and due-diligence AI.",
+      "category": "productivity"
     }
   ]
 }

@@ -459,6 +459,18 @@ def test_plugin_manifest_version_agrees_with_package_version():
         f"pyproject.toml says {declared}, synthvdr.__version__ says {synthvdr.__version__}"
     )
 
+    # And a fourth time in the marketplace entry, which is the one that decides what
+    # Claude Code offers. This repo IS its own marketplace (`"source": "./"`, registered
+    # as a git source pointing at this remote), so master is the published artefact and
+    # this entry is the published manifest — bumping the other three while leaving this
+    # one behind ships a release nobody is offered. The entry had no `version` field at
+    # all until the gap was found; a missing one is the same defect, silently.
+    entry, = json.loads(_read(ROOT / ".claude-plugin" / "marketplace.json"))["plugins"]
+    assert entry.get("version") == synthvdr.__version__, (
+        f"the marketplace entry says {entry.get('version')!r}, "
+        f"synthvdr.__version__ says {synthvdr.__version__!r}"
+    )
+
 
 def test_scope_skill_blocks_on_unresolved_name_collisions():
     body = _read(ROOT / "skills" / "vdr-scope" / "SKILL.md").lower()
@@ -1655,3 +1667,86 @@ def test_check_sh_uses_the_interpreter_it_is_told_to(tmp_path):
     assert "pip install" not in combined, (
         f"check.sh did not use SYNTHVDR_PYTHON: {combined!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# The version-drift guard. This repo is its own marketplace — marketplace.json
+# says `"source": "./"` and Claude Code has it registered as a git source on this
+# remote — so master IS the published artefact and "published is behind master"
+# cannot happen. The drift that does happen, and did: master moves while the
+# version does not, so every install keeps serving what it already cached,
+# because the cache is keyed on the version. That is the 26 August review's R1 in
+# its true form.
+# ---------------------------------------------------------------------------
+
+
+def _throwaway_repo(tmp_path):
+    def git(*args):
+        subprocess.run(
+            ["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True
+        )
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / "skills").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text('{"version": "1.0.0"}\n')
+    (tmp_path / "skills" / "SKILL.md").write_text("original\n")
+    (tmp_path / "README.md").write_text("original\n")
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    return git
+
+
+def _run_version_check(tmp_path, base):
+    return subprocess.run(
+        ["bash", str(ROOT / "tools" / "version-check.sh"), base],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_version_check_fails_when_the_surface_moves_and_the_version_does_not(tmp_path):
+    if not shutil.which("bash"):
+        pytest.skip("bash not available in this environment")
+    git = _throwaway_repo(tmp_path)
+    (tmp_path / "skills" / "SKILL.md").write_text("changed\n")
+    git("commit", "-qam", "change a skill, forget the bump")
+
+    result = _run_version_check(tmp_path, "HEAD~1")
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    combined = result.stdout + result.stderr
+    assert "still 1.0.0" in combined
+    assert "skills/SKILL.md" in combined, "the failure must name what changed"
+
+
+def test_version_check_passes_when_the_version_moves_with_the_surface(tmp_path):
+    if not shutil.which("bash"):
+        pytest.skip("bash not available in this environment")
+    git = _throwaway_repo(tmp_path)
+    (tmp_path / "skills" / "SKILL.md").write_text("changed\n")
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text('{"version": "1.1.0"}\n')
+    git("commit", "-qam", "change a skill and bump")
+
+    result = _run_version_check(tmp_path, "HEAD~1")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1.0.0 -> 1.1.0" in result.stdout
+
+
+def test_version_check_ignores_a_change_outside_the_plugin_surface(tmp_path):
+    # A README or a review document is not something an install serves, so it must
+    # not force a release nobody needs.
+    if not shutil.which("bash"):
+        pytest.skip("bash not available in this environment")
+    git = _throwaway_repo(tmp_path)
+    (tmp_path / "README.md").write_text("changed\n")
+    git("commit", "-qam", "docs only")
+
+    result = _run_version_check(tmp_path, "HEAD~1")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "nothing to bump" in result.stdout
