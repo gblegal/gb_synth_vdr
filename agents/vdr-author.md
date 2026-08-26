@@ -100,11 +100,23 @@ the registry to match your own view of it.
   neutral fact and leave the tension unresolved — the conclusion lives only in the answer key
   and, later, in the flagged twin's annotation block that you do not write.
 - Meet your slot's depth floor: tier A by archetype, tier F at least 350 words. Write to the
-  length the document type needs, not to the floor.
+  length the document type needs, not to the floor. You cannot measure this yourself (see
+  Return) — write a document that is genuinely finished, and expect to be re-dispatched with a
+  measured count if it falls short.
 
 ## Return
 
-A manifest listing: each slot authored, its class (benign / finding / distractor), its word
-count, any new canonical facts your documents required, the answer-key refinements you wrote
-to `_key/incoming/<your-label>.yaml`, and any newly discovered finding — its provisional ID
-and the one-line reason it is a distinct issue, not a restatement of one already registered.
+A manifest listing: each slot authored and its class (benign / finding / distractor), any new
+canonical facts your documents required, the answer-key refinements you wrote to
+`_key/incoming/<your-label>.yaml`, any newly discovered finding — its provisional ID and the
+one-line reason it is a distinct issue, not a restatement of one already registered — and any
+fixed registry field your document convinced you is wrong, one line each.
+
+**Do not report word counts.** You have no way to measure them: your tools are `Read, Write,
+Edit, Grep, Glob`, and grep counts matching lines, not words. Every figure you could give
+would be a visual estimate presented as a measurement, which is worse than saying nothing —
+in the build that led to this instruction, every author's estimate was high by 15-25%, seven
+of forty documents landed under their floor, and it cost a whole remediation wave. `/vdr-build`
+measures your batch with `synthvdr.qa.depth.depth_problems` the moment you return, and
+re-dispatches whatever came up short. Write to the length the document needs; the floor is a
+floor, not a target, and the measuring is not your job.

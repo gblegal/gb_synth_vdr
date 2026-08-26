@@ -1464,3 +1464,99 @@ def test_vdr_scope_warns_that_every_workstream_gets_a_slot_even_at_xs():
         "the premise of the warning below is that XS still allocates to every workstream"
     )
     assert "every workstream at every size" in _scope_body()
+
+
+def test_every_step_cross_reference_in_every_skill_points_at_a_real_step():
+    """A skill that renumbers its own steps and misses a back-reference sends the reader to
+    a step that says something else, which is worse than no reference at all. Cheap to
+    check, and it makes reordering a skill (see /vdr-scope, review item S1) a safe edit
+    rather than a careful one.
+    """
+    step_heading = re.compile(r"(?m)^#{2,3} (\d+)\. ")
+    single = re.compile(r"\bSteps? (\d+)\b")
+    span = re.compile(r"\bSteps (\d+)[–-](\d+)\b")
+
+    for name in SKILL_NAMES:
+        path = ROOT / "skills" / name / "SKILL.md"
+        body = _read(path)
+        declared = {int(n) for n in step_heading.findall(body)}
+        if not declared:
+            continue
+        referenced = {int(n) for n in single.findall(body)}
+        for first, last in span.findall(body):
+            referenced |= set(range(int(first), int(last) + 1))
+        missing = sorted(referenced - declared)
+        assert not missing, (
+            f"{path}: refers to step(s) {missing} that no heading declares "
+            f"(declared: {sorted(declared)})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Review 2026-08-26, S2/S3/S4. Three instructions in /vdr-build that are only
+# correct because of a fact stated somewhere else — the author agent's tool
+# grant, gate 15's tri-state, and room.conf's key names. Each would go quietly
+# wrong if that other fact changed, so each is pinned against it here rather
+# than against a copy of it.
+# ---------------------------------------------------------------------------
+
+
+def test_vdr_author_neither_can_measure_words_nor_is_asked_to():
+    """S2. The agent has no Bash, so it cannot run `wordcount()` and every depth figure it
+    could report is a visual estimate. If it is ever granted Bash, the instruction below
+    stops being true and this test should fail so someone revisits it.
+    """
+    body = _read(ROOT / "agents" / "vdr-author.md")
+    tools = re.search(r"(?m)^tools:\s*(.+)$", body).group(1)
+    assert "Bash" not in tools, (
+        "vdr-author has been granted Bash — it can measure now, so revisit both its "
+        "'Do not report word counts' instruction and /vdr-build's Step 3"
+    )
+    assert "Do not report word counts" in body
+    assert "depth_problems" in body, (
+        "the agent should name the function that measures for it, so the instruction is "
+        "a division of labour rather than a bare prohibition"
+    )
+
+
+def test_build_skill_excepts_every_gate_that_cannot_pass_before_the_audit():
+    """S3. Gate 15 fails on a finding whose `discoverable_from_blind` is None, and nothing
+    sets that until vdr-auditor runs — which /vdr-build dispatches only after the last wave.
+    So every earlier wave necessarily fails it, and the skill must say so; it used to name
+    only gates 2, 7 and 8 and then assert that a FAIL on anything else was a real defect.
+    """
+    from synthvdr.schema import Finding
+
+    unaudited = Finding(
+        id="ENV-1", title="t", severity="high", workstream="environmental",
+        multi_document=False, source="a.md", location="L", substance="S",
+    )
+    assert unaudited.discoverable_from_blind is None, (
+        "the premise of gate 15's mid-build exception is that a fresh finding is unaudited"
+    )
+
+    body = _read(ROOT / "skills" / "vdr-build" / "SKILL.md")
+    excepted = body[body.index("### 7. Run the gates") : body.index("### 8.")]
+    assert "Gate 15" in excepted, "gate 15 is not in the named mid-build exception list"
+    assert "three of the seventeen gates" in excepted, (
+        "the exception list says how many gates it names; that count has drifted"
+    )
+
+
+def test_build_skill_names_real_room_conf_keys_for_the_author_invariants():
+    """S4. The dispatch step tells you to hand every author four room-level invariants by
+    value, naming the room.conf keys they come from. A renamed key would leave the
+    instruction pointing at nothing.
+    """
+    from synthvdr.roomconf import REQUIRED_KEYS
+
+    body = _read(ROOT / "skills" / "vdr-build" / "SKILL.md")
+    # Scoped to the dispatch step: these keys appear elsewhere in the skill for other
+    # reasons, so a whole-file search would pass even with the invariants paragraph gone.
+    dispatch = body[body.index("### 2. Dispatch the authors") : body.index("### 3.")]
+    for key in ("FLAG_STRING_1", "FLAG_STRING_2", "FINDING_PREFIXES"):
+        assert key in REQUIRED_KEYS, f"{key} is no longer a required room.conf key"
+        assert key in dispatch, f"the dispatch step no longer hands the author {key}"
+    assert "_key/gaps.yaml" in dispatch and "## Invented names" in dispatch, (
+        "the other two invariants — the gap allowlist and the closed name list — are gone"
+    )

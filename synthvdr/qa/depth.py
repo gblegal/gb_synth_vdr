@@ -18,6 +18,8 @@ METRIC CAVEATS, which any band quoted against wordcount() must state:
 from __future__ import annotations
 
 import re
+from pathlib import Path
+from typing import Dict, Iterable, List
 
 from ..domain import DEFAULT_DOMAIN_ROOT, DomainPack, load_domain
 from ..slots import read_anchors_csv
@@ -116,19 +118,31 @@ def floor_for(slot_id: str, filename: str, tier: str, pack: DomainPack) -> int:
     return pack.archetypes[classify_archetype(filename, pack)].floor
 
 
-def gate_10_depth(ctx):
-    anchors_path = ctx.key_root / "anchors.csv"
-    if not anchors_path.is_file():
-        return skip("10", "depth lint", "_key/anchors.csv absent")
-    files = [p for p in ctx.blind_files() if p.suffix == ".md"]
-    if not files:
-        return skip("10", "depth lint", f"{ctx.blind_root} absent or empty")
+def depth_problems(
+    paths: Iterable[Path], tiers: Dict[str, str], pack: DomainPack, flag_string: str
+) -> List[str]:
+    """What gate 10 would say about `paths`, as a list of problem strings.
 
-    tiers = read_anchors_csv(anchors_path)
-    pack = load_domain(DEFAULT_DOMAIN_ROOT)
-    flag_string = ctx.conf.get("FLAG_STRING_1")
-    problems = []
-    for path in files:
+    Split out of `gate_10_depth` so `/vdr-build` can run the same check over
+    one wave's output, straight after the authors return and before anything
+    is consolidated. It needs to, because a `vdr-author` subagent cannot: its
+    frontmatter grants `Read, Write, Edit, Grep, Glob` and no Bash, so it has
+    no way to run `wordcount()` and every depth figure it reports is a visual
+    estimate. In the build that surfaced this, every estimate was HIGH — ~1,450
+    for 1,190 against a 1,200 floor, ~3,050 for 2,447 against 2,500 — and seven
+    of 40 documents landed under floor, costing a whole remediation wave.
+
+    Sharing this function rather than putting the loop in the skill's own
+    fenced example is the point: a reimplementation there would be free to
+    drift from the gate it is meant to predict, which is how a wave could pass
+    its own check and fail gate 10 anyway.
+
+    `tiers` is `read_anchors_csv`'s mapping. `flag_string` is `FLAG_STRING_1`,
+    used to strip a flagged twin's annotation block so it cannot pad a document
+    over a floor its blind twin does not clear.
+    """
+    problems: List[str] = []
+    for path in paths:
         slot_id = path.stem.split("_", 1)[0]
         tier = tiers.get(slot_id)
         if tier is None:
@@ -147,6 +161,23 @@ def gate_10_depth(ctx):
         count = wordcount(text)
         if count < floor:
             problems.append(f"{slot_id}: {count} words, floor {floor} (tier {tier})")
+    return problems
+
+
+def gate_10_depth(ctx):
+    anchors_path = ctx.key_root / "anchors.csv"
+    if not anchors_path.is_file():
+        return skip("10", "depth lint", "_key/anchors.csv absent")
+    files = [p for p in ctx.blind_files() if p.suffix == ".md"]
+    if not files:
+        return skip("10", "depth lint", f"{ctx.blind_root} absent or empty")
+
+    problems = depth_problems(
+        files,
+        read_anchors_csv(anchors_path),
+        load_domain(DEFAULT_DOMAIN_ROOT),
+        ctx.conf.get("FLAG_STRING_1"),
+    )
 
     metric_note = "(metric: whitespace tokens, table pipes counted, CJK at half weight)"
     if problems:

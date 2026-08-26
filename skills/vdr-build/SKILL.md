@@ -28,7 +28,13 @@ from synthvdr.slots import authoring_order, read_slot_manifest
 
 findings = load_findings(Path("_key/findings.yaml"))
 distractors = load_distractors(Path("_key/distractors.yaml"))
-load_bearing = load_bearing_paths(findings, distractors)
+
+# The canonical home of a fact-sheet figure is load-bearing too — see below. Nothing
+# declares these, so name them yourself, as rel_paths.
+figure_homes = {
+    "18_transaction/18.2_spa/18.2.1_spa-01.md",   # enterprise value, earn-out
+}
+load_bearing = load_bearing_paths(findings, distractors) | figure_homes
 
 order = authoring_order(read_slot_manifest(Path("_key/anchors.csv")), load_bearing)
 print(sum(1 for slot in order if slot.rel_path in load_bearing), "load-bearing slots first")
@@ -38,6 +44,16 @@ print(sum(1 for slot in order if slot.rel_path in load_bearing), "load-bearing s
 `corroboration`, both ends of every distractor — then orders the rest by tier, and keeps
 manifest order inside each group. Exhaust the whole load-bearing block, across as many waves
 as it takes, before any other slot is assigned to a wave.
+
+**Add the canonical home of every fact-sheet figure to that set.** Gate 13 greps each value in
+`## Canonical figures` into the room, so a figure whose only natural home is a slot not yet
+authored fails the gate through no defect — and gate 13 is not excepted mid-build, correctly,
+because it is what stops a room drifting from its own fact sheet. In the XS build that
+surfaced this, `£48.0m` (enterprise value) and `£9.0m` (earn-out) belong in the draft SPA at
+`18.2.1`, a tier-`F` slot the ordering rule would otherwise leave to the last wave; it had to
+be pulled forward by hand to make gate 13 answerable at all. The answer key cannot tell you
+which slots these are — `## Canonical figures` records a key and a value, not a home — so read
+the table and name them, once, when you compose the set above.
 
 **Do not sort by tier instead.** This skill used to say to, and glossed tier `A` as "anchor —
 carries a finding, a distractor, or is otherwise load-bearing". Tier is nothing of the sort:
@@ -58,7 +74,7 @@ fresh build.
 The literal shape to read and to write back (copy and adapt — the "Next wave" line is the
 resume pointer everything else in this skill trusts, so keep the arithmetic exact: it always
 names exactly one more than the highest wave recorded above it, and no wave is ever added to
-this table until its own gate run above (Step 6) has come back all-PASS):
+this table until its own gate run above (Step 7) has come back all-PASS):
 
 ```markdown
 # Build status — Project Ashfell
@@ -94,26 +110,26 @@ Not started — runs once authoring is complete.
 
 "New findings" is a **cumulative ledger**, appended to across the whole build, not reset per
 wave — it is both the permanent record the design spec requires a mid-authoring discovery to
-be "declared in," and the durable idempotency check Step 3 reads before allocating anything.
-It is written by Step 3 itself, **immediately** when a discovery is allocated — never deferred
-to Step 7 — because Step 3 can succeed while Step 6's gate check afterwards fails, and a
+be "declared in," and the durable idempotency check Step 4 reads before allocating anything.
+It is written by Step 4 itself, **immediately** when a discovery is allocated — never deferred
+to Step 8 — because Step 4 can succeed while Step 7's gate check afterwards fails, and a
 resumed build must be able to tell "already allocated in a prior attempt" from "not yet seen"
 without waiting for the wave to fully complete. An empty build (nothing discovered yet) omits
 the section entirely rather than leaving it with no rows.
 
 "Anchors" is written **once**, the wave Step 1 first has to reach past the load-bearing block
 (see Step 1) — never rewritten afterwards. Absent before that point (a fresh build, or one still mid-anchor). This
-is the fact Steps 5–7 read to know whether gates 2/7/8's mid-build exceptions still apply.
+is the fact Steps 6–8 read to know whether gates 2/7/8/15's mid-build exceptions still apply.
 
-"Gate result" in "Waves completed" records **PASS once every gate outside Step 6's named
-mid-build exceptions is clean** — not "every one of the seventeen gates," which (see Step 6)
+"Gate result" in "Waves completed" records **PASS once every gate outside Step 7's named
+mid-build exceptions is clean** — not "every one of the seventeen gates," which (see Step 7)
 no wave before the last one can ever produce. Wave 1 and wave 2 above both legitimately show
-PASS with gate 2 excepted throughout, and gates 7/8 additionally excepted before "Anchors" is
-recorded; that is not a weaker PASS, it is what "clean" is defined to mean before the room
+PASS with gates 2 and 15 excepted throughout, and gates 7/8 additionally excepted before
+"Anchors" is recorded; that is not a weaker PASS, it is what "clean" is defined to mean before the room
 reaches its final size.
 
 A wave is only added to the "Waves completed" table once its gate run is clean **against the
-gates that are not currently excepted** (see Step 6) — that is what the "(... excepted)" note
+gates that are not currently excepted** (see Step 7) — that is what the "(... excepted)" note
 in the table above records, so a resumed build (or a human reading the file) can tell a
 genuinely clean wave from one that was accepted with a named, expected gap.
 
@@ -128,7 +144,7 @@ and `_key/distractors.yaml` for which slots in this batch carry a finding's
 registry rows, and by construction they are the slots at the front of that list.
 
 **Note the exact wave this batch selection first has to reach past the load-bearing block,
-because no load-bearing slot is left.** That is "anchors complete" — see Steps 5–7 below,
+because no load-bearing slot is left.** That is "anchors complete" — see Steps 6–8 below,
 which behave differently before and after it. Note what this now means, because the old
 tier-based reading got it wrong in a way that mattered: anchors-complete is the point every
 document the answer key depends on has been authored, so it is exactly the point the flagged
@@ -136,7 +152,7 @@ tree becomes worth building and gate 8's carrier census becomes a real check. Un
 rule it fired while findings' evidence was still unwritten. For an `M`-size room (200 documents) this is usually wave 1
 itself, since a wave's capacity (up to 250 slots) already exceeds the whole room; for `L`/`XL`
 it can take several waves. Record it in `_key/build-status.md`'s `## Anchors` line the moment
-it happens (see the literal shape in "Resume" above) — this is the one fact Steps 5–7 need
+it happens (see the literal shape in "Resume" above) — this is the one fact Steps 6–8 need
 that nothing else in the file states directly.
 
 ### 2. Dispatch the authors
@@ -150,7 +166,100 @@ batch cannot leak it into the wrong document by accident, and it has no route to
 tree to write to even if it wanted to; see `agents/vdr-author.md` for why that separation is
 load-bearing, not just tidy scoping.
 
-### 3. Consolidate the answer-key refinements
+**Also give every author the four room-level invariants, by value.** These are not per-batch,
+so it is easy to leave them out — and each one is a gate the wave fails without them.
+`agents/vdr-author.md` tells the author to respect the first two, but only in the abstract
+("the annotation strings configured in `room.conf`"); the author has no reason to open
+`room.conf` and no way to know the values unless you say them.
+
+| Invariant | Where it lives | The wave fails on |
+|---|---|---|
+| The two flag strings | `room.conf` `FLAG_STRING_1`/`FLAG_STRING_2` | gate 3, annotation-string leakage |
+| The finding-ID prefix alphabet | `room.conf` `FINDING_PREFIXES` | gate 4, blind-tree vocabulary |
+| The declared gap refs | `_key/gaps.yaml` | gate 9, dangling cross-reference |
+| The closed name list | the fact sheet's `## Cast` and `## Invented names` | gate 14, unchecked name |
+
+Compose the paragraph once and paste it verbatim into every author's prompt:
+
+```python
+from pathlib import Path
+from synthvdr.names import cast_list
+from synthvdr.qa.structural import parse_gaps_allowlist
+from synthvdr.roomconf import load_room_conf
+
+conf = load_room_conf(Path("room.conf"))
+gaps = sorted(parse_gaps_allowlist(Path("_key/gaps.yaml").read_text(encoding="utf-8")))
+names = sorted(cast_list(Path("_key/name-check.md"), kind=None))
+
+print(f'''Room invariants, all four of which a gate checks:
+- Never write these two strings into any document: {conf.get("FLAG_STRING_1")!r},
+  {conf.get("FLAG_STRING_2")!r}.
+- Never use a token shaped like a finding ID as an in-room reference. The prefixes in
+  play are: {conf.get("FINDING_PREFIXES")}.
+- The only slot references that may be left unresolved are: {", ".join(gaps) or "none"}.
+  Every other reference you write must point at a slot the index declares.
+- Every entity, brand, product, site or domain name you use must already be one of
+  these: {", ".join(names)}. Invent no others.''')
+```
+
+`cast_list(..., kind=None)` is deliberate here: gate 14 masks with the entity rows only, but
+an author needs the whole closed list, people included, because it must not invent a person
+either.
+
+### 3. Measure the batch against its depth floors
+
+**Before consolidating anything**, run gate 10's own check over just the slots this wave
+authored, and re-dispatch whatever came up short:
+
+```python
+from pathlib import Path
+from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
+from synthvdr.qa.depth import depth_problems
+from synthvdr.roomconf import load_room_conf
+from synthvdr.slots import read_anchors_csv
+
+conf = load_room_conf(Path("room.conf"))
+
+problems = depth_problems(
+    sorted(Path(conf.get("BLIND_TREE")).rglob("*.md")),
+    read_anchors_csv(Path("_key/anchors.csv")),
+    load_domain(DEFAULT_DOMAIN_ROOT),
+    conf.get("FLAG_STRING_1"),
+)
+for problem in problems:
+    print(problem)
+```
+
+This sweeps every document authored so far, not just this wave's. That is deliberate and
+costs nothing: every earlier wave already cleared this check before it was recorded, so
+anything printed here belongs to the batch that just came back. Taking the whole tree keeps
+the snippet self-contained — there is no wave-membership list to thread through it, and no
+way to get that list subtly wrong and measure the wrong documents.
+
+Re-dispatch a `vdr-author` for every slot named, telling it the measured count and the floor,
+then measure again. Only move on when this prints nothing.
+
+**Do not skip this because the authors reported their word counts.** They cannot have
+measured them. `agents/vdr-author.md` grants `Read, Write, Edit, Grep, Glob` and no Bash, so
+an author has no way to run `wordcount()` and every figure it reports is a visual estimate —
+and in the build that surfaced this, every estimate was HIGH:
+
+| Slot | Author's figure | Measured | Floor |
+|---|---|---|---|
+| 16.1.1 | ~1,450 | 1,190 | 1,200 |
+| 6.1.1 | ~1,350 | 1,103 | 1,200 |
+| 10.1.1 | ~1,300 | 1,050 | 1,200 |
+| 17.1.1 | ~3,050 | 2,447 | 2,500 |
+
+Seven of 40 documents landed under floor and cost a whole remediation wave with two extra
+subagents. Catching it here costs one re-dispatch inside the wave that caused it.
+
+`depth_problems` is the function `gate_10_depth` itself calls, not a reimplementation of it,
+so a wave that clears this check clears gate 10 in Step 7 for the same reason. Note it also
+reports placeholder tokens and slots missing from `anchors.csv` — both are real defects in
+what the author returned, and both are fixed the same way, by re-dispatching.
+
+### 4. Consolidate the answer-key refinements
 
 Consolidate `_key/incoming/*.yaml` into `_key/findings.yaml`. Each file carries two different
 things, handled two different ways:
@@ -186,7 +295,7 @@ in the registry yet, just with a provisional ID in place of a real one.
 A `new_findings:` row's `source` and `corroboration` are relative to the blind tree root,
 never prefixed with `BLIND_TREE`'s own name — see `/vdr-findings`' fuller note on this. An author who has just
 written a real file knows its path *within* `BLIND_TREE`, not the tree's own name, so this
-is usually automatic; the failure mode when it is not is `build_flagged_tree` (Step 5 below)
+is usually automatic; the failure mode when it is not is `build_flagged_tree` (Step 6 below)
 raising `TwinError` for the batch.
 
 ```yaml
@@ -240,7 +349,7 @@ on that are also shared functions, never reimplemented inline:
 - `parse_new_findings_ledger` reads `_key/build-status.md`'s "New findings" table into
   `{provisional_id: final_id}` — the durable record of what has already been allocated.
   **Consolidation is not something this build guarantees happens exactly once.** A wave can
-  succeed at this step and then fail its gate at Step 6; resuming re-runs Step 3 over the
+  succeed at this step and then fail its gate at Step 7; resuming re-runs Step 4 over the
   same, untouched `_key/incoming/*.yaml` content. Without checking this ledger first, that
   rerun would allocate a *second*, higher id for the same discovery — a duplicate that still
   passes `validate()`, because nothing about a duplicate substance under two different ids is
@@ -281,7 +390,7 @@ incoming_docs = {
 result = consolidate_wave_incoming(findings_doc, incoming_docs, already_mapped, prefix_for_workstream)
 Path("_key/findings.yaml").write_text(yaml.safe_dump(result.findings_doc, sort_keys=False))
 
-# Persist the new mapping to the ledger IMMEDIATELY, before Step 6's gate even runs — this is
+# Persist the new mapping to the ledger IMMEDIATELY, before Step 7's gate even runs — this is
 # what makes a rerun idempotent regardless of whether the gate afterwards passes or fails.
 if result.new_mapping:
     status_text = status_path.read_text() if status_path.is_file() else "# Build status\n"
@@ -306,13 +415,13 @@ assert not errors, errors
 Path("_key/findings.md").write_text(render_findings_md(f, conf.get("ROOM_CODENAME")))
 ```
 
-### 4. Reconcile new canonical facts
+### 5. Reconcile new canonical facts
 
 Reconcile any new canonical fact a subagent's manifest reported into the fact sheet's
 `## Canonical figures` table. New facts go in the fact sheet **first**; grep the room before
 introducing a value gate 13 has not seen yet.
 
-### 5. Rebuild the flagged tree — only once Anchors is complete
+### 6. Rebuild the flagged tree — only once Anchors is complete
 
 **Skip this step entirely for every wave before the one you recorded in `_key/build-status.md`'s
 `## Anchors` line (Step 1).** `build_flagged_tree` requires every finding's and every
@@ -323,7 +432,7 @@ by definition, so calling this before "Anchors" is recorded always raises. That 
 definition" is only true because Step 1 orders by `authoring_order`: under the tier rule this
 skill used to give, "Anchors" could be recorded with several findings' evidence still
 unwritten, and this step then raised `TwinError` for the rest of the build. This is not a corpus
-bug at that stage; it is simply too early to build the tree at all. Gates 7 and 8 (Step 6)
+bug at that stage; it is simply too early to build the tree at all. Gates 7 and 8 (Step 7)
 SKIP as a direct consequence — see there.
 
 From the wave "Anchors" names onward, this is the *only* writer of the flagged tree in the
@@ -349,46 +458,52 @@ document's path against `distractor.location` by string equality, so a distracto
 document that was never written can never be flagged by scoring a tool's output; it can only be
 caught here, at build time, or by gate 8's carrier census afterwards.
 
-### 6. Run the gates — with named, mid-build exceptions
+### 7. Run the gates — with named, mid-build exceptions
 
 `bash tools/check.sh .`
 
 **Multi-wave is the normal case** (`M` = 200 documents, `L` = 800, `XL` = 2,000+): most builds
-take several waves, and two of the seventeen gates check something that genuinely does not
-exist yet before the room is finished. Naming both exactly, rather than leaving "do not
+take several waves, and three of the seventeen gates check something that genuinely does not
+exist yet before the room is finished. Naming all three exactly, rather than leaving "do not
 proceed on any failure" as a rule the room's own size makes impossible to satisfy:
 
 - **Gate 2 (tree counts)** compares the blind/flagged tree's actual document count against
   `BLIND_TOTAL`/`FLAGGED_TOTAL` — the room's *finished* size, fixed by `/vdr-scope` before a
   single document existed. It is **expected to FAIL on every wave except the last one**, and
   clearing on the last wave (not before) is exactly what tells you the room is done.
+- **Gate 15 (discoverability audit)** fails on any finding whose `discoverable_from_blind`
+  is still unset, and nothing sets it until `vdr-auditor` runs — which this skill dispatches
+  only "After the last wave" (see below). So it is **expected to FAIL on every wave until the
+  audit runs**, exactly like gate 2, and clearing is what tells you the audit is done. An
+  unaudited finding is not presumed reachable, which is correct: the gate is refusing to
+  vouch for a blind room nobody has read.
 - **Gates 7 (twin diff) and 8 (carrier census)** both require the flagged tree to exist. Before
-  the wave "Anchors" names, Step 5 above is skipped on purpose, so the flagged tree does not
+  the wave "Anchors" names, Step 6 above is skipped on purpose, so the flagged tree does not
   exist yet and both gates **SKIP** — this is not the "we forgot to build something" SKIP
   `--strict` should ever convert to a failure at release, it is the expected shape of every
-  wave before Anchors. From the Anchors wave onward, Step 5 runs every wave, the flagged tree
+  wave before Anchors. From the Anchors wave onward, Step 6 runs every wave, the flagged tree
   exists, and gate 8 is a real, un-excepted check: a FAIL from that point on is a genuine
   corpus defect (a wrongly authored evidence path, a stripped block), never an artefact of
   build order.
 
-**Every gate other than these two is a real check on every wave, including the first**, and a
-FAIL on any of them is always a real defect — never wave the whole gate run through because
+**Every gate other than these three is a real check on every wave, including the first**, and
+a FAIL on any of them is always a real defect — never wave the whole gate run through because
 "gate 2 usually fails mid-build" without checking which gate actually failed.
 
-### 7. Update the build status
+### 8. Update the build status
 
 Update `_key/build-status.md`: append this wave's number, the slots it authored, and the gate
 result to the "Waves completed" table, then rewrite "Next wave" to name exactly one more than
 the wave you just appended (see the literal shape above) — never leave the file pointing at a
 wave number that has already run, and never skip a number. "New findings" is **not** touched
-here — Step 3 already appended to it, unconditionally, before this wave's gate even ran. If
+here — Step 4 already appended to it, unconditionally, before this wave's gate even ran. If
 this wave is the one Step 1 identified as anchors-complete and `## Anchors` is not yet
 recorded, write it now.
 
-**Do not start the next wave while any gate is failing OUTSIDE Step 6's named exceptions.** A
+**Do not start the next wave while any gate is failing OUTSIDE Step 7's named exceptions.** A
 wave whose gate run failed on anything else is not recorded in "Waves completed" at all; it
-stays the resume target until it passes. A wave that fails ONLY on the excepted gates (gate 2
-always; gates 7/8 before Anchors) is recorded as PASS — see the "Gate result" note above the
+stays the resume target until it passes. A wave that fails ONLY on the excepted gates (gates
+2 and 15 always; gates 7/8 before Anchors) is recorded as PASS — see the "Gate result" note above the
 literal example for what PASS means at that point in a build.
 
 ## After the last wave
