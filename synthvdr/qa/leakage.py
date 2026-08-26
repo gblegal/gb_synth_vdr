@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import List, Set, Tuple
 
 from ..names import cast_list, entity_tokens, malformed_cast_entries, mask_cast_names
-from .runner import fail, ok, skip
+from .runner import fail, ok, skip, truncated
 
 # Gate 4. "registry" is deliberately absent: Land Registry is legitimate in-room.
 ANSWER_KEY_NOUNS = (
@@ -40,7 +40,6 @@ BUILD_VOCABULARY = (
     "tier f",
 )
 
-_HIT_LIMIT = 5
 
 
 def finding_id_pattern(conf) -> re.Pattern:
@@ -57,20 +56,6 @@ def finding_id_pattern(conf) -> re.Pattern:
     prefixes = conf.get("FINDING_PREFIXES")
     boundary = r"(?![A-Za-z0-9])"
     return re.compile(rf"\b(?:{prefixes})-\d+{boundary}|\bDX-\d+{boundary}")
-
-
-def _truncated(items: List[str], sep: str = "; ", limit: int = _HIT_LIMIT) -> str:
-    """Join up to `limit` items, naming how many more were cut.
-
-    A silently truncated list reads identically whether six things went
-    wrong or sixty — the missing count is itself information a human
-    triaging a FAIL needs, not decoration.
-    """
-    shown = sep.join(items[:limit])
-    remaining = len(items) - limit
-    if remaining > 0:
-        shown += f" (+{remaining} more)"
-    return shown
 
 
 def _fallback_note(replaced: int) -> str:
@@ -137,7 +122,7 @@ def gate_03_flag_leakage(ctx):
     strings = (ctx.conf.get("FLAG_STRING_1"), ctx.conf.get("FLAG_STRING_2"))
     hits, replaced = _hits(files, strings)
     if hits:
-        return fail("3", "annotation-string leakage", _truncated(hits) + _fallback_note(replaced))
+        return fail("3", "annotation-string leakage", truncated(hits) + _fallback_note(replaced))
     return ok("3", "annotation-string leakage", f"{len(files)} files clean" + _fallback_note(replaced))
 
 
@@ -147,7 +132,7 @@ def gate_04_vocabulary(ctx):
         return skip("4", "blind-tree vocabulary sweep", f"{ctx.blind_root} absent or empty")
     hits, replaced = _hits(files, ANSWER_KEY_NOUNS, finding_id_pattern(ctx.conf))
     if hits:
-        return fail("4", "blind-tree vocabulary sweep", _truncated(hits) + _fallback_note(replaced))
+        return fail("4", "blind-tree vocabulary sweep", truncated(hits) + _fallback_note(replaced))
     return ok("4", "blind-tree vocabulary sweep", f"{len(files)} files clean" + _fallback_note(replaced))
 
 
@@ -166,7 +151,7 @@ def gate_05_index_vocabulary(ctx):
         return fail(
             "5",
             "index.md vocabulary sweep",
-            _truncated(hits)
+            truncated(hits)
             + " — fix _key/index-src/ and regenerate, never hand-edit index.md"
             + _fallback_note(replaced),
         )
@@ -180,7 +165,7 @@ def gate_12_key_containment(ctx):
     key_root = ctx.conf.get("KEY_ROOT")
     hits, replaced = _hits(files, (key_root + "/",))
     if hits:
-        return fail("12", "answer-key containment", _truncated(hits) + _fallback_note(replaced))
+        return fail("12", "answer-key containment", truncated(hits) + _fallback_note(replaced))
     return ok(
         "12",
         "answer-key containment",
@@ -227,7 +212,7 @@ def gate_14_unchecked_names(ctx):
             "14",
             "unchecked names",
             "malformed cast row(s) in _key/name-check.md: "
-            + _truncated([repr(name) for name in malformed], sep=", ")
+            + truncated([repr(name) for name in malformed], sep=", ")
             + " — a single-word or bare-suffix entity row masks every name ending in it;"
             " regenerate the name check from the fact sheet",
         )
@@ -246,7 +231,7 @@ def gate_14_unchecked_names(ctx):
         unchecked |= entity_tokens(mask_cast_names(text, cast))
         unchecked |= entity_tokens(mask_cast_names(path.name, cast))
     if unchecked:
-        detail = _truncated(sorted(unchecked), sep=", ") + " — not on the cast list; check or remove"
+        detail = truncated(sorted(unchecked), sep=", ") + " — not on the cast list; check or remove"
         return fail("14", "unchecked names", detail + _fallback_note(replaced))
     return ok(
         "14",

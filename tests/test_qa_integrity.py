@@ -595,3 +595,36 @@ def test_gate_17_fails_when_a_distractors_location_is_also_real_evidence(room):
     )
     assert result.status == "FAIL"
     assert "DX-1" in result.detail
+
+
+def test_gate_15_says_how_many_findings_it_did_not_name(room):
+    # The awkward shape in this sweep: the truncated list is followed by a
+    # trailing instruction, so the overflow marker has to land between the
+    # two. "ENV-5 — run the vdr-auditor subagent" reads as the whole story;
+    # "ENV-5 (+2 more) — run the vdr-auditor subagent" does not.
+    fs = FindingSet(
+        [finding(discoverable=None, id=f"ENV-{n}") for n in range(1, 8)], "Project Testbed"
+    )
+    result = gate_15_discoverability(ctx_for(room, fs))
+    assert result.status == "FAIL"
+    assert "(+2 more)" in result.detail
+    assert result.detail.rstrip().endswith("run the vdr-auditor subagent")
+
+
+def test_gate_17_says_how_many_problems_it_did_not_name(room):
+    fs = FindingSet(
+        [
+            Finding(
+                id=f"ENV-{n}", title="a", severity="critical", workstream="environmental",
+                multi_document=False,
+                source="01_corporate/1.1_constitutional/1.1.1_articles.md",
+                location="x", substance="s", discoverable_from_blind=True,
+                audit_note="reachable", cross_links=["NOPE-9"],
+            )
+            for n in range(1, 8)
+        ],
+        "Project Testbed",
+    )
+    result = gate_17_answer_key_validation(ctx_for(room, fs))
+    assert result.status == "FAIL"
+    assert "(+2 more)" in result.detail

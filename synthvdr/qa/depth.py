@@ -21,7 +21,7 @@ import re
 
 from ..domain import DEFAULT_DOMAIN_ROOT, DomainPack, load_domain
 from ..slots import read_anchors_csv
-from .runner import fail, ok, skip
+from .runner import fail, ok, skip, truncated
 
 # Literal phrases and bracketed-instruction prefixes that read as a
 # placeholder regardless of case. A LIST, not a property — deliberately.
@@ -150,5 +150,5 @@ def gate_10_depth(ctx):
 
     metric_note = "(metric: whitespace tokens, table pipes counted, CJK at half weight)"
     if problems:
-        return fail("10", "depth lint", "; ".join(problems[:5]) + " " + metric_note)
+        return fail("10", "depth lint", truncated(problems) + " " + metric_note)
     return ok("10", "depth lint", f"{len(files)} documents above their floors {metric_note}")

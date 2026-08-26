@@ -51,6 +51,33 @@ def skip(number: str, name: str, reason: str) -> GateResult:
     return GateResult(number, name, SKIP, reason)
 
 
+DETAIL_LIMIT = 5
+
+
+def truncated(items, sep: str = "; ", limit: int = DETAIL_LIMIT) -> str:
+    """Join up to `limit` items, naming how many more were cut.
+
+    A silently truncated list reads identically whether six things went
+    wrong or sixty — the missing count is itself information a human
+    triaging a FAIL needs, not decoration. It is what tells them whether
+    they are looking at a typo or at a wave that went wrong wholesale.
+
+    Lives here, beside fail/ok/skip, because it is part of the same
+    gate-authoring vocabulary and every gate module already imports from
+    this one. It was previously private to qa/leakage.py, which is how
+    thirteen sites in four other gate modules came to hand-roll a join over
+    a bare five-item slice instead — each of them reporting five problems in
+    a way that could not be told from there being exactly five. The spelling
+    of that anti-pattern is deliberately not written out here, because
+    test_no_gate_hand_rolls_a_truncated_list greps for it.
+    """
+    shown = sep.join(items[:limit])
+    remaining = len(items) - limit
+    if remaining > 0:
+        shown += f" (+{remaining} more)"
+    return shown
+
+
 def warn(number: str, name: str, detail: str) -> GateResult:
     return GateResult(number, name, WARN, detail)
 

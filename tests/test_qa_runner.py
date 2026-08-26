@@ -132,3 +132,51 @@ def test_a_generator_of_gates_runs_and_summarises_like_a_list(capsys):
     out = capsys.readouterr().out
     assert code == 0
     assert "2 gates run, 0 failed" in out
+
+
+# --- Truncated detail lists must say how much they hid. --------------------
+#
+# `truncated` was already written and already tested through gate 5, but it
+# lived in qa/leakage.py and only that module's gates used it. Thirteen
+# other sites across four gate modules hand-rolled "; ".join(xs[:5]), so a
+# FAIL naming five problems read identically whether there were five or
+# fifty. The count is the information a human triaging the failure needs
+# most: it decides whether they are looking at a typo or a broken wave.
+
+
+def test_truncated_names_how_many_it_hid():
+    from synthvdr.qa.runner import truncated
+
+    assert truncated([str(n) for n in range(8)]).endswith("(+3 more)")
+
+
+def test_truncated_is_silent_when_everything_fits():
+    from synthvdr.qa.runner import truncated
+
+    assert "more" not in truncated(["a", "b", "c"])
+
+
+def test_truncated_honours_a_caller_supplied_separator():
+    from synthvdr.qa.runner import truncated
+
+    assert truncated(["a", "b"], sep=", ") == "a, b"
+
+
+def test_no_gate_hand_rolls_a_truncated_list():
+    """The sweep's own guard, and the reason it is one test rather than
+    thirteen: it fails for the fourteenth site too, whenever someone adds
+    it. `truncated` is part of the gate-authoring vocabulary alongside
+    fail/ok/skip, and every gate module already imports from this module.
+    """
+    from pathlib import Path
+
+    qa_dir = Path(__file__).resolve().parent.parent / "synthvdr" / "qa"
+    offenders = []
+    for path in sorted(qa_dir.glob("*.py")):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "[:5]" in line:
+                offenders.append(f"{path.name}:{number}")
+    assert not offenders, (
+        "these truncate a detail list without naming what they hid — "
+        "use runner.truncated() instead: " + ", ".join(offenders)
+    )

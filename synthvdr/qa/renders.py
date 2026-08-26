@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from .runner import fail, ok, skip
+from .runner import fail, ok, skip, truncated
 
 # suffix appended to BLIND_TREE's name -> file extension the render tree uses.
 RENDER_SUFFIXES = {"-docx": ".docx", "-pdf": ".pdf"}
@@ -77,11 +77,15 @@ def gate_16_render_parity(ctx):
         parts = []
         if missing:
             total = sum(len(v) for v in missing.values())
-            detail = "; ".join(f"{name}: missing {', '.join(v[:5])}" for name, v in missing.items())
+            detail = "; ".join(
+                f"{name}: missing {truncated(v, sep=', ')}" for name, v in missing.items()
+            )
             parts.append(f"{total} source(s) with no render — {detail}")
         if orphaned:
             total = sum(len(v) for v in orphaned.values())
-            detail = "; ".join(f"{name}: orphaned {', '.join(v[:5])}" for name, v in orphaned.items())
+            detail = "; ".join(
+                f"{name}: orphaned {truncated(v, sep=', ')}" for name, v in orphaned.items()
+            )
             parts.append(f"{total} render(s) with no source — {detail}")
         return fail("16", "render parity", " | ".join(parts))
 

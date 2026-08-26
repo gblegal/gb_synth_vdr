@@ -9,7 +9,7 @@ from typing import List
 
 from ..schema import validate as validate_answer_key
 from ..subset import check_subset
-from .runner import fail, ok, skip
+from .runner import fail, ok, skip, truncated
 
 
 def gate_11_subset(ctx):
@@ -18,7 +18,7 @@ def gate_11_subset(ctx):
         return skip("11", "subset reconciliation", "subset/ not built")
     report = check_subset(ctx.room, ctx.conf, ctx.findings, out_dir=subset_dir)
     if not report.complete:
-        return fail("11", "subset reconciliation", "; ".join(report.errors[:5]))
+        return fail("11", "subset reconciliation", truncated(report.errors))
     return ok(
         "11",
         "subset reconciliation",
@@ -256,7 +256,7 @@ def gate_13_fact_sheet(ctx):
             if _isolated_contains(old, corpus):
                 problems.append(f"{figure.key}: superseded value {old!r} still present")
     if problems:
-        return fail("13", "fact-sheet reconciliation", "; ".join(problems[:5]))
+        return fail("13", "fact-sheet reconciliation", truncated(problems))
     return ok("13", "fact-sheet reconciliation", f"{len(figures)} canonical figures reconciled")
 
 
@@ -291,9 +291,11 @@ def gate_15_discoverability(ctx):
     if unreachable or unaudited:
         parts = []
         if unreachable:
-            parts.append(f"not reachable from the blind room: {', '.join(unreachable[:5])}")
+            parts.append(f"not reachable from the blind room: {truncated(unreachable, sep=', ')}")
         if unaudited:
-            parts.append(f"not audited: {', '.join(unaudited[:5])} — run the vdr-auditor subagent")
+            parts.append(
+                f"not audited: {truncated(unaudited, sep=', ')} — run the vdr-auditor subagent"
+            )
         return fail("15", "discoverability audit", "; ".join(parts))
     return ok("15", "discoverability audit", f"{len(findings)} findings reachable from the blind room")
 
@@ -332,7 +334,7 @@ def gate_17_answer_key_validation(ctx):
         return skip("17", "answer-key validation", "no findings or distractors to validate")
     problems = validate_answer_key(ctx.findings, ctx.distractors)
     if problems:
-        return fail("17", "answer-key validation", "; ".join(problems[:5]))
+        return fail("17", "answer-key validation", truncated(problems))
     return ok(
         "17",
         "answer-key validation",

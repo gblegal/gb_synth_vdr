@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..index_build import count_slots, render_index
-from .runner import fail, ok, skip
+from .runner import fail, ok, skip, truncated
 
 
 def gate_01_index(ctx):
@@ -106,7 +106,7 @@ def gate_07_twin_diff(ctx):
         ):
             bad.append(f"{rel}: flagged twin is not blind + appended block")
     if bad:
-        return fail("7", "twin diff", "; ".join(bad[:5]))
+        return fail("7", "twin diff", truncated(bad))
     return ok("7", "twin diff", "every twin identical or blind + appended block")
 
 
@@ -291,7 +291,7 @@ def gate_08_carrier_census(ctx):
         info = f"; non-markdown evidence, never annotated by design: {named}"
 
     if problems:
-        return fail("8", "annotation-carrier census", "; ".join(problems[:5]) + info)
+        return fail("8", "annotation-carrier census", truncated(problems) + info)
 
     # Secondary tripwire, run only once the key-derived checks above are
     # clean. A missing or absent EXPECTED_KDP_CARRIERS, or one that is
@@ -408,10 +408,10 @@ def gate_09_xrefs(ctx):
                 continue
             dangling.append(f"{path.name} -> {ref}")
     if dangling:
-        detail = "; ".join(sorted(set(dangling))[:5])
+        detail = truncated(sorted(set(dangling)))
         if out_of_range:
-            detail += "; also out-of-range token(s) worth checking: " + "; ".join(
-                sorted(set(out_of_range))[:5]
+            detail += "; also out-of-range token(s) worth checking: " + truncated(
+                sorted(set(out_of_range))
             )
         return fail("9", "cross-reference resolution", detail)
     if out_of_range:
@@ -419,6 +419,6 @@ def gate_09_xrefs(ctx):
             "9",
             "cross-reference resolution",
             "out-of-range slot-shaped token(s), likely a date or a typo — no section in this room "
-            "could own them: " + "; ".join(sorted(set(out_of_range))[:5]),
+            "could own them: " + truncated(sorted(set(out_of_range))),
         )
     return ok("9", "cross-reference resolution", f"{len(known)} slots, {len(allowed)} allowlisted gaps")
