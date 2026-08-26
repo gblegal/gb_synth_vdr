@@ -40,6 +40,36 @@ class DomainPack:
     tier_f_floor: int
     finding_archetypes: Dict[str, List[str]]
 
+    def __post_init__(self) -> None:
+        """A tier-A anchor must never be held to a lower depth standard than
+        tier-F filler.
+
+        A tier-A anchor carries planted evidence; tier-F filler carries
+        none. If any archetype's floor sits below the flat tier-F floor, a
+        correctly tagged anchor is held to a LOWER floor than generic
+        filler — backwards for the property this domain pack exists to
+        encode.
+
+        Enforced on the TYPE rather than in `load_domain`, because the
+        invariant belongs to what a DomainPack is, not to one way of
+        building one. Checked only at load time it bound YAML on disk and
+        nothing else, while DomainPack is also constructed directly — by
+        the tests covering archetype classification, and by anything later
+        that assembles a pack in memory. That is precisely where a pack
+        encoding the backwards rule would be built by hand and quietly
+        believed. `load_domain` re-raises with the pack root, so a failure
+        loading from disk still says which pack.
+        """
+        under_floor = sorted(
+            name for name, a in self.archetypes.items() if a.floor < self.tier_f_floor
+        )
+        if under_floor:
+            raise DomainError(
+                f"archetype floor(s) {under_floor} are below tier_f_floor "
+                f"({self.tier_f_floor}) — a tier-A anchor must never be held to a "
+                "lower depth standard than tier-F filler"
+            )
+
     def section_dirs(self) -> List[str]:
         return [s.dir_name for s in self.sections]
 
@@ -87,21 +117,6 @@ def load_domain(root: Path) -> DomainPack:
     if abs(total_weight - 1.0) > 1e-6:
         raise DomainError(f"{root}: section weights sum to {total_weight}, expected 1.0")
 
-    # A tier-A anchor carries planted evidence; tier-F filler carries none.
-    # If any archetype's floor sits below the flat tier-F floor, a
-    # correctly tagged anchor could be held to a LOWER depth standard than
-    # generic filler — backwards for the property this domain pack exists
-    # to encode. Checked here, once, at load time, so a future edit to
-    # either number can never silently regress it.
-    tier_f_floor = arch_doc["tier_f_floor"]
-    under_floor = sorted(name for name, a in archetypes.items() if a.floor < tier_f_floor)
-    if under_floor:
-        raise DomainError(
-            f"{root}: archetype floor(s) {under_floor} are below tier_f_floor "
-            f"({tier_f_floor}) — a tier-A anchor must never be held to a lower "
-            "depth standard than tier-F filler"
-        )
-
     # Final review, F2: sections.yaml and finding-archetypes.yaml each declare
     # the domain's workstream list independently, and
     # synthvdr.schema.derive_prefix_for_workstream zips a caller-supplied
@@ -135,10 +150,17 @@ def load_domain(root: Path) -> DomainPack:
             "wrong workstream's prefix."
         )
 
-    return DomainPack(
-        sections=sections,
-        archetypes=archetypes,
-        default_archetype=arch_doc["default_archetype"],
-        tier_f_floor=arch_doc["tier_f_floor"],
-        finding_archetypes=finding_archetypes,
-    )
+    # Every invariant DomainPack enforces on itself is raised without the
+    # pack root, which the type cannot know. Re-raise with it, so loading a
+    # bad pack from disk still names which pack — and so this stays true for
+    # invariants added to __post_init__ later, not just today's.
+    try:
+        return DomainPack(
+            sections=sections,
+            archetypes=archetypes,
+            default_archetype=arch_doc["default_archetype"],
+            tier_f_floor=arch_doc["tier_f_floor"],
+            finding_archetypes=finding_archetypes,
+        )
+    except DomainError as exc:
+        raise DomainError(f"{root}: {exc}") from exc

@@ -2,7 +2,13 @@ import shutil
 
 import pytest
 
-from synthvdr.domain import DEFAULT_DOMAIN_ROOT, DomainError, load_domain
+from synthvdr.domain import (
+    DEFAULT_DOMAIN_ROOT,
+    Archetype,
+    DomainError,
+    DomainPack,
+    load_domain,
+)
 
 
 def test_ships_twenty_sections_in_canonical_order():
@@ -158,3 +164,60 @@ def test_load_domain_catches_the_exact_final_review_reproduction(tmp_path):
 
     with pytest.raises(DomainError, match="DIFFERENT ORDER"):
         load_domain(tmp_path)
+
+
+def test_a_hand_built_pack_cannot_hold_a_tier_a_anchor_below_the_tier_f_floor():
+    # The invariant belongs to the type, not to one way of building it.
+    # Checked only inside load_domain, it bound YAML on disk and nothing
+    # else - and DomainPack is constructed directly in the tests that cover
+    # archetype classification, which is exactly where a pack encoding the
+    # backwards rule (an anchor held to a LOWER depth standard than filler)
+    # would be built by hand and quietly believed.
+    with pytest.raises(DomainError, match="register"):
+        DomainPack(
+            sections=[],
+            archetypes={"register": Archetype(
+                name="register", floor=300, filename_patterns=["register"]
+            )},
+            default_archetype="register",
+            tier_f_floor=350,
+            finding_archetypes={},
+        )
+
+
+def test_a_hand_built_pack_at_exactly_the_tier_f_floor_is_allowed():
+    # The boundary is "below", not "at or below": an archetype whose floor
+    # equals the flat tier-F floor holds an anchor to the same standard as
+    # filler, which is permitted. Off-by-one here would reject the shipped
+    # pack the moment any archetype was tuned down to meet the floor.
+    pack = DomainPack(
+        sections=[],
+        archetypes={"register": Archetype(
+            name="register", floor=350, filename_patterns=["register"]
+        )},
+        default_archetype="register",
+        tier_f_floor=350,
+        finding_archetypes={},
+    )
+    assert pack.tier_f_floor == 350
+
+
+def test_load_domain_still_names_the_pack_root_when_the_floor_check_fails(tmp_path):
+    # Control on the move: the invariant's message loses the pack root when
+    # it moves into __post_init__, which cannot know it. load_domain must
+    # put it back, or a failure stops saying WHICH pack on disk is wrong.
+    (tmp_path / "sections.yaml").write_text(
+        "sections:\n"
+        "  - {number: 1, dir_name: 01_x, title: X, workstream: x, weight: 1.0, subsections: [a]}\n"
+    )
+    (tmp_path / "archetypes.yaml").write_text(
+        "archetypes:\n"
+        '  register: {floor: 300, filename_patterns: ["register"]}\n'
+        "default_archetype: register\n"
+        "tier_f_floor: 350\n"
+    )
+    (tmp_path / "finding-archetypes.yaml").write_text("finding_archetypes:\n  x: [a]\n")
+    with pytest.raises(DomainError) as excinfo:
+        load_domain(tmp_path)
+    assert str(tmp_path) in str(excinfo.value)
+    assert "register" in str(excinfo.value)
