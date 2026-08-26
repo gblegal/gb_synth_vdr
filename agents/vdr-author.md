@@ -41,13 +41,34 @@ wave completes and every author's discoveries can be sorted and numbered togethe
 
 **It must be a genuinely distinct issue, never a restatement of one already in the registry
 under another ID.** If what you found is really the same issue as an existing finding, seen
-from your document's angle, that is what `cross_links` is for — reference the existing
-finding's real ID from your refinement, do not file a near-duplicate as new. Filing the same
-issue twice under two IDs is the exact corpus defect the "one issue, one ID" rule exists to
-prevent, and a provisional ID does not exempt you from it.
+from your document's angle, that is a **cross-link**: name the existing finding's real ID in
+your returned manifest and say what your document adds to it, rather than filing a
+near-duplicate as new. Do not write `cross_links` into the intake yourself — see below, the
+intake carries three keys and that is not one of them. Filing the same issue twice under two
+IDs is the exact corpus defect the "one issue, one ID" rule exists to prevent, and a
+provisional ID does not exempt you from it.
 
 Report every discovery in your returned manifest (see Return, below), naming its provisional
 ID and, in one sentence, why it is a distinct issue.
+
+## What a `findings:` refinement may carry
+
+Exactly three keys: **`id`**, **`location`** and **`substance`**. Those last two are the only
+fields you own — they are the ones that cannot be settled until the real document exists to
+point at, which is why they are yours and the rest are not.
+
+Everything else on a finding row (`title`, `severity`, `workstream`, `multi_document`,
+`source`, `corroboration`, `cross_links`) was fixed when the user signed the registry off at
+Gate B. You are handed those fields so you know what to plant; you are not being asked to
+confirm, restate or improve them. Consolidation checks every one you send against the
+registry and **fails the wave** if it differs — including a `workstream` written as the ID
+prefix (`IP` rather than `ip`) and a `corroboration` written as a single string rather than a
+list. Send the three keys and nothing else, and none of that can happen.
+
+If authoring the document convinces you one of those fixed fields is genuinely wrong — the
+severity is understated, the registered `source` is not where the evidence naturally landed —
+say so **in your returned manifest**, in one line. The orchestrator decides; you never edit
+the registry to match your own view of it.
 
 ## Hard rules
 

@@ -128,11 +128,16 @@ Consolidate `_key/incoming/*.yaml` into `_key/findings.yaml`. Each file carries 
 things, handled two different ways:
 
 - **`findings:`** — refinements of finding IDs that already exist in the Gate-B registry.
-  This is an **upsert**: the author's finalised `location` and `substance` wording (settled
-  only once the real document exists to point at) overwrites those fields on the matching
-  finding. A `findings:` row whose ID has no match in the master registry is a defect in the
-  batch this wave was given, not a new finding — stop and fix the batch rather than silently
-  adding it.
+  This is a **narrow upsert**: `location` and `substance` — and only those two — are the
+  author's to settle, once the real document exists to point at, and they overwrite those
+  fields on the matching finding. Every other field on the row was fixed when the user signed
+  the registry off at Gate B; consolidation compares each one against the registry and
+  **raises** if it differs, rather than taking the author's version. An author echoing its
+  brief back unchanged is fine and expected — an author that returns a rewritten `workstream`,
+  `title` or `corroboration` has misunderstood its brief, and you want to see that rather than
+  ship a registry that `validate()` will pass clean. A `findings:` row whose ID has no match in
+  the master registry is a defect in the batch this wave was given, not a new finding — stop
+  and fix the batch rather than silently adding it.
 - **`new_findings:`** — findings an author genuinely discovered that were not in the Gate-B
   registry at all (design spec §5.1: "findings discovered during authoring are appended with
   the next free number in the owning workstream and declared in the wave manifest"). Every row
@@ -145,40 +150,34 @@ things, handled two different ways:
 
 The shape each `vdr-author` writes to `_key/incoming/<label>.yaml` (`<label>` is that
 subagent's wave-and-batch identifier, e.g. `wave1-batch-a.yaml`) — copy and adapt, do not
-reconstruct it from memory, since `findings:` is exactly `synthvdr.schema`'s `findings.yaml`
-shape and `new_findings:` rows carry the same required fields, just with a provisional ID:
+reconstruct it from memory. The two keys have deliberately different shapes: a `findings:`
+row carries **`id`, `location` and `substance` only**, because that is all the author owns;
+a `new_findings:` row carries the full `findings.yaml` shape, because nothing about it exists
+in the registry yet, just with a provisional ID in place of a real one.
 
-`source` and `corroboration` are relative to the blind tree root, never prefixed with
-`BLIND_TREE`'s own name — see `/vdr-findings`' fuller note on this. An author who has just
+A `new_findings:` row's `source` and `corroboration` are relative to the blind tree root,
+never prefixed with `BLIND_TREE`'s own name — see `/vdr-findings`' fuller note on this. An author who has just
 written a real file knows its path *within* `BLIND_TREE`, not the tree's own name, so this
 is usually automatic; the failure mode when it is not is `build_flagged_tree` (Step 5 below)
 raising `TwinError` for the batch.
 
 ```yaml
+# Three keys per row, no more. `title`, `severity`, `workstream`, `multi_document`,
+# `source` and `corroboration` are the registry's, not the author's — sending one that
+# differs from the registry raises rather than overwrites it.
 findings:
   - id: FIN-2
-    title: Deferred consideration escrow release condition unclear
-    severity: medium
-    workstream: financial
-    multi_document: false
-    source: 02_financial/2.1_statutory-accounts/2.1.3_statutory-accounts-03.md
     location: "Clause 4.2"
     substance: >
       The escrow release notice references a completion accounts adjustment mechanism that
       is not itself present anywhere else in the room's financial section.
   - id: OPS-1
-    title: Single-source supplier dependency undisclosed in main agreement summary
-    severity: high
-    workstream: operations
-    multi_document: true
-    source: 16_operations-quality/16.3_supply-chain/16.3.5_supply-chain-05.md
     location: "Row 3, annual spend column"
-    corroboration:
-      - 05_commercial/5.2_supplier-contracts/5.2.1_supplier-contracts-01.md
     substance: >
       One supplier accounts for the majority of a key input's annual spend, and the master
       supply agreement contains no minimum-volume or exclusivity carve-out addressing that
       concentration.
+# A discovery has no registry row to defer to, so this one carries everything.
 new_findings:
   - id: wave2-batch-a-NEW-1
     title: Undisclosed related-party balance surfaced in the intercompany schedule

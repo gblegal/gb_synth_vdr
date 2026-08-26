@@ -402,6 +402,14 @@ def parse_new_findings_ledger(build_status_text: str) -> Dict[str, str]:
     }
 
 
+# The only two fields a wave's author subagent owns. Everything else on a finding row was
+# fixed at Gate B, when the user signed the registry off; consolidation refines where the
+# finding sits in the document it has now written and what it says there, and nothing more.
+# Kept as a constant rather than inlined because `agents/vdr-author.md` documents the same
+# two names to the author, and the pair should be readable in one place from the code side.
+AUTHOR_OWNED_FINDING_FIELDS = ("location", "substance")
+
+
 @dataclass(frozen=True)
 class ConsolidationResult:
     """Result of one `consolidate_wave_incoming` call."""
@@ -433,11 +441,26 @@ def consolidate_wave_incoming(
     `incoming_docs` maps each incoming file's label (its filename stem) to its parsed YAML
     document. `findings_doc` is `_key/findings.yaml`'s parsed document (with a `findings` key,
     a list of row mappings — the same shape `synthvdr.schema.load_findings` reads). A
-    `findings:` row inside an incoming doc upserts onto the matching existing row by id, and
-    raises `SchemaError` if that id is not already in `findings_doc` (Gate B's registry is
-    closed; consolidation never introduces a new id under that key). A `new_findings:` row
-    proposes a discovery under a provisional id; unless that id is already in `already_mapped`,
-    it is passed to `allocate_new_finding_ids` (sorted there by `(label, provisional_id)`, so
+    `findings:` row inside an incoming doc upserts `AUTHOR_OWNED_FINDING_FIELDS` onto the
+    matching existing row by id, and raises `SchemaError` if that id is not already in
+    `findings_doc` (Gate B's registry is closed; consolidation never introduces a new id under
+    that key).
+
+    The upsert is deliberately NOT `dict.update(row)`. Authors are handed their registry rows
+    and write the intake in the same shape, so they echo the whole row back — and one that
+    echoes it back CHANGED (the observed case: an author returned the ID prefix `IP` as its
+    `workstream`, a `corroboration` string where the registry holds a list, and a title of its
+    own) would otherwise overwrite the signed-off registry silently. `validate()` cannot catch
+    it: `workstream` and `title` are free-form strings, so the corrupted registry passes clean
+    and ships, and a wrong `workstream` additionally feeds `derive_prefix_for_workstream`'s
+    correspondence cross-check — the one thing meant to catch a reordered `FINDING_PREFIXES`.
+    So every non-author-owned key is compared against the registry and must match it exactly;
+    an echo is accepted, a change raises. Raising rather than quietly dropping is the point —
+    an author reaching for a Gate B field has misunderstood its brief, and that is worth
+    seeing.
+
+    A `new_findings:` row proposes a discovery under a provisional id; unless that id is
+    already in `already_mapped`, it is passed to `allocate_new_finding_ids` (sorted there by `(label, provisional_id)`, so
     the allocation itself is deterministic across reruns too) and the resulting row is added
     under its real, newly allocated id.
     """
@@ -453,7 +476,22 @@ def consolidate_wave_incoming(
                     "consolidation only refines an existing finding, it never adds one "
                     "under the `findings:` key"
                 )
-            by_id[row["id"]].update(row)
+            target = by_id[row["id"]]
+            claimed = sorted(
+                key
+                for key, value in row.items()
+                if key != "id"
+                and key not in AUTHOR_OWNED_FINDING_FIELDS
+                and (key not in target or target[key] != value)
+            )
+            if claimed:
+                raise SchemaError(
+                    f"{label}: finding {row['id']!r} tries to set Gate B fields {claimed} — "
+                    f"consolidation refines {list(AUTHOR_OWNED_FINDING_FIELDS)} only"
+                )
+            target.update(
+                {key: row[key] for key in AUTHOR_OWNED_FINDING_FIELDS if key in row}
+            )
         for row in incoming.get("new_findings") or []:
             if row["id"] in already_mapped:
                 continue

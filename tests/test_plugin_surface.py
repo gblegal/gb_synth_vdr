@@ -40,10 +40,12 @@ from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
 from synthvdr.qa.structural import SLOT_REF, parse_gaps_allowlist
 from synthvdr.roomconf import load_room_conf
 from synthvdr.schema import (
+    AUTHOR_OWNED_FINDING_FIELDS,
     Distractor,
     Finding,
     FindingSet,
     allocate_new_finding_ids,
+    consolidate_wave_incoming,
     load_distractors,
     load_findings,
     render_findings_md,
@@ -878,30 +880,60 @@ def test_auditor_is_given_the_finding_substance_but_never_its_location():
         assert withheld in auditor_body, f"the auditor's doc no longer mentions {withheld!r}"
 
 
-def test_incoming_example_in_build_skill_validates_as_findings(tmp_path):
-    """The `_key/incoming/<label>.yaml` example `/vdr-build` tells a vdr-author subagent to
-    copy — the answer-key refinement it writes alongside its documents — must itself load and
-    validate through the real `synthvdr.schema` functions, the same discipline Task 17's fix
-    round established for findings.yaml/distractors.yaml in `/vdr-findings`. It is exactly the
-    `findings.yaml` shape (a subset of rows, upserted into the master registry), so it is
-    checked the same way: read straight out of the shipped skill file, never a copy kept here.
-    """
+def _build_skill_incoming_findings_rows():
     path = ROOT / "skills" / "vdr-build" / "SKILL.md"
     incoming_yaml = find_example_by_top_level_key(yaml_examples(path), "findings", path)
+    rows = yaml.safe_load(incoming_yaml)["findings"]
+    assert rows, "the incoming.yaml example in the skill has no findings"
+    return rows
 
-    incoming_path = tmp_path / "incoming-example.yaml"
-    incoming_path.write_text(incoming_yaml, encoding="utf-8")
 
-    findings = load_findings(incoming_path)
-    assert findings.findings, "the incoming.yaml example in the skill has no findings"
+def test_incoming_findings_example_carries_only_the_authors_own_fields():
+    """Review 2026-08-26, B1. This example USED to show a full `findings.yaml` row, and that
+    is what invited the corruption: an author copying it echoed `workstream`, `title` and
+    `corroboration` back, and `consolidate_wave_incoming`'s blanket `dict.update` wrote
+    whatever it echoed straight into the signed-off registry. Consolidation is narrow now, so
+    the example a subagent is told to copy must be narrow too — an example that raises when
+    consolidated is worse than no example at all.
+    """
+    for row in _build_skill_incoming_findings_rows():
+        assert set(row) == {"id", *AUTHOR_OWNED_FINDING_FIELDS}, (
+            f"incoming `findings:` row {row['id']!r} carries {sorted(set(row))} — the author "
+            f"owns 'id' plus {list(AUTHOR_OWNED_FINDING_FIELDS)} and nothing else"
+        )
 
-    errors = validate(findings, [])
-    assert errors == [], f"the skill's own incoming.yaml example fails validate(): {errors}"
 
-    # SEMANTIC validation, fix round 1 — see assert_evidence_paths_resolve_under_blind_tree's
-    # docstring: this is the check that would have caught vdr-build's data-room/-prefixed
-    # source/corroboration paths, which validate() above cannot see.
-    assert_evidence_paths_resolve_under_blind_tree(tmp_path, findings)
+def test_incoming_findings_example_consolidates_into_a_registry():
+    """The shape check above is necessary but not sufficient: it would still pass if the rows
+    were narrow and the function rejected them anyway. Drive the real consolidation the skill
+    names, against a registry holding the example's own ids.
+    """
+    rows = _build_skill_incoming_findings_rows()
+    registry = {
+        "schema_version": 1,
+        "room": "Project Testbed",
+        "findings": [
+            {
+                "id": row["id"],
+                "title": f"Registry title for {row['id']}",
+                "severity": "medium",
+                "workstream": "financial",
+                "multi_document": False,
+                "source": "02_financial/2.1_statutory-accounts/2.1.3_accounts-03.md",
+                "substance": "Registry substance, superseded by the author's refinement.",
+            }
+            for row in rows
+        ],
+    }
+
+    result = consolidate_wave_incoming(registry, {"wave1-batch-a": {"findings": rows}}, {}, {})
+
+    consolidated = {row["id"]: row for row in result.findings_doc["findings"]}
+    for row in rows:
+        assert consolidated[row["id"]]["substance"] == row["substance"]
+        assert consolidated[row["id"]]["title"] == f"Registry title for {row['id']}", (
+            "consolidating the skill's own example overwrote a Gate B field"
+        )
 
 
 NEW_FINDING_ID = re.compile(r"\A(?P<label>.+)-NEW-\d+\Z")

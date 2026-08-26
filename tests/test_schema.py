@@ -644,3 +644,111 @@ def test_consolidate_wave_incoming_rejects_a_findings_row_not_in_the_gate_b_regi
     incoming_docs = {"wave2-batch-a": {"findings": [{"id": "NOT-REGISTERED"}]}}
     with pytest.raises(SchemaError, match="NOT-REGISTERED"):
         consolidate_wave_incoming(FINDINGS_DOC, incoming_docs, {}, {})
+
+
+# ---------------------------------------------------------------------------
+# Review 2026-08-26, B1: `consolidate_wave_incoming` upserted every key the author sent, so a
+# vdr-author subagent that echoed back a rewritten `workstream`, `title` or `corroboration`
+# overwrote the signed-off Gate B registry with it — silently, because `validate()` has no
+# opinion on any of those values. Consolidation refines `location` and `substance`; a row that
+# reaches for anything else has misunderstood its brief, and must say so rather than land.
+# ---------------------------------------------------------------------------
+
+FINDINGS_DOC_WITH_CORROBORATION = {
+    "schema_version": 1,
+    "room": "Project Testbed",
+    "findings": [
+        {
+            "id": "IP-1",
+            "title": "Founder IP never assigned",
+            "severity": "critical",
+            "workstream": "ip",
+            "multi_document": True,
+            "source": "06_ip-it/6.1_registrations/6.1.1_trade-marks.md",
+            "corroboration": ["06_ip-it/6.2_assignments/6.2.1_founder-deed.md"],
+            "substance": "Seed finding.",
+        }
+    ],
+}
+
+
+def test_consolidate_wave_incoming_rejects_a_row_that_rewrites_a_gate_b_field():
+    """The observed corruption: an author returned the ID prefix as the workstream and a title
+    of its own. Neither is caught by `validate()` — `workstream` is a free-form string in the
+    schema — so the rewritten registry would have shipped, and a wrong `workstream` also feeds
+    `derive_prefix_for_workstream`'s correspondence cross-check.
+    """
+    incoming_docs = {
+        "wave1-batch-a": {
+            "findings": [
+                {
+                    "id": "ENV-1",
+                    "workstream": "ENV",
+                    "title": "Author retitled it",
+                    "location": "Condition 3",
+                    "substance": "Refined substance.",
+                }
+            ]
+        }
+    }
+    with pytest.raises(SchemaError, match=r"ENV-1.*'title', 'workstream'"):
+        consolidate_wave_incoming(FINDINGS_DOC, incoming_docs, {}, {})
+
+
+def test_consolidate_wave_incoming_leaves_the_registry_untouched_when_it_rejects():
+    incoming_docs = {
+        "wave1-batch-a": {"findings": [{"id": "ENV-1", "workstream": "ENV"}]}
+    }
+    with pytest.raises(SchemaError):
+        consolidate_wave_incoming(FINDINGS_DOC, incoming_docs, {}, {})
+    assert FINDINGS_DOC["findings"][0]["workstream"] == "environmental"
+
+
+def test_consolidate_wave_incoming_rejects_a_string_valued_corroboration():
+    """The loud half of the same bug. A string where the registry holds a list survives
+    consolidation, then loads as a character list — `evidence_paths()` returns
+    ['...', 'b', '.', 'm', 'd'] and `build_flagged_tree` raises far from the cause.
+    """
+    incoming_docs = {
+        "wave1-batch-a": {
+            "findings": [
+                {
+                    "id": "IP-1",
+                    "corroboration": "06_ip-it/6.2_assignments/6.2.1_founder-deed.md",
+                    "substance": "Refined substance.",
+                }
+            ]
+        }
+    }
+    with pytest.raises(SchemaError, match=r"IP-1.*'corroboration'"):
+        consolidate_wave_incoming(FINDINGS_DOC_WITH_CORROBORATION, incoming_docs, {}, {})
+
+
+def test_consolidate_wave_incoming_rejects_a_gate_b_field_the_registry_does_not_hold():
+    """A key absent from the master row is still a Gate B field the author does not own.
+    Dropping it silently would be the same defect one layer quieter: the author believes it
+    added a cross-link, the registry never hears about it, and nothing says otherwise.
+    """
+    incoming_docs = {
+        "wave1-batch-a": {
+            "findings": [{"id": "ENV-1", "cross_links": ["FIN-9"], "substance": "Refined."}]
+        }
+    }
+    with pytest.raises(SchemaError, match=r"ENV-1.*'cross_links'"):
+        consolidate_wave_incoming(FINDINGS_DOC, incoming_docs, {}, {})
+
+
+def test_consolidate_wave_incoming_accepts_a_row_carrying_only_location_and_substance():
+    incoming_docs = {
+        "wave1-batch-a": {
+            "findings": [
+                {"id": "ENV-1", "location": "Condition 3", "substance": "Refined substance."}
+            ]
+        }
+    }
+    result = consolidate_wave_incoming(FINDINGS_DOC, incoming_docs, {}, {})
+    (row,) = result.findings_doc["findings"]
+    assert row["location"] == "Condition 3"
+    assert row["substance"] == "Refined substance."
+    assert row["title"] == "Existing environmental finding"
+    assert row["workstream"] == "environmental"
