@@ -1229,3 +1229,36 @@ def test_pyproject_declares_its_own_packages():
     # and the comment in pyproject.toml — needs revisiting rather than silently holding.
     top_level = {p.name for p in ROOT.iterdir() if p.is_dir() and not p.name.startswith(".")}
     assert len(top_level) > 1, top_level
+
+
+def test_every_make_target_the_docs_tell_you_to_run_exists():
+    """The Makefile is a thin wrapper, so the only way it can be wrong is by
+    drifting from the docs that point at it — a renamed or dropped target
+    leaves an instruction that fails on a newcomer's first command, which is
+    precisely the papercut `make test` was added to remove.
+
+    Only real commands count: a line inside a ```bash fence, or an inline
+    `make x` in backticks. Matching bare prose instead reads "make an empty
+    folder for the room" in the README as a target named `an`.
+    """
+    import re
+
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    declared = set(re.findall(r"^([a-zA-Z][\w-]*):", makefile, re.MULTILINE))
+
+    referenced = {}
+    for name in ("README.md", "TECHNICAL-NOTES.md", "ARCHITECTURE.md"):
+        path = ROOT / name
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        commands = []
+        for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL):
+            commands += re.findall(r"^\s*make ([a-z][\w-]*)", block, re.MULTILINE)
+        commands += re.findall(r"`make ([a-z][\w-]*)[^`]*`", text)
+        for target in commands:
+            referenced.setdefault(target, name)
+
+    assert referenced, "no `make <target>` commands found — has the docs wiring changed?"
+    missing = {t: doc for t, doc in referenced.items() if t not in declared}
+    assert not missing, f"documented but not declared in the Makefile: {missing}"

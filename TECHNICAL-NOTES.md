@@ -14,6 +14,12 @@ pip install -e ".[dev]"       # adds pytest, for the test suite
 pip install -e ".[docx]"      # adds python-docx, only if you want DOCX renders (see §5)
 ```
 
+Those install into whichever Python you are already in, which assumes you have somewhere to
+install *to*. On a system Python that marks itself externally managed they fail outright. If
+you would rather not think about it, `make test` creates `.venv`, installs the package with
+both extras into it, and runs the suite — see §4. `make venv` stops after the install, for
+driving the CLIs by hand afterwards, and `make clean` removes the environment again.
+
 Python 3.9 or later. `PyYAML` is the only hard dependency; `python-docx` and the Node/PDF
 toolchain are optional extras.
 
@@ -149,6 +155,13 @@ flagged tree, and building the 10-document subset.
   byte-for-byte, which is the only way to observe a set/dict-ordering dependence.
 
 It is the closest thing this project has to a smoke test for the whole pipeline:
+
+```bash
+make test                                     # creates .venv on first use, runs everything
+make test ARGS="tests/test_end_to_end.py -v"  # ARGS reaches pytest unchanged
+```
+
+Or drive pytest yourself, if you manage your own environment:
 
 ```bash
 pip install -e ".[dev]"    # pytest is in the dev extra, not a base dependency
