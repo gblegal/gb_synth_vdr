@@ -23,6 +23,10 @@ class Section:
     workstream: str
     weight: float
     subsections: List[str]
+    # A section no room may drop. `DomainPack.subset` refuses a subset that
+    # omits one. Defaulted so a sections.yaml row without the key still splats
+    # into Section(**row), which is how load_domain builds these.
+    core: bool = False
 
 
 @dataclass(frozen=True)

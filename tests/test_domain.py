@@ -7,6 +7,7 @@ from synthvdr.domain import (
     Archetype,
     DomainError,
     DomainPack,
+    Section,
     load_domain,
 )
 
@@ -221,3 +222,34 @@ def test_load_domain_still_names_the_pack_root_when_the_floor_check_fails(tmp_pa
         load_domain(tmp_path)
     assert str(tmp_path) in str(excinfo.value)
     assert "register" in str(excinfo.value)
+
+
+def test_the_four_core_sections_are_marked_and_the_rest_are_not():
+    # A core section is one no room may drop: every deal has corporate,
+    # financial and commercial papers, and 18_transaction holds the draft SPA,
+    # which is the only natural home for the enterprise-value and earn-out
+    # figures gate 13 greps the room for. A room without it cannot answer
+    # gate 13 at all.
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    core = {s.dir_name for s in pack.sections if s.core}
+    assert core == {
+        "01_corporate",
+        "02_financial",
+        "05_commercial",
+        "18_transaction",
+    }
+
+
+def test_core_defaults_to_false_so_an_older_pack_still_loads():
+    # sections.yaml rows are splatted straight into Section(**row), so a row
+    # without the key must not raise — otherwise adding this field breaks every
+    # domain pack that predates it.
+    section = Section(
+        number=1,
+        dir_name="01_corporate",
+        title="Corporate",
+        workstream="corporate",
+        weight=1.0,
+        subsections=["constitutional"],
+    )
+    assert section.core is False
