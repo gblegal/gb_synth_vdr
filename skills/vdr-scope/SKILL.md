@@ -316,10 +316,20 @@ values step 2 just printed, plus:
   already uses that exact phrasing incidentally.
 - `FINDING_PREFIXES` — one `|`-separated, uppercase-letter-starting token **per workstream in
   the FULL domain pack, in its own order** — `pack.workstreams()`, never
-  `room_pack.workstreams()`, which raises for this reason. A room building a subset still
-  declares all twenty: a dropped workstream's prefix must still be recognised by gate 4 if a
-  token shaped like one ever leaks into the blind room, and shrinking the list would
-  additionally re-pair every remaining prefix with the wrong workstream.
+  `room_pack.workstreams()`, which raises for exactly this reason. That order is the same one
+  `sections.yaml` and `finding-archetypes.yaml` both declare and `load_domain` requires them
+  to agree on. For the shipped M&A pack:
+  `CORP|FIN|TAX|FING|COMM|IP|IT|PROP|EMPL|REG|ENV|INS|PEN|DATA|LIT|OPS|MGMT|TXN|ESG|JV`.
+
+  **A room building a subset still declares all twenty.** A dropped workstream's prefix must
+  still be recognised by gate 4 if a token shaped like one ever leaks into the blind room —
+  and `/vdr-findings` has not run yet, so you do not know which workstreams will carry a
+  finding anyway.
+
+  **The order is load-bearing, not cosmetic.** `/vdr-build` pairs this list positionally with
+  `pack.workstreams()` to work out which prefix a mid-authoring discovery gets. Get the token
+  count right but the order wrong — or shrink the list to match a subset — and every
+  discovered finding is silently numbered under the wrong workstream's prefix.
 - `EXPECTED_KDP_CARRIERS=0` — no findings exist yet; `/vdr-findings` sets the real number.
 - `INDEX_TOTAL`, `BLIND_TOTAL`, `FLAGGED_TOTAL` — all equal to `len(slots)` from step 2.
 - `SECTION_DIRS` — the space-separated `room_pack.section_dirs()` string from step 2. This one
