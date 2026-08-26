@@ -973,3 +973,64 @@ def test_build_flagged_tree_reports_a_missing_path_key_as_a_twin_error(tmp_path)
 
     with pytest.raises(TwinError, match="missing key KEY_ROOT"):
         build_flagged_tree(room, incomplete, FindingSet(findings=[], room="Project Testbed"))
+
+
+# --- A failed copy must name the file, in the module's own exception type. --
+#
+# The prepare step above the loop already wraps OSError in TwinError, with
+# the reasoning that this "is about raising the module's own exception
+# type". The copy loop that follows it does the same kind of filesystem
+# work — mkdir, copyfile, read_text, write_text, once per document — and
+# wrapped none of it, so a permission error, a full disk or a name too long
+# for the filesystem surfaced as a bare OSError from inside shutil with no
+# indication of which of the room's documents was being written.
+#
+# The fault is injected rather than provoked with chmod: this repo already
+# established (see the note above test_check_subset_writes_nothing) that
+# mode bits are unreliable here, and the existing chmod test in this file
+# has to probe-and-skip for exactly that reason. What is under test is the
+# production wrap, not the mock — the OSError stands in for the disk.
+
+
+def _raise_os_error_for(monkeypatch, attr, doomed_suffix, message="disk on fire"):
+    """Make `attr` raise OSError for one path only, delegating otherwise."""
+    from pathlib import Path
+
+    original = getattr(Path, attr)
+
+    def _patched(self, *args, **kwargs):
+        if self.as_posix().endswith(doomed_suffix):
+            raise OSError(28, message)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, attr, _patched)
+
+
+def test_a_failed_benign_copy_is_a_twin_error_naming_the_document(tmp_path, monkeypatch):
+    room, conf = make_room(tmp_path)
+    carrier_rel = "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md"
+    write_blind(room, carrier_rel, BLIND)
+    write_blind(room, "01_corporate/1.1_articles.md", "# Articles\n\nOrdinary.\n")
+
+    def _boom(src, dst, *args, **kwargs):
+        raise OSError(28, "no space left on device")
+
+    monkeypatch.setattr("synthvdr.twin.shutil.copyfile", _boom)
+
+    findings = FindingSet(findings=[finding(corroboration=[])], room="Project Testbed")
+    with pytest.raises(TwinError) as excinfo:
+        build_flagged_tree(room, conf, findings)
+    assert "1.1_articles.md" in str(excinfo.value)
+    assert "no space left on device" in str(excinfo.value)
+
+
+def test_a_failed_carrier_read_is_a_twin_error_naming_the_document(tmp_path, monkeypatch):
+    room, conf = make_room(tmp_path)
+    carrier_rel = "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md"
+    write_blind(room, carrier_rel, BLIND)
+    _raise_os_error_for(monkeypatch, "read_text", "11.2.1_phase-2.md")
+
+    findings = FindingSet(findings=[finding(corroboration=[])], room="Project Testbed")
+    with pytest.raises(TwinError) as excinfo:
+        build_flagged_tree(room, conf, findings)
+    assert "11.2.1_phase-2.md" in str(excinfo.value)

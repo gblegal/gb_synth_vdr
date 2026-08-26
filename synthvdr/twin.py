@@ -258,15 +258,34 @@ def build_flagged_tree(
         rel = source.relative_to(blind_root).as_posix()
         matched.add(rel)
         target = flagged_root / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if source.suffix != ".md" or rel not in carriers:
-            shutil.copyfile(source, target)
-            identical += 1
-        else:
-            block = annotation_block(sorted(carriers[rel], key=lambda f: f.id), flag_string)
-            blind_text = source.read_text(encoding="utf-8")
-            target.write_text(derive_twin(blind_text, block), encoding="utf-8")
-            carrier_count += 1
+        # Same reasoning as the prepare step above, applied to the step that
+        # does the bulk of the filesystem work: raise the module's own
+        # exception type, and name the document. Every call in this block
+        # can fail for ordinary environmental reasons — a full disk, a
+        # revoked permission, a path the filesystem will not take — and
+        # unwrapped they surface as a bare OSError from inside shutil or
+        # pathlib, identifying the operation but not which of the room's
+        # documents was being written when it went wrong. On a 2,000-file
+        # XL room that is the difference between a one-line diagnosis and a
+        # bisect. Nothing is caught that the loop could recover from: the
+        # flagged tree is already partial by this point, so the build ends
+        # here either way and the marker (written before any document) is
+        # what tells the next build it may clear the residue.
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if source.suffix != ".md" or rel not in carriers:
+                shutil.copyfile(source, target)
+                identical += 1
+            else:
+                block = annotation_block(sorted(carriers[rel], key=lambda f: f.id), flag_string)
+                blind_text = source.read_text(encoding="utf-8")
+                target.write_text(derive_twin(blind_text, block), encoding="utf-8")
+                carrier_count += 1
+        except OSError as exc:
+            raise TwinError(
+                f"could not write {rel} into FLAGGED_TREE at {target} "
+                f"({exc.__class__.__name__}: {exc})"
+            ) from exc
         written += 1
 
     # A finding whose source or corroboration names a path with no matching
