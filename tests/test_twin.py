@@ -469,6 +469,14 @@ def test_same_file_detects_a_case_alias_on_this_filesystem(tmp_path):
     real = tmp_path / "data-room"
     real.mkdir()
     alias = tmp_path / "DATA-ROOM"
+    if not alias.exists():
+        # A case-SENSITIVE filesystem — ext4 on CI, where "DATA-ROOM" is simply a
+        # different name and there is no alias for _same_file to detect. The check
+        # this test makes is meaningful only where the filesystem aliases case, as
+        # macOS APFS does by default; skipping is honest, failing is not. (The
+        # string-level casefold guard in resolve_tree_map is what covers the
+        # case-sensitive case, and is tested separately.)
+        pytest.skip("filesystem is case-sensitive; there is no case alias to detect")
     assert str(alias.resolve()) != str(real.resolve()), (
         "test assumption broken: resolve() must not itself normalise case, "
         "or this isn't exercising the alias at all"

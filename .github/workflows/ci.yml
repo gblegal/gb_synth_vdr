@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  tests:
+    # pyproject declares requires-python = ">=3.9", so the floor is tested, not
+    # assumed. The first CI run here failed on 3.11 alone, on a `Path.resolve()`
+    # behaviour that changed in 3.13 — exactly the class of defect a single
+    # version hides.
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install --editable '.[dev,docx]'
+      - run: pytest -q
+
+  version:
+    # This repo is its own marketplace, so master is the published artefact and
+    # every install caches by version. A surface change under an unchanged
+    # version ships a release nobody is offered — the 26 August review's R1.
+    # PRs only: on a push to master the comparison has already been made.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: bash tools/version-check.sh "origin/${{ github.base_ref }}"

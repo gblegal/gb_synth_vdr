@@ -174,6 +174,24 @@ def _check_relative_path(path: Path, key: str, value: str) -> None:
         )
 
 
+def _realpath(path: Path) -> Path:
+    """`Path.resolve()` without the version-dependent behaviour on symlink loops.
+
+    Python 3.12 and earlier raise `RuntimeError("Symlink loop from ...")` out of
+    `Path.resolve(strict=False)`; 3.13 and later return the unresolved path
+    instead. This package declares `requires-python = ">=3.9"`, so both are in
+    scope, and the difference is not cosmetic: a room containing a symlink loop
+    got a clean `TwinError` naming the tree on 3.13+ and a bare `RuntimeError`
+    from inside pathlib on 3.11, escaping every handler this module has.
+
+    `os.path.realpath` has the 3.13+ behaviour on every supported version, so
+    using it here makes the room's own defect surface the same way everywhere —
+    as the OSError the caller already handles, at the point it tries to use the
+    path. Found by CI's first run, which is on 3.11.
+    """
+    return Path(os.path.realpath(path))
+
+
 def resolve_tree_map(
     room: Path,
     values: Mapping[str, str],
@@ -209,7 +227,7 @@ def resolve_tree_map(
     after load_room_conf returned would otherwise slip straight through.
     """
     where = room if where is None else where
-    room_resolved = room.resolve()
+    room_resolved = _realpath(room)
     resolved: Dict[str, Path] = {ROOM_ROOT_LABEL: room_resolved}
     for key in keys:
         if key not in values:
@@ -217,7 +235,7 @@ def resolve_tree_map(
         value = values[key]
         _check_relative_path(where, key, value)
         declared = room_resolved.joinpath(*posixpath.normpath(value).split("/"))
-        actual = (room / value).resolve()
+        actual = _realpath(room / value)
         if not _is_inside(actual, room_resolved) or _casefolded_parts(actual) == _casefolded_parts(
             room_resolved
         ):
