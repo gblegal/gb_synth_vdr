@@ -1766,7 +1766,21 @@ def test_scope_skill_uses_the_subset_pack_for_sections_and_the_full_pack_for_pre
     # FINDING_PREFIXES that mispairs every discovered finding.
     body = _read(ROOT / "skills" / "vdr-scope" / "SKILL.md")
     assert "room_pack.section_dirs()" in body, "SECTION_DIRS must come from the subset"
-    assert "pack.workstreams()" in body, "FINDING_PREFIXES must come from the full pack"
+    # A bare substring check for "pack.workstreams()" is satisfied by
+    # "room_pack.workstreams()" alone (it ends in "...pack.workstreams()"), so it
+    # would pass even if the skill never once told the reader to call the correct,
+    # full-pack form. Require the un-prefixed call to appear literally...
+    assert re.search(r"(?<!room_)`pack\.workstreams\(\)`", body), (
+        "FINDING_PREFIXES must come from the full pack via a bare `pack.workstreams()` call"
+    )
+    # ...and require every mention of the subset's (forbidden) form to sit in a
+    # sentence that is warning the reader off it, never instructing them to use it.
+    for line in body.splitlines():
+        if "room_pack.workstreams()" in line:
+            assert "never" in line or "raises" in line, (
+                "room_pack.workstreams() must appear only as a prohibited example, "
+                f"not an instruction to call it: {line!r}"
+            )
     assert "build_slot_manifest(room_pack" in body, (
         "the manifest must be built from the subset, or the room builds every section"
     )

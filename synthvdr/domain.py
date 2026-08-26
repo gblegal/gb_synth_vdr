@@ -129,9 +129,10 @@ class DomainPack:
         derive from `Section.number`, so honouring the caller's order would
         renumber the room.
 
-        `finding_archetypes` is narrowed to the surviving workstreams, so
-        /vdr-findings cannot seed a finding for a section the room will not
-        build.
+        `finding_archetypes` is narrowed to the surviving workstreams, which keeps
+        the returned pack internally consistent — nothing it exposes describes a
+        workstream it no longer has. The actual guard against a finding stranded in
+        a dropped section is `schema.evidence_outside_sections`, run at Gate B.
         """
         wanted = list(dict.fromkeys(dir_names))
         by_dir = {s.dir_name: s for s in self.sections}

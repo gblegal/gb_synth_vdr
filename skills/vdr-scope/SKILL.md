@@ -66,7 +66,7 @@ from synthvdr.slots import SIZE_PRESETS, build_slot_manifest, write_anchors_csv
 from synthvdr.index_build import write_index_sources, render_index
 
 pack = load_domain(DEFAULT_DOMAIN_ROOT)
-preset = SIZE_PRESETS["M"]  # or whichever size the user picked in step 1
+preset = SIZE_PRESETS["XS"]  # or whichever size the user picked in step 1
 
 # The sections this room builds, agreed in step 1. At M and above, use every one:
 # delete this list and pass `pack` to build_slot_manifest instead.
@@ -105,15 +105,17 @@ for section_dir, (count, heaviest) in profile.items():
 
 **Read this before you invent anything.** The domain pack allocates at least one document to
 every workstream at every size, `XS` included, and gate 10 will hold each one to the floor
-printed here. On the shipped M&A pack at `XS` that means `04_financing-banking`,
-`13_pensions` and `17_management-presentations` each want a 2,500-word document, and
-`20_jv-minority-interests` wants one at all — so the group in step 3 needs bank debt, a
-pension arrangement and a minority holding, whether or not the sector you were handed
-suggests them.
+printed here — for whichever sections step 1 chose to keep. On the shipped M&A pack at `XS`
+that means `04_financing-banking`, `13_pensions` and `17_management-presentations` each want
+a 2,500-word document if kept, and `20_jv-minority-interests` wants one at all if kept — so
+keep any of these four only if the deal genuinely has them, and if you keep one, the group in
+step 3 must give it something real to be about: bank debt, a pension arrangement, a
+management-presentation programme or a minority holding. A section that has no place in the
+sector's fiction belongs dropped in step 1, not carried into step 3 and invented to order.
 
 Getting this wrong is expensive in a specific way. The fact sheet is what the user signs off
 at Gate A, and it is the one file every document in the room reconciles to; discovering
-mid-build that three sections have nothing to be about means retro-fitting facts into a
+mid-build that a section you kept has nothing to be about means retro-fitting facts into a
 document that was already signed off, which is exactly the change Gate A exists to prevent.
 
 ## 3. Invent the deal and write the fact sheet
