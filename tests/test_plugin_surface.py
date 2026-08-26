@@ -29,6 +29,7 @@ import importlib
 import json
 import os
 import sys
+import zipfile
 import re
 import shutil
 import subprocess
@@ -1804,3 +1805,120 @@ def test_scope_skill_names_the_core_sections_the_pack_marks():
             assert section.dir_name in body, (
                 f"/vdr-scope does not tell the author {section.dir_name} is always present"
             )
+
+
+# ---------------------------------------------------------------------------
+# tools/build-claude-skills.sh. claude.ai numbers its own UPLOADS v1, v2, ...
+# and reads no version from a skill bundle, so the packaged description carries
+# the version instead. That stamp is derived from synthvdr.__version__ rather
+# than typed, and these check it cannot drift from the code it ships beside —
+# the same failure the marketplace-entry version had.
+# ---------------------------------------------------------------------------
+
+
+def _build_claude_skills(out_dir):
+    return subprocess.run(
+        ["bash", str(ROOT / "tools" / "build-claude-skills.sh"), str(out_dir)],
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_build_claude_skills_stamps_the_package_version_on_each_description(tmp_path):
+    if not shutil.which("bash") or not shutil.which("zip"):
+        pytest.skip("bash and zip are required to build the bundles")
+
+    result = _build_claude_skills(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    for skill in ("vdr-qa", "vdr-score"):
+        archive = tmp_path / f"{skill}-skill.zip"
+        assert archive.is_file(), f"{skill} bundle not built"
+        with zipfile.ZipFile(archive) as bundle:
+            body = bundle.read(f"{skill}/SKILL.md").decode("utf-8")
+        front = yaml.safe_load(body.split("---")[1])
+        assert front["name"] == skill
+        assert front["description"].endswith(f"(synth-vdr {synthvdr.__version__})"), (
+            f"{skill}'s packaged description does not carry the current version"
+        )
+
+
+def test_build_claude_skills_restamps_rather_than_appends(tmp_path):
+    """Building from an ALREADY-STAMPED source must replace the stamp, not add a
+    second one.
+
+    Simply running the real script twice cannot test this: it packages from the
+    repo's own SKILL.md, which is never stamped, so every run reads a clean
+    description and the guard is never reached. A test that re-ran the script
+    would pass against a build with the guard deleted — it would assert nothing.
+    So the source is copied and pre-stamped with a STALE version first, which is
+    the only state in which the two behaviours differ.
+    """
+    if not shutil.which("bash") or not shutil.which("zip"):
+        pytest.skip("bash and zip are required to build the bundles")
+
+    fake_repo = tmp_path / "repo"
+    for part in ("tools", "skills", "synthvdr", "domain"):
+        shutil.copytree(ROOT / part, fake_repo / part)
+
+    skill_md = fake_repo / "skills" / "vdr-qa" / "SKILL.md"
+    lines = skill_md.read_text(encoding="utf-8").splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("description:"):
+            lines[i] = line + " (synth-vdr 0.0.1-stale)"
+            break
+    skill_md.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    out = tmp_path / "out"
+    result = subprocess.run(
+        ["bash", str(fake_repo / "tools" / "build-claude-skills.sh"), str(out)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    with zipfile.ZipFile(out / "vdr-qa-skill.zip") as bundle:
+        body = bundle.read("vdr-qa/SKILL.md").decode("utf-8")
+    description = yaml.safe_load(body.split("---")[1])["description"]
+
+    assert description.count("(synth-vdr ") == 1, description
+    assert "0.0.1-stale" not in description, "the stale stamp survived"
+    assert description.endswith(f"(synth-vdr {synthvdr.__version__})")
+
+
+def test_build_claude_skills_bundles_the_package_beside_its_domain_pack(tmp_path):
+    # DEFAULT_DOMAIN_ROOT resolves to `<package>/../domain/ma`, so the two must
+    # ship as siblings or the bundle imports and then cannot find its own pack.
+    if not shutil.which("bash") or not shutil.which("zip"):
+        pytest.skip("bash and zip are required to build the bundles")
+
+    assert _build_claude_skills(tmp_path).returncode == 0
+    with zipfile.ZipFile(tmp_path / "vdr-qa-skill.zip") as bundle:
+        names = set(bundle.namelist())
+
+    assert "vdr-qa/synthvdr/__init__.py" in names
+    assert "vdr-qa/domain/ma/sections.yaml" in names
+    assert not [n for n in names if "__pycache__" in n], "bundle carries __pycache__"
+    assert {n.split("/")[0] for n in names} == {"vdr-qa"}, (
+        "claude.ai needs the skill FOLDER at the zip root, nothing beside it"
+    )
+
+
+def test_build_claude_skills_packages_only_skills_that_work_without_subagents():
+    """/vdr-build fans out to vdr-author subagents; claude.ai skills have no
+    equivalent, so packaging it would ship something that uploads and then does
+    not work. Pinned against the skill's own text rather than a copy of this
+    list, so the day /vdr-build stops needing subagents this test says so.
+    """
+    script = _read(ROOT / "tools" / "build-claude-skills.sh")
+    packaged = re.search(r"(?m)^SKILLS=\((.*)\)$", script).group(1).split()
+    assert packaged == ["vdr-qa", "vdr-score"]
+
+    for skill in packaged:
+        body = _read(ROOT / "skills" / skill / "SKILL.md").lower()
+        assert "vdr-author" not in body, f"{skill} now needs a subagent — do not package it"
+
+    build = _read(ROOT / "skills" / "vdr-build" / "SKILL.md").lower()
+    assert "vdr-author" in build, (
+        "the premise for excluding /vdr-build is that it dispatches subagents"
+    )
