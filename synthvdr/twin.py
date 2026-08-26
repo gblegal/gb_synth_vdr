@@ -232,6 +232,34 @@ def build_flagged_tree(
     assert_safe_delete_target(flagged_root, resolved)
     assert_target_is_ours(flagged_root)
 
+    # rglob does NOT raise on a directory it cannot read — it omits the
+    # contents and walks on. Left alone, an unreadable section directory
+    # produces a flagged tree quietly missing every document beneath it,
+    # out of a build that reports success and a TwinReport whose counts
+    # look plausible: the same silent-gap shape this function already
+    # refuses below for an evidence path that was never authored, so it is
+    # refused the same way, by name. Note this is a gap the twin-diff gate
+    # cannot close for us either — it compares the trees that exist, and
+    # both sides are consistently missing the same documents.
+    #
+    # Deliberately BEFORE the clearing below: a room that fails this check
+    # keeps the flagged tree it already had, rather than being left with
+    # nothing after a build that could never have completed. The walk is
+    # unaffected by that ordering because Property 2 above has just proved
+    # the two trees do not overlap.
+    blind_entries = sorted(blind_root.rglob("*"))
+    for directory in ([blind_root] if blind_root.is_dir() else []) + [
+        entry for entry in blind_entries if entry.is_dir()
+    ]:
+        try:
+            list(directory.iterdir())
+        except OSError as exc:
+            raise TwinError(
+                f"could not read {directory} under BLIND_TREE "
+                f"({exc.__class__.__name__}: {exc}) — its documents would be "
+                "silently missing from the flagged tree"
+            ) from exc
+
     # The marker goes down before any document does, so a build that dies
     # part-way still leaves a tree the next build is allowed to clear.
     # Wrapping this in TwinError also catches the residue the guards above
@@ -252,7 +280,7 @@ def build_flagged_tree(
 
     written = carrier_count = identical = 0
     matched: Set[str] = set()
-    for source in sorted(blind_root.rglob("*")):
+    for source in blind_entries:
         if not source.is_file():
             continue
         rel = source.relative_to(blind_root).as_posix()
@@ -281,6 +309,17 @@ def build_flagged_tree(
                 blind_text = source.read_text(encoding="utf-8")
                 target.write_text(derive_twin(blind_text, block), encoding="utf-8")
                 carrier_count += 1
+        except UnicodeDecodeError as exc:
+            # Only the carrier branch above decodes: a non-carrier is copied
+            # as bytes and never read as text, which is what lets a room hold
+            # a PDF or an image at all. So this fires exactly when a finding
+            # points at a .md that is not valid UTF-8 — and it is a
+            # ValueError, not an OSError, so the handler below never saw it
+            # and it escaped naming a codec byte offset instead of a document.
+            raise TwinError(
+                f"could not read {rel} as UTF-8, and a carrier must be text "
+                f"because its annotation block is appended to it ({exc})"
+            ) from exc
         except OSError as exc:
             raise TwinError(
                 f"could not write {rel} into FLAGGED_TREE at {target} "

@@ -1034,3 +1034,105 @@ def test_a_failed_carrier_read_is_a_twin_error_naming_the_document(tmp_path, mon
     with pytest.raises(TwinError) as excinfo:
         build_flagged_tree(room, conf, findings)
     assert "11.2.1_phase-2.md" in str(excinfo.value)
+
+
+# --- The two silent routes out of the copy loop. ---------------------------
+
+
+def test_a_carrier_that_is_not_utf8_is_a_twin_error_naming_the_document(tmp_path):
+    # A carrier is read as text so its annotation block can be appended;
+    # a non-carrier is copied as bytes and never decoded. So a .md that is
+    # not valid UTF-8 fails ONLY when a finding points at it, and it fails
+    # as a bare UnicodeDecodeError - a ValueError, so the OSError wrap
+    # around this loop does not catch it - naming a codec position instead
+    # of the document. Same defect the OSError wrap exists to fix, reached
+    # through the one call in the block that decodes.
+    room, conf = make_room(tmp_path)
+    carrier_rel = "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md"
+    write_blind(room, carrier_rel, "# Phase 2\n\nRemediation \xa316.8m.\n".encode("latin-1"))
+
+    findings = FindingSet(findings=[finding(corroboration=[])], room="Project Testbed")
+    with pytest.raises(TwinError) as excinfo:
+        build_flagged_tree(room, conf, findings)
+    assert "11.2.1_phase-2.md" in str(excinfo.value)
+
+
+def test_a_non_carrier_that_is_not_utf8_is_copied_byte_for_byte(tmp_path):
+    # The control on the test above: only the carrier branch decodes, so a
+    # binary or non-UTF-8 document nobody planted a finding in must still
+    # copy through untouched. Catching the decode error must not turn into
+    # refusing every room that holds a PDF.
+    room, conf = make_room(tmp_path)
+    write_blind(room, "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md", BLIND)
+    payload = b"\x89PNG\r\n\x1a\n\xff\xd8not utf-8 at all\xfe"
+    write_blind(room, "01_corporate/1.4_scan.pdf", payload)
+
+    findings = FindingSet(findings=[finding(corroboration=[])], room="Project Testbed")
+    build_flagged_tree(room, conf, findings)
+    assert (room / "_key/flagged/01_corporate/1.4_scan.pdf").read_bytes() == payload
+
+
+def test_a_blind_subdirectory_that_cannot_be_read_is_a_twin_error(tmp_path):
+    # rglob does NOT raise on a directory it cannot read - it silently omits
+    # the contents and walks on. So an unreadable section directory produced
+    # a flagged tree quietly missing every document beneath it, out of a
+    # build that reported success: the exact silent-gap shape this module
+    # already refuses for a finding whose evidence path was never authored.
+    # Probed for capability rather than assumed, matching the mode-000 test
+    # above - as root, or on a filesystem that ignores modes, there is
+    # nothing here to test.
+    room, conf = make_room(tmp_path)
+    write_blind(room, "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md", BLIND)
+    locked = room / "data-room" / "01_corporate"
+    locked.mkdir(parents=True, exist_ok=True)
+    (locked / "1.1_articles.md").write_text("# Articles\n\nOrdinary.\n")
+    locked.chmod(0o000)
+    try:
+        try:
+            list(locked.iterdir())
+        except PermissionError:
+            pass
+        else:
+            pytest.skip("this user can read a mode-000 directory; nothing to test")
+
+        findings = FindingSet(findings=[finding(corroboration=[])], room="Project Testbed")
+        with pytest.raises(TwinError) as excinfo:
+            build_flagged_tree(room, conf, findings)
+        assert "01_corporate" in str(excinfo.value)
+    finally:
+        locked.chmod(0o755)
+
+
+def test_an_unreadable_blind_subdirectory_does_not_destroy_the_previous_flagged_tree(tmp_path):
+    # The readability check runs BEFORE the clear-and-rebuild below it, so a
+    # room that cannot be read keeps the flagged tree it already had rather
+    # than being left with nothing by a build that could never have
+    # completed. Placement is the whole behaviour here: moving the check
+    # after the prepare step passes every other test in this file and
+    # silently reintroduces the data loss.
+    room, conf = make_room(tmp_path)
+    write_blind(room, "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md", BLIND)
+    previous = room / "_key/flagged"
+    previous.mkdir(parents=True)
+    (previous / MARKER_NAME).write_text(MARKER_TEXT)
+    (previous / "previous.md").write_text("from the last good build\n")
+
+    locked = room / "data-room" / "01_corporate"
+    locked.mkdir(parents=True, exist_ok=True)
+    (locked / "1.1_articles.md").write_text("# Articles\n")
+    locked.chmod(0o000)
+    try:
+        try:
+            list(locked.iterdir())
+        except PermissionError:
+            pass
+        else:
+            pytest.skip("this user can read a mode-000 directory; nothing to test")
+
+        findings = FindingSet(findings=[finding(corroboration=[])], room="Project Testbed")
+        with pytest.raises(TwinError):
+            build_flagged_tree(room, conf, findings)
+    finally:
+        locked.chmod(0o755)
+
+    assert (previous / "previous.md").read_text(encoding="utf-8") == "from the last good build\n"
