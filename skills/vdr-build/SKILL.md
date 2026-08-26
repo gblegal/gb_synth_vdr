@@ -390,6 +390,18 @@ incoming_docs = {
 result = consolidate_wave_incoming(findings_doc, incoming_docs, already_mapped, prefix_for_workstream)
 Path("_key/findings.yaml").write_text(yaml.safe_dump(result.findings_doc, sort_keys=False))
 
+# Note the glob takes EVERY incoming file, including every prior wave's. That is deliberate,
+# not an oversight: consumed intake is never moved or deleted, so wave n re-reads waves 1..n-1
+# as well. It is safe for two distinct reasons, and both are load-bearing —
+#   * a `findings:` row is now a narrow, idempotent upsert of `location`/`substance`, so
+#     re-applying an already-applied refinement is a no-op; and
+#   * a `new_findings:` row is guarded by `already_mapped`, read from the build-status ledger
+#     above, so a discovery allocated in an earlier wave is skipped rather than re-allocated.
+# Deleting either guard turns this line into duplicate findings on every wave. The cost is
+# O(waves^2) reads — noticeable on an XL room at twenty-odd waves, and the reason to archive
+# consumed files under `_key/incoming/consumed/` if that ever matters. Correctness does not
+# depend on archiving them; it depends on the two guards above.
+
 # Persist the new mapping to the ledger IMMEDIATELY, before Step 7's gate even runs — this is
 # what makes a rerun idempotent regardless of whether the gate afterwards passes or fails.
 if result.new_mapping:

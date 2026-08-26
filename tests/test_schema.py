@@ -6,8 +6,10 @@ import pytest
 from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
 from synthvdr.roomconf import load_room_conf
 from synthvdr.schema import (
+    SEVERITIES,
     ConsolidationResult,
     SchemaError,
+    severity_targets,
     allocate_new_finding_ids,
     consolidate_wave_incoming,
     derive_prefix_for_workstream,
@@ -774,3 +776,51 @@ def test_load_bearing_paths_covers_findings_and_distractors(tmp_path):
 def test_load_bearing_paths_with_no_distractors_is_just_the_evidence(tmp_path):
     findings = load_findings(write(tmp_path, "findings.yaml", FINDINGS))
     assert load_bearing_paths(findings, []) == findings.all_evidence_paths()
+
+
+# ---------------------------------------------------------------------------
+# Review 2026-08-26, S5. /vdr-findings asked for "roughly a 1 : 3 : 4 : 3 split
+# across critical / high / medium / low". That needs at least 11 findings, and XS
+# budgets 4. Scaled down it reads 0.36 / 1.1 / 1.45 / 1.1, which is not a split
+# anyone can write, so the skill left the author to improvise the one case its
+# smallest preset always hits. The ratio is a function now, defined at every
+# preset the tool ships.
+# ---------------------------------------------------------------------------
+
+
+def test_severity_targets_sums_to_the_budget_at_every_shipped_preset():
+    from synthvdr.slots import SIZE_PRESETS
+
+    for preset in SIZE_PRESETS.values():
+        targets = severity_targets(preset.findings)
+        assert sum(targets.values()) == preset.findings, preset.name
+
+
+def test_severity_targets_gives_every_band_at_least_one_finding():
+    from synthvdr.slots import SIZE_PRESETS
+
+    for preset in SIZE_PRESETS.values():
+        targets = severity_targets(preset.findings)
+        assert set(targets) == set(SEVERITIES), preset.name
+        assert min(targets.values()) >= 1, f"{preset.name}: {targets}"
+
+
+def test_severity_targets_at_xs_is_one_per_band():
+    # The case that could not be expressed at all before: four findings, four
+    # bands, which is also the widest scoring signal available at that size.
+    assert severity_targets(4) == {"critical": 1, "high": 1, "medium": 1, "low": 1}
+
+
+def test_severity_targets_holds_the_ratio_where_there_is_room_for_it():
+    targets = severity_targets(110)
+    assert targets == {"critical": 10, "high": 30, "medium": 40, "low": 30}
+
+
+def test_severity_targets_adds_to_medium_first():
+    # Stated in the skill as the tie-break rule, so it must be the real one.
+    assert severity_targets(12)["medium"] > severity_targets(11)["medium"]
+
+
+def test_severity_targets_refuses_a_budget_smaller_than_the_bands():
+    with pytest.raises(SchemaError, match="four severity bands"):
+        severity_targets(3)

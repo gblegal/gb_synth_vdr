@@ -1560,3 +1560,26 @@ def test_build_skill_names_real_room_conf_keys_for_the_author_invariants():
     assert "_key/gaps.yaml" in dispatch and "## Invented names" in dispatch, (
         "the other two invariants — the gap allowlist and the closed name list — are gone"
     )
+
+
+def test_findings_skill_quotes_the_severity_split_its_own_function_returns():
+    """Review 2026-08-26, S5. The skill quotes two worked severity splits in prose. They come
+    from `severity_targets`, so they can go stale the moment its tie-breaks change — the same
+    drift that made the old "1 : 3 : 4 : 3" line unusable at XS in the first place.
+    """
+    from synthvdr.schema import severity_targets
+    from synthvdr.slots import SIZE_PRESETS
+
+    body = _read(ROOT / "skills" / "vdr-findings" / "SKILL.md")
+
+    xs = severity_targets(SIZE_PRESETS["XS"].findings)
+    assert len(set(xs.values())) == 1 and set(xs.values()) == {1}, (
+        "the skill says XS comes back one per band"
+    )
+    assert "one per band" in body
+
+    s_split = severity_targets(SIZE_PRESETS["S"].findings)
+    quoted = " / ".join(str(s_split[k]) for k in ("critical", "high", "medium", "low"))
+    assert quoted in body, (
+        f"the skill quotes an S split that severity_targets no longer returns ({quoted})"
+    )

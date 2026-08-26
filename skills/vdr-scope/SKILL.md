@@ -147,6 +147,28 @@ It needs:
 
 ## 4. Check every invented name
 
+Every rejection here is a full round trip — invent, search, discard, re-invent — so it is
+worth inventing names that survive. Across one scoping session roughly 30 WebSearches
+rejected 9 names, and the two groups were not evenly distributed:
+
+- **Cleared first time:** `Brindlewick`, `Fenwold`, `Cardingham`, `Solresse`, `Cadenwall`,
+  `Pellowe Harkness`, `Ravenhurst`, `Maisonvert` — multi-syllable compounds built from
+  uncommon English or place-name morphemes.
+- **Collided:** `Hydraveil`, `Verith`, `Solvane`, `Coravel`, `Marnelle` — short, vowel-heavy
+  coinages, which are exactly what consumer-brand namers have already mined out. `Coravel`
+  had been launched as a data-centre joint venture six weeks before it was invented here.
+
+**One letter off a real name is a rejection, not a pass.** `Verith` against the real Verity
+Beauty, `Quarrenden` against several real `Quarrendon` companies. This is a judgement call,
+so it is worth stating: a name a reader could mistake for a real one is a collision, whether
+or not the search returns an exact match.
+
+**Check the distinctive token once, not each entity variant.** `Solresse Beauty Holdings
+Limited`, `Solresse Beauty Limited`, `Solresse Beauty SAS` and `Solresse Beauty Inc` share one
+distinctive token; a single search on `Solresse` covers all four. Read "one WebSearch per
+distinctive name" below as exactly that — per distinctive name, not per row — or an ordinary
+entity tree costs four times what it should.
+
 Run the extractor over the fact sheet exactly as written — it reads all three sources (the
 automatic corporate-suffix scan, `## Cast`, `## Invented names`) and applies the declared
 table's precedence:
@@ -256,9 +278,11 @@ three things, and all three are fixed here rather than at build time:
 
 Tell the user the check's real limit, in these terms or close to them: a search returning
 nothing is not proof a name doesn't exist — dormant companies, non-UK registers and
-non-English markets won't surface, and a company register only covers companies, so a brand
-or product name still rests on the web search and would need a trade mark register to do
-properly. This reduces collision risk; it does not eliminate it.
+non-English markets won't surface; the available WebSearch is US-weighted, which is a real
+weakness when the invented group is British and French, as the shipped domain pack's centre
+of gravity makes it; and a company register only covers companies, so a brand or product name
+still rests on the web search and would need a trade mark register to do properly. This
+reduces collision risk; it does not eliminate it.
 
 ## 5. Write `room.conf`
 

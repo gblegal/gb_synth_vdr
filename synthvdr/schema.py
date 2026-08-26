@@ -532,3 +532,60 @@ def load_bearing_paths(
         paths.add(distractor.location)
         paths.add(distractor.resolution)
     return paths
+
+
+# The shape /vdr-findings aims a registry at, as parts of a whole rather than a
+# percentage — critical : high : medium : low.
+SEVERITY_RATIO = (1, 3, 4, 3)
+
+
+def severity_targets(total: int) -> Dict[str, int]:
+    """How many findings of each severity a registry of `total` should hold.
+
+    A function rather than the ratio in prose, because the two disagreed at the
+    size this tool ships as its smallest. /vdr-findings asked for "roughly a
+    1 : 3 : 4 : 3 split", which needs at least eleven findings; the XS preset
+    budgets four, where the ratio scales to 0.36 / 1.1 / 1.45 / 1.1 — not a split
+    anyone can write. The skill then left its author to improvise the one case
+    its own smallest preset always hits.
+
+    The ratio is applied first, largest-remainder, and only then is any empty
+    band repaired to one by taking from the largest — so a registry big enough
+    to hold the ratio gets the ratio exactly (110 findings is 10/30/40/30), and
+    the floor only bites where the ratio cannot be expressed at all. Doing it
+    the other way round — a floor of one everywhere, then the ratio over the
+    remainder — distorts every size, including the ones that had no problem.
+
+    That floor is a scoring argument, not a rounding convenience: a band with no
+    findings in it produces no signal at all for a tool's behaviour at that
+    severity, and at XS four findings across four bands is the widest signal
+    four documents can carry.
+
+    Ties in the remainder go to the heavier-weighted band, then alphabetically.
+    Deterministic, and the same answer on every run.
+    """
+    if total < len(SEVERITIES):
+        raise SchemaError(
+            f"a registry of {total} cannot cover the four severity bands — "
+            "every band needs at least one finding to produce any scoring signal"
+        )
+    parts = sum(SEVERITY_RATIO)
+    exact = {
+        severity: total * weight / parts
+        for severity, weight in zip(SEVERITIES, SEVERITY_RATIO)
+    }
+    targets = {severity: int(value) for severity, value in exact.items()}
+    order = sorted(
+        zip(SEVERITIES, SEVERITY_RATIO),
+        key=lambda pair: (-(exact[pair[0]] - int(exact[pair[0]])), -pair[1], pair[0]),
+    )
+    for severity, _weight in order[: total - sum(targets.values())]:
+        targets[severity] += 1
+
+    # Repair: every band carries at least one, taken from whichever band has most.
+    for severity in SEVERITIES:
+        if targets[severity] == 0:
+            donor = max(SEVERITIES, key=lambda s: (targets[s], -SEVERITY_RATIO[SEVERITIES.index(s)]))
+            targets[donor] -= 1
+            targets[severity] += 1
+    return targets
