@@ -106,3 +106,29 @@ def test_a_multiline_detail_still_prints_as_one_line_per_gate(capsys):
     # exactly one line for the gate, one blank line, one summary line
     assert len(lines) == 3
     assert lines[0] == "FAIL 9 — xrefs: a.md -> 9.9.9 b.md -> 8.8.8 c.md -> 7.7.7"
+
+
+# --- run_gates must not be fooled by a lazy sequence. -----------------------
+#
+# The empty-list guard exists to refuse the silence-as-pass shape: zero
+# gates registered must never be reported as a clean room. A generator
+# defeats it twice over — `not gates` is False for ANY generator, empty or
+# not, so the guard waves it through, and `len(gates)` in the summary is a
+# TypeError on something with no length. Callers build gate lists by
+# comprehension and filter, so handing this a generator expression is an
+# ordinary slip, not an exotic one.
+
+
+def test_an_empty_generator_of_gates_is_refused_like_an_empty_list(capsys):
+    code = run_gates(Ctx(), (g for g in []))
+    out = capsys.readouterr().out.lower()
+    assert code == 1
+    assert "no gates were run" in out
+    assert "no hard failures" not in out
+
+
+def test_a_generator_of_gates_runs_and_summarises_like_a_list(capsys):
+    code = run_gates(Ctx(), (g for g in [lambda c: ok("1", "counts"), lambda c: ok("2", "canon")]))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "2 gates run, 0 failed" in out

@@ -102,6 +102,19 @@ def _one_line(text: str) -> str:
 
 
 def run_gates(ctx, gates: List[Callable]) -> int:
+    # Materialise before anything reads the sequence twice. The guard below
+    # and the summary line further down both need a length, and a lazy
+    # sequence gives neither: `not gates` is False for ANY generator, empty
+    # or not, so an empty one walks straight past the one guard whose whole
+    # job is to refuse "zero gates registered" — the silence-as-pass shape
+    # this runner exists to eliminate — and `len(gates)` is then a
+    # TypeError. The non-empty case is the worse of the two in practice:
+    # every gate runs and prints, and the summary line and the exit code
+    # are what go missing, so the caller gets a full-looking transcript and
+    # a traceback instead of a verdict. Callers assemble gate lists with
+    # comprehensions and filters, so being handed a generator expression is
+    # an ordinary slip.
+    gates = list(gates)
     if not gates:
         print("FAIL — no gates were run: an empty gate list is refused, never reported as a pass")
         return 1
