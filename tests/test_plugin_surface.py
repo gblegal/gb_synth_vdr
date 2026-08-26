@@ -1258,11 +1258,19 @@ def test_pyproject_declares_its_own_packages():
     # Every importable package in the repo, discovered the way setuptools would, but
     # without importing setuptools — a bare venv on 3.12+ no longer ships it, and this
     # test must not need a build backend installed to say whether one is configured.
+    #
+    # Dot-directories are skipped wholesale rather than named one at a time. `.venv` used
+    # to be the only one worth excluding, until a git worktree checked out under
+    # `.claude/worktrees/` put a second copy of this entire repo inside the first: the walk
+    # then found `.claude.worktrees.<name>.synthvdr` and the assertion below failed on the
+    # main checkout while passing inside the worktree. Nothing under a dot-directory is an
+    # importable package of THIS project, whatever the next tool to create one calls it.
     packages = {
         ".".join(d.relative_to(ROOT).parts)
         for d in ROOT.rglob("__init__.py")
         for d in [d.parent]
-        if ".venv" not in d.parts and "build" not in d.parts
+        if not any(part.startswith(".") for part in d.relative_to(ROOT).parts)
+        and "build" not in d.parts
     }
     assert packages == {"synthvdr", "synthvdr.qa", "synthvdr.render", "tests"}, packages
 
