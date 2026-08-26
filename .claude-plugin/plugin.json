@@ -1,6 +1,6 @@
 {
   "name": "synth-vdr",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Generate synthetic M&A virtual data rooms with a verified ground-truth answer key, for evaluating document-review and due-diligence AI.",
   "author": { "name": "Greg Baker" },
   "license": "MIT"

@@ -298,7 +298,7 @@ def test_subset_renormalises_weights_to_one():
 
 def test_subset_keeps_relative_weights_intact():
     # Renormalising must scale, not flatten: 05_commercial carries roughly
-    # double 03_tax in the shipped pack and must still, or the subset quietly
+    # 2.75 times 03_tax in the shipped pack and must still, or the subset quietly
     # rebalances the room as well as resizing it.
     pack = load_domain(DEFAULT_DOMAIN_ROOT)
     before = {s.dir_name: s.weight for s in pack.sections}
