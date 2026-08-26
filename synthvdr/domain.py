@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, Iterable, List
 
 import yaml
 
@@ -43,6 +43,9 @@ class DomainPack:
     default_archetype: str
     tier_f_floor: int
     finding_archetypes: Dict[str, List[str]]
+    # True on a pack `subset()` produced. Read by `workstreams()`, which refuses
+    # to answer on one — see that method for why.
+    is_subset: bool = False
 
     def __post_init__(self) -> None:
         """A tier-A anchor must never be held to a lower depth standard than
@@ -92,6 +95,66 @@ class DomainPack:
         order.
         """
         return [s.workstream for s in self.sections]
+
+    def subset(self, dir_names: Iterable[str]) -> "DomainPack":
+        """This pack narrowed to `dir_names`, with weights renormalised.
+
+        A room may build fewer than every workstream the pack declares — at XS
+        the alternative is a fiction stretched to cover a pension scheme and a
+        bank facility the invented deal has no reason to have, and one document
+        per subsection, which leaves ordinary sibling cross-references with no
+        sibling to resolve to.
+
+        THE RENORMALISATION IS THE CORRECTNESS CONDITION, not tidiness.
+        `slots._allocate` spreads a room's document budget across sections by
+        weight. The shipped pack sums to 1.0 across twenty; any subset sums to
+        less, and the allocator's largest-remainder pass then has a shortfall
+        larger than the number of sections left to give slots to. Filtering
+        without renormalising builds 35 documents for a room whose `room.conf`
+        declares 40 — silently, with gate 2 failing for the rest of the build
+        and nothing naming the cause.
+
+        Sections come back in the PACK's order, never the caller's: slot ids
+        derive from `Section.number`, so honouring the caller's order would
+        renumber the room.
+
+        `finding_archetypes` is narrowed to the surviving workstreams, so
+        /vdr-findings cannot seed a finding for a section the room will not
+        build.
+        """
+        wanted = list(dict.fromkeys(dir_names))
+        by_dir = {s.dir_name: s for s in self.sections}
+
+        unknown = [d for d in wanted if d not in by_dir]
+        if unknown:
+            raise DomainError(
+                f"no such section(s) in this domain pack: {sorted(unknown)} — "
+                f"available: {sorted(by_dir)}"
+            )
+
+        keep = set(wanted)
+        dropped_core = [s.dir_name for s in self.sections if s.core and s.dir_name not in keep]
+        if dropped_core:
+            raise DomainError(
+                f"cannot drop core section(s) {sorted(dropped_core)} — every deal has "
+                "them, and 18_transaction is the only natural home for the fact "
+                "sheet's headline figures, which gate 13 greps the room for"
+            )
+
+        kept = [s for s in self.sections if s.dir_name in keep]
+        total = sum(s.weight for s in kept)
+        if total <= 0:
+            raise DomainError(f"sections {sorted(keep)} carry no weight between them")
+
+        return replace(
+            self,
+            sections=[replace(s, weight=s.weight / total) for s in kept],
+            finding_archetypes={
+                w: a for w, a in self.finding_archetypes.items()
+                if w in {s.workstream for s in kept}
+            },
+            is_subset=True,
+        )
 
     def section_by_dir(self, dir_name: str) -> Section:
         for section in self.sections:

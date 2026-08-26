@@ -253,3 +253,74 @@ def test_core_defaults_to_false_so_an_older_pack_still_loads():
         subsections=["constitutional"],
     )
     assert section.core is False
+
+
+XS_TWELVE = [
+    "01_corporate",
+    "02_financial",
+    "03_tax",
+    "05_commercial",
+    "06_intellectual-property",
+    "07_information-technology",
+    "09_employment",
+    "14_data-protection",
+    "15_litigation",
+    "16_operations-quality",
+    "18_transaction",
+    "19_esg",
+]
+
+
+def test_subset_keeps_only_the_named_sections_in_pack_order():
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    # Deliberately out of order, to prove the result follows the PACK's order
+    # and not the caller's — slot ids are derived from section number, so a
+    # caller-ordered result would renumber the room.
+    sub = pack.subset(["18_transaction", "01_corporate", "05_commercial", "02_financial"])
+    assert [s.dir_name for s in sub.sections] == [
+        "01_corporate",
+        "02_financial",
+        "05_commercial",
+        "18_transaction",
+    ]
+
+
+def test_subset_renormalises_weights_to_one():
+    # Not tidiness. _allocate spreads the budget by weight, so a subset summing
+    # to 0.62 silently builds a 35-document room while room.conf declares 40.
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    sub = pack.subset(XS_TWELVE)
+    assert sum(s.weight for s in sub.sections) == pytest.approx(1.0)
+    assert sum(s.weight for s in pack.sections) == pytest.approx(1.0), (
+        "subset must not mutate the pack it came from"
+    )
+
+
+def test_subset_keeps_relative_weights_intact():
+    # Renormalising must scale, not flatten: 05_commercial carries roughly
+    # double 03_tax in the shipped pack and must still, or the subset quietly
+    # rebalances the room as well as resizing it.
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    before = {s.dir_name: s.weight for s in pack.sections}
+    sub = pack.subset(XS_TWELVE)
+    after = {s.dir_name: s.weight for s in sub.sections}
+    assert after["05_commercial"] / after["03_tax"] == pytest.approx(
+        before["05_commercial"] / before["03_tax"]
+    )
+
+
+def test_subset_drops_the_finding_archetypes_of_dropped_workstreams():
+    # /vdr-findings seeds ideas from these. Leaving all twenty in would offer an
+    # author a pensions finding for a room with no pensions section to plant it
+    # in — a Gate B mistake that only surfaces at build time.
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    sub = pack.subset(XS_TWELVE)
+    assert set(sub.finding_archetypes) == {s.workstream for s in sub.sections}
+    assert "pensions" in pack.finding_archetypes, "premise: the full pack has it"
+    assert "pensions" not in sub.finding_archetypes
+
+
+def test_subset_marks_itself_as_one_and_the_full_pack_does_not():
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    assert pack.is_subset is False
+    assert pack.subset(XS_TWELVE).is_subset is True
