@@ -534,6 +534,33 @@ def load_bearing_paths(
     return paths
 
 
+def evidence_outside_sections(
+    findings: FindingSet, distractors: Iterable[Distractor], section_dirs: Iterable[str]
+) -> List[str]:
+    """Load-bearing paths whose section the room does not declare, sorted.
+
+    A room may build a subset of the domain pack's sections (see
+    `synthvdr.domain.DomainPack.subset`), and a finding whose `source` or
+    `corroboration` lands in a dropped one has no slot to be planted in.
+    Without this, the failure surfaces at `build_flagged_tree` as a `TwinError`
+    — correct, but waves later, after the user signed the registry off at
+    Gate B. Gate B is where the registry is fixed, so the check belongs there.
+
+    Both ends of every distractor count, via `load_bearing_paths`: a trap whose
+    RESOLVING document was dropped is not a trap, it is an unresolved finding.
+
+    The section is a path's first component, which is how every evidence path
+    in this project is written — relative to the blind tree root, never
+    prefixed with `BLIND_TREE`'s own name.
+    """
+    declared = set(section_dirs)
+    return sorted(
+        path
+        for path in load_bearing_paths(findings, distractors)
+        if path.split("/")[0] not in declared
+    )
+
+
 # The shape /vdr-findings aims a registry at, as parts of a whole rather than a
 # percentage — critical : high : medium : low.
 SEVERITY_RATIO = (1, 3, 4, 3)

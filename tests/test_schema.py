@@ -13,6 +13,7 @@ from synthvdr.schema import (
     allocate_new_finding_ids,
     consolidate_wave_incoming,
     derive_prefix_for_workstream,
+    evidence_outside_sections,
     load_bearing_paths,
     load_distractors,
     load_findings,
@@ -776,6 +777,45 @@ def test_load_bearing_paths_covers_findings_and_distractors(tmp_path):
 def test_load_bearing_paths_with_no_distractors_is_just_the_evidence(tmp_path):
     findings = load_findings(write(tmp_path, "findings.yaml", FINDINGS))
     assert load_bearing_paths(findings, []) == findings.all_evidence_paths()
+
+
+def test_evidence_outside_sections_names_a_path_in_a_dropped_section(tmp_path):
+    findings = load_findings(write(tmp_path, "findings.yaml", FINDINGS))
+    # FINDINGS plants ENV-1 in 11_environmental-hs and FIN-3 in 02_financial.
+    # A room that dropped 11_environmental-hs cannot hold ENV-1's source.
+    offenders = evidence_outside_sections(findings, [], ["02_financial"])
+    assert offenders == [
+        "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md"
+    ]
+
+
+def test_evidence_outside_sections_is_empty_when_every_section_is_declared(tmp_path):
+    findings = load_findings(write(tmp_path, "findings.yaml", FINDINGS))
+    declared = sorted({p.split("/")[0] for p in findings.all_evidence_paths()})
+    assert evidence_outside_sections(findings, [], declared) == []
+
+
+def test_evidence_outside_sections_checks_both_ends_of_a_distractor(tmp_path):
+    # A trap whose RESOLVING document was dropped is not a trap — it reads as a
+    # real finding, and would score a review tool against evidence the room does not
+    # contain.
+    findings = load_findings(write(tmp_path, "findings.yaml", FINDINGS))
+    distractors = load_distractors(write(tmp_path, "distractors.yaml", DISTRACTORS))
+    declared = sorted({
+        p.split("/")[0]
+        for p in load_bearing_paths(findings, distractors)
+    })
+    assert evidence_outside_sections(findings, distractors, declared) == []
+
+    without_resolution = [d for d in declared if d != distractors[0].resolution.split("/")[0]]
+    offenders = evidence_outside_sections(findings, distractors, without_resolution)
+    assert distractors[0].resolution in offenders
+
+
+def test_evidence_outside_sections_reports_each_path_once_and_sorted(tmp_path):
+    findings = load_findings(write(tmp_path, "findings.yaml", FINDINGS))
+    offenders = evidence_outside_sections(findings, [], [])
+    assert offenders == sorted(set(offenders))
 
 
 # ---------------------------------------------------------------------------
