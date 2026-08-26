@@ -1282,3 +1282,39 @@ def test_the_licence_file_matches_what_the_manifests_declare():
         f"plugin.json declares {declared!r} but LICENSE opens with {first_line!r}"
     )
     assert "Greg Baker" in body, "LICENSE names no copyright holder"
+
+
+def test_scope_skill_checks_former_company_names_not_just_current_ones():
+    """A company that HELD a name and later renamed keeps its history but not
+    its name, so neither a plain web search nor an exact current-name register
+    lookup will surface it. Found in the wild: the shipped xs-room fixture's
+    "Halstead Fasteners Limited" collides with HENRY HALSTEAD (FASTENERS)
+    LIMITED (00725298), which held that name 1962-1999, is still trading under
+    a new one, and is in the same industry — recorded "clear" by a check that
+    only ever looked at names in use today.
+    """
+    body = _read(ROOT / "skills" / "vdr-scope" / "SKILL.md").lower()
+    assert "former name" in body or "previous name" in body, (
+        "the name check does not tell the author to look at former company names"
+    )
+    assert "companies house" in body, (
+        "the entity check names no company register to search former names in"
+    )
+
+
+def test_the_generated_name_check_record_states_the_register_limits():
+    """The record is what the user actually reads at Gate A, so it must carry
+    the same caveats the skill tells the author to say out loud — otherwise
+    the signed-off artefact claims less doubt than the check earned.
+    """
+    from datetime import date
+
+    from synthvdr.namecheck import Verdict, render_name_check_md
+
+    body = render_name_check_md(
+        [Verdict(text="Ashfell Trading Limited", kind="entity", verdict="clear",
+                 checked=date(2026, 1, 1).isoformat(), note="")],
+        "Project Ashfell",
+    ).lower()
+    assert "former name" in body or "previous name" in body
+    assert "trade mark" in body or "trademark" in body

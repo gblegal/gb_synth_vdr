@@ -105,6 +105,26 @@ For each candidate, the test differs by Kind:
 - **Not a person** (`entity`, `brand`, `product`, `site`, `domain`): a **collision** check —
   does a real company, brand, product, site or domain of this name already exist? Run one
   WebSearch per distinctive name.
+- **`entity` additionally**: search a company register **including former names**, which a
+  WebSearch will not do for you. A company that HELD a name and later renamed keeps its
+  filing history but not its name, so it is invisible to both a web search and an
+  exact current-name lookup. For UK-shaped names, Companies House:
+
+  ```
+  https://find-and-update.company-information.service.gov.uk/search/companies?q=<name>
+  ```
+
+  That search matches former names as well as current ones, so read the top hits even when
+  none is an exact match, and open any whose name is close — the collision shows up under
+  "Previous company names" on the company page, not in the result title. Rank order is the
+  signal: a company you have never heard of sitting at the top of a search for your invented
+  name is usually there because it once WAS your invented name.
+
+  This is not hypothetical. The shipped `xs-room` fixture invented "Halstead Fasteners
+  Limited" for a precision-fastener manufacturer and recorded it `clear`. `HENRY HALSTEAD
+  (FASTENERS) LIMITED` (company 00725298) held that name from 1962 to 1999, still trades
+  today under a different one, and is in the same industry. An exact-name search finds
+  nothing; the register search puts it first.
 - **`person`**: a **notability** check only — is this a public figure? Never a collision
   check: every plausible surname exists somewhere, and treating an ordinary name as a hit
   would make the check impossible to pass.
@@ -143,8 +163,10 @@ raises rather than silently corrupting the record if a name cannot survive being
 a pipe-table cell and read back unchanged.
 
 Tell the user the check's real limit, in these terms or close to them: a search returning
-nothing is not proof a name doesn't exist — dormant companies and non-English markets won't
-surface. This reduces collision risk; it does not eliminate it.
+nothing is not proof a name doesn't exist — dormant companies, non-UK registers and
+non-English markets won't surface, and a company register only covers companies, so a brand
+or product name still rests on the web search and would need a trade mark register to do
+properly. This reduces collision risk; it does not eliminate it.
 
 ## 4. Generate the structure
 
