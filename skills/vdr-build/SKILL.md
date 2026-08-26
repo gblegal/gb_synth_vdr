@@ -19,9 +19,33 @@ the same verified answer key. An interrupted build never strands a finding half-
 at the point a build stops, either a finding's evidence is fully in the room or it has not
 been started at all, never partially.
 
-Concretely: sort the slot list by tier before batching, `A` (anchor — carries a finding, a
-distractor, or is otherwise load-bearing) before `F` (filler), and exhaust every `A` slot
-across as many waves as it takes before any `F` slot is assigned to a wave.
+Concretely, and this is a function rather than a rule to apply by hand:
+
+```python
+from pathlib import Path
+from synthvdr.schema import load_bearing_paths, load_distractors, load_findings
+from synthvdr.slots import authoring_order, read_slot_manifest
+
+findings = load_findings(Path("_key/findings.yaml"))
+distractors = load_distractors(Path("_key/distractors.yaml"))
+load_bearing = load_bearing_paths(findings, distractors)
+
+order = authoring_order(read_slot_manifest(Path("_key/anchors.csv")), load_bearing)
+print(sum(1 for slot in order if slot.rel_path in load_bearing), "load-bearing slots first")
+```
+
+`authoring_order` puts every slot the answer key depends on first — a finding's `source` and
+`corroboration`, both ends of every distractor — then orders the rest by tier, and keeps
+manifest order inside each group. Exhaust the whole load-bearing block, across as many waves
+as it takes, before any other slot is assigned to a wave.
+
+**Do not sort by tier instead.** This skill used to say to, and glossed tier `A` as "anchor —
+carries a finding, a distractor, or is otherwise load-bearing". Tier is nothing of the sort:
+`/vdr-scope` assigns it positionally, before the findings registry exists, so the first ~35%
+of each section's slots are `A` whatever they end up carrying. In the shipped `xs-room`
+fixture 4 of the 10 load-bearing paths are tier `F`; in the XS build that surfaced this it was
+6 of 10, including both distractor documents. Tier is a depth and prominence tier — it is what
+gate 10's floors are keyed off — and `authoring_order` still uses it, as the second key.
 
 ## Resume
 
@@ -77,8 +101,8 @@ resumed build must be able to tell "already allocated in a prior attempt" from "
 without waiting for the wave to fully complete. An empty build (nothing discovered yet) omits
 the section entirely rather than leaving it with no rows.
 
-"Anchors" is written **once**, the wave Step 1 first has to reach into a tier-`F` slot — never
-rewritten afterwards. Absent before that point (a fresh build, or one still mid-anchor). This
+"Anchors" is written **once**, the wave Step 1 first has to reach past the load-bearing block
+(see Step 1) — never rewritten afterwards. Absent before that point (a fresh build, or one still mid-anchor). This
 is the fact Steps 5–7 read to know whether gates 2/7/8's mid-build exceptions still apply.
 
 "Gate result" in "Waves completed" records **PASS once every gate outside Step 6's named
@@ -97,15 +121,19 @@ genuinely clean wave from one that was accepted with a named, expected gap.
 
 ### 1. Select the next batch
 
-At most **5 subagents**, roughly 40–50 slots each, drawn from `_key/anchors.csv` (`slot_id`,
-`tier`, `rel_path`) in tier order per the ordering rule above. Cross-reference
-`_key/findings.yaml` and `_key/distractors.yaml` for which slots in this batch carry a
-finding's `source`/`corroboration` or a distractor's `location`/`resolution` — those are this
-wave's registry rows.
+At most **5 subagents**, roughly 40–50 slots each, taken off the front of the
+`authoring_order` list the ordering rule above computes. Cross-reference `_key/findings.yaml`
+and `_key/distractors.yaml` for which slots in this batch carry a finding's
+`source`/`corroboration` or a distractor's `location`/`resolution` — those are this wave's
+registry rows, and by construction they are the slots at the front of that list.
 
-**Note the exact wave this batch selection first has to reach into a tier-`F` slot because no
-tier-`A` slot is left.** That is "anchors complete" — see Steps 5–7 below, which behave
-differently before and after it. For an `M`-size room (200 documents) this is usually wave 1
+**Note the exact wave this batch selection first has to reach past the load-bearing block,
+because no load-bearing slot is left.** That is "anchors complete" — see Steps 5–7 below,
+which behave differently before and after it. Note what this now means, because the old
+tier-based reading got it wrong in a way that mattered: anchors-complete is the point every
+document the answer key depends on has been authored, so it is exactly the point the flagged
+tree becomes worth building and gate 8's carrier census becomes a real check. Under the tier
+rule it fired while findings' evidence was still unwritten. For an `M`-size room (200 documents) this is usually wave 1
 itself, since a wave's capacity (up to 250 slots) already exceeds the whole room; for `L`/`XL`
 it can take several waves. Record it in `_key/build-status.md`'s `## Anchors` line the moment
 it happens (see the literal shape in "Resume" above) — this is the one fact Steps 5–7 need
@@ -290,8 +318,11 @@ introducing a value gate 13 has not seen yet.
 `## Anchors` line (Step 1).** `build_flagged_tree` requires every finding's and every
 distractor's evidence path to already exist under `BLIND_TREE` and raises `TwinError` naming
 whichever ones do not — correct behaviour once the room is meant to be complete, but a wave
-that has not yet authored every tier-`A` slot has not yet planted every finding's evidence by
-definition, so calling this before "Anchors" is recorded always raises. This is not a corpus
+that has not yet cleared the load-bearing block has not yet planted every finding's evidence
+by definition, so calling this before "Anchors" is recorded always raises. That "by
+definition" is only true because Step 1 orders by `authoring_order`: under the tier rule this
+skill used to give, "Anchors" could be recorded with several findings' evidence still
+unwritten, and this step then raised `TwinError` for the rest of the build. This is not a corpus
 bug at that stage; it is simply too early to build the tree at all. Gates 7 and 8 (Step 6)
 SKIP as a direct consequence — see there.
 

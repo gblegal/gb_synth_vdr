@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set
 
 import yaml
 
@@ -511,3 +511,24 @@ def consolidate_wave_incoming(
         for provisional_id, final_id in new_mapping.items()
     }
     return ConsolidationResult(updated_doc, new_mapping, workstream_by_final_id)
+
+
+def load_bearing_paths(
+    findings: FindingSet, distractors: Iterable[Distractor]
+) -> Set[str]:
+    """Every document the answer key depends on, by rel_path.
+
+    A finding's `source` and `corroboration`, and BOTH ends of every distractor.
+    The resolution end matters as much as the location end: a trap whose
+    resolving document has not been authored yet is not a trap, it is an
+    unresolved finding, and a room interrupted in that state scores a tool
+    against evidence the room does not actually contain.
+
+    This is what `synthvdr.slots.authoring_order` sorts a wave's slot list by —
+    see its docstring for why tier could not answer the same question.
+    """
+    paths = set(findings.all_evidence_paths())
+    for distractor in distractors:
+        paths.add(distractor.location)
+        paths.add(distractor.resolution)
+    return paths

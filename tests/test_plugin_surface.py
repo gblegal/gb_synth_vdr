@@ -25,6 +25,7 @@ resolution is forced to be noticed, not quietly tolerated forever.
 """
 
 import ast
+import importlib
 import json
 import re
 import shutil
@@ -1350,3 +1351,48 @@ def test_the_generated_name_check_record_states_the_register_limits():
     ).lower()
     assert "former name" in body or "previous name" in body
     assert "trade mark" in body or "trademark" in body
+
+
+# ---------------------------------------------------------------------------
+# Review 2026-08-26, B2. The ordering rule drifted from the code it described:
+# the skill said "sort by tier" and glossed tier `A` as carrying a finding,
+# while `build_slot_manifest` assigned tier positionally at /vdr-scope time,
+# before any finding existed. Prose alone could drift because nothing checked
+# it. The rule is a function now, and these check the skill still calls it.
+# ---------------------------------------------------------------------------
+
+
+def test_build_skill_orders_waves_with_authoring_order_not_by_tier():
+    body = _read(ROOT / "skills" / "vdr-build" / "SKILL.md")
+    assert "authoring_order" in body, (
+        "the build skill must name the function that owns the ordering rule"
+    )
+    assert "sort the slot list by tier" not in body, (
+        "the tier-sort rule is the B2 defect — it must not come back as prose"
+    )
+
+
+def test_every_skill_import_resolves_to_something_real():
+    """A skill's fenced example is the only interface most of this package has, and
+    `ast.parse` above proves only that it is syntactically Python. A renamed or deleted
+    function leaves the fence parsing perfectly and failing the moment anyone runs it.
+    """
+    for name in SKILL_NAMES:
+        path = ROOT / "skills" / name / "SKILL.md"
+        blocks = python_examples(path) + [
+            snippet
+            for block in bash_examples(path)
+            for snippet in embedded_python_snippets(block)
+        ]
+        for block in blocks:
+            for node in ast.walk(ast.parse(block)):
+                if not isinstance(node, ast.ImportFrom) or not node.module:
+                    continue
+                if not node.module.startswith("synthvdr"):
+                    continue
+                module = importlib.import_module(node.module)
+                for alias in node.names:
+                    assert hasattr(module, alias.name), (
+                        f"{path}: an example imports {alias.name!r} from {node.module}, "
+                        "which does not exist"
+                    )

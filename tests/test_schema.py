@@ -11,6 +11,7 @@ from synthvdr.schema import (
     allocate_new_finding_ids,
     consolidate_wave_incoming,
     derive_prefix_for_workstream,
+    load_bearing_paths,
     load_distractors,
     load_findings,
     parse_new_findings_ledger,
@@ -752,3 +753,24 @@ def test_consolidate_wave_incoming_accepts_a_row_carrying_only_location_and_subs
     assert row["substance"] == "Refined substance."
     assert row["title"] == "Existing environmental finding"
     assert row["workstream"] == "environmental"
+
+
+def test_load_bearing_paths_covers_findings_and_distractors(tmp_path):
+    """Review 2026-08-26, B2. What `/vdr-build` must author first is every document the
+    answer key depends on — a finding's `source` and `corroboration`, and BOTH ends of a
+    distractor, since a trap whose resolving document does not exist yet is a trap that
+    reads as a real finding.
+    """
+    findings = load_findings(write(tmp_path, "findings.yaml", FINDINGS))
+    distractors = load_distractors(write(tmp_path, "distractors.yaml", DISTRACTORS))
+    paths = load_bearing_paths(findings, distractors)
+
+    assert findings.all_evidence_paths() <= paths
+    for distractor in distractors:
+        assert distractor.location in paths
+        assert distractor.resolution in paths
+
+
+def test_load_bearing_paths_with_no_distractors_is_just_the_evidence(tmp_path):
+    findings = load_findings(write(tmp_path, "findings.yaml", FINDINGS))
+    assert load_bearing_paths(findings, []) == findings.all_evidence_paths()
