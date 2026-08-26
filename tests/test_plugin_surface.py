@@ -1396,3 +1396,71 @@ def test_every_skill_import_resolves_to_something_real():
                         f"{path}: an example imports {alias.name!r} from {node.module}, "
                         "which does not exist"
                     )
+
+
+# ---------------------------------------------------------------------------
+# Review 2026-08-26, S1. /vdr-scope invented the deal in step 2 and generated the
+# slot manifest in step 4, so the fiction was written with no knowledge of which
+# sections the room would contain or how substantial a document each demanded.
+# The domain pack allocates a slot to all 20 workstreams even at XS, several with
+# a 2,500-word floor, so a deal invented without them had to be retro-fitted with
+# bank debt, a pension arrangement and a minority stake AFTER the user signed the
+# fact sheet off at Gate A — the exact change Gate A exists to prevent.
+# ---------------------------------------------------------------------------
+
+
+def _scope_body():
+    return _read(ROOT / "skills" / "vdr-scope" / "SKILL.md")
+
+
+def test_vdr_scope_generates_the_structure_before_inventing_the_deal():
+    body = _scope_body()
+    structure = body.index("## 2. Generate the structure")
+    fact_sheet = body.index("## 3. Invent the deal and write the fact sheet")
+    name_check = body.index("## 4. Check every invented name")
+    assert structure < fact_sheet < name_check, (
+        "the slot manifest must be generated before the fact sheet is written, or the "
+        "deal is invented with no knowledge of what the room will demand of it"
+    )
+
+
+def test_vdr_scope_names_every_section_that_demands_a_longform_document():
+    """The skill tells the author which sections need a substantial document before they
+    invent anything, and names them literally. That list is derived from the domain pack,
+    so it goes stale the moment the pack changes — which is how the B2 defect happened one
+    file over. Recompute it and check the prose still matches.
+    """
+    from synthvdr.qa.depth import floor_for
+    from synthvdr.slots import SIZE_PRESETS, build_slot_manifest
+
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    longform = pack.archetypes["longform"].floor
+    heaviest = {}
+    for slot in build_slot_manifest(pack, SIZE_PRESETS["XS"]):
+        floor = floor_for(slot.slot_id, Path(slot.rel_path).name, slot.tier, pack)
+        heaviest[slot.section_dir] = max(heaviest.get(slot.section_dir, 0), floor)
+
+    body = _scope_body()
+    demanding = sorted(d for d, f in heaviest.items() if f == longform)
+    assert demanding, "this test is meaningless if no XS section carries the longform floor"
+    for section_dir in demanding:
+        assert section_dir in body, (
+            f"/vdr-scope does not warn that {section_dir} demands a {longform}-word "
+            "document at XS — the author will invent a deal that cannot fill it"
+        )
+    assert str(longform) in body or f"{longform:,}" in body, (
+        "the skill quotes the longform floor in prose; it has drifted from the pack"
+    )
+
+
+def test_vdr_scope_warns_that_every_workstream_gets_a_slot_even_at_xs():
+    # The other half of the same trap: a section with a low floor still needs the
+    # fiction to give it something to be about.
+    from synthvdr.slots import SIZE_PRESETS, build_slot_manifest
+
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    slots = build_slot_manifest(pack, SIZE_PRESETS["XS"])
+    assert {s.section_dir for s in slots} == set(pack.section_dirs()), (
+        "the premise of the warning below is that XS still allocates to every workstream"
+    )
+    assert "every workstream at every size" in _scope_body()
