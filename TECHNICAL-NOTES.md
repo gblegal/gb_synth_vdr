@@ -61,6 +61,16 @@ never ran".
 `tools/check.sh <room-dir> [args...]` is a thin wrapper around exactly this command; all
 the logic lives in `synthvdr.qa` so there is one implementation and one set of tests.
 
+It is copied into each room, and a room sits nowhere near whatever environment synthvdr was
+installed into, so `python3` on the PATH there is often the wrong interpreter. The wrapper
+checks it can import `synthvdr.qa` before running anything and, if it cannot, says so and
+names the two ways out rather than emitting a `ModuleNotFoundError` traceback from inside the
+package. Set `SYNTHVDR_PYTHON` to choose the interpreter explicitly:
+
+```bash
+SYNTHVDR_PYTHON=/path/to/.venv/bin/python bash tools/check.sh <room-dir>
+```
+
 ### `python3 -m synthvdr score` — the scorer
 
 ```bash

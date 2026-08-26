@@ -27,6 +27,8 @@ resolution is forced to be noticed, not quietly tolerated forever.
 import ast
 import importlib
 import json
+import os
+import sys
 import re
 import shutil
 import subprocess
@@ -445,6 +447,17 @@ def test_plugin_manifest_version_agrees_with_package_version():
     """
     manifest = _plugin_manifest()
     assert manifest["version"] == synthvdr.__version__
+
+    # pyproject.toml carries it a third time and is the one pip actually reads, so a
+    # release that bumps the other two ships a package still claiming the old version.
+    # Review 2026-08-26, R1: the published build being behind master is what made the
+    # version numbers worth checking against each other in the first place.
+    declared = re.search(
+        r'(?m)^version = "([^"]+)"', _read(ROOT / "pyproject.toml")
+    ).group(1)
+    assert declared == synthvdr.__version__, (
+        f"pyproject.toml says {declared}, synthvdr.__version__ says {synthvdr.__version__}"
+    )
 
 
 def test_scope_skill_blocks_on_unresolved_name_collisions():
@@ -1582,4 +1595,55 @@ def test_findings_skill_quotes_the_severity_split_its_own_function_returns():
     quoted = " / ".join(str(s_split[k]) for k in ("critical", "high", "medium", "low"))
     assert quoted in body, (
         f"the skill quotes an S split that severity_targets no longer returns ({quoted})"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Review 2026-08-26, R1. `tools/check.sh` is copied into each room and execs a
+# bare `python3 -m synthvdr.qa`. A room is a directory of its own, nowhere near
+# whatever environment synthvdr was installed into, so on any machine where the
+# system python is not that environment the harness died on a raw
+# ModuleNotFoundError traceback — the first thing a new user meets, and it names
+# neither the cause nor the fix.
+# ---------------------------------------------------------------------------
+
+
+def _run_check_sh(env_python, tmp_path):
+    return subprocess.run(
+        ["bash", str(ROOT / "tools" / "check.sh"), str(tmp_path)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "SYNTHVDR_PYTHON": env_python},
+    )
+
+
+def test_check_sh_explains_itself_when_synthvdr_is_not_importable(tmp_path):
+    if not shutil.which("bash"):
+        pytest.skip("bash not available in this environment")
+    stub = tmp_path / "python-without-synthvdr"
+    stub.write_text('#!/usr/bin/env bash\nexit 1\n')
+    stub.chmod(0o755)
+
+    result = _run_check_sh(str(stub), tmp_path)
+
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "synthvdr" in combined and "pip install" in combined, (
+        f"check.sh gave no actionable message: {combined!r}"
+    )
+    assert "SYNTHVDR_PYTHON" in combined, (
+        "the message must name the override, or a user with a venv has no way through"
+    )
+    assert "Traceback" not in combined, "the raw traceback is what this replaces"
+
+
+def test_check_sh_uses_the_interpreter_it_is_told_to(tmp_path):
+    if not shutil.which("bash"):
+        pytest.skip("bash not available in this environment")
+    result = _run_check_sh(sys.executable, tmp_path)
+    # tmp_path is not a room, so the run fails on a missing room.conf — but it must
+    # fail INSIDE synthvdr.qa, having imported it, not on the import itself.
+    combined = result.stdout + result.stderr
+    assert "pip install" not in combined, (
+        f"check.sh did not use SYNTHVDR_PYTHON: {combined!r}"
     )
