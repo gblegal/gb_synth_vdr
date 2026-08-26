@@ -213,16 +213,27 @@ def test_a_subset_still_builds_the_full_document_budget():
 
 
 def test_a_subset_spends_the_budget_on_fewer_deeper_sections():
-    # The point of the feature. Over twenty sections XS gives every section
-    # exactly two documents — one per subsection, which is why ordinary sibling
-    # cross-references had nothing to resolve to.
+    # The point of the feature. Largest-remainder allocation is lumpy, so the
+    # honest measures are the MINIMUM and the MEDIAN, not the maximum: over
+    # twenty sections XS leaves one section on a single document, which is the
+    # thin-section problem itself — a document whose sibling cross-reference has
+    # no sibling to resolve to.
     pack = load_domain(DEFAULT_DOMAIN_ROOT)
-    full = build_slot_manifest(pack, SIZE_PRESETS["XS"])
-    sub = build_slot_manifest(pack.subset(XS_TWELVE), SIZE_PRESETS["XS"])
+    full = Counter(s.section_dir for s in build_slot_manifest(pack, SIZE_PRESETS["XS"]))
+    sub = Counter(
+        s.section_dir for s in build_slot_manifest(pack.subset(XS_TWELVE), SIZE_PRESETS["XS"])
+    )
 
-    assert max(Counter(s.section_dir for s in full).values()) == 2
-    assert max(Counter(s.section_dir for s in sub).values()) > 2
-    assert {s.section_dir for s in sub} == set(XS_TWELVE)
+    def median(counts):
+        ordered = sorted(counts)
+        return ordered[len(ordered) // 2]
+
+    assert min(full.values()) == 1, (
+        "premise: over twenty sections XS strands one section on a single document"
+    )
+    assert min(sub.values()) >= 2, "no section may be left on a single document"
+    assert median(sub.values()) > median(full.values())
+    assert set(sub) == set(XS_TWELVE)
 
 
 def test_a_subset_manifest_is_deterministic():
