@@ -351,3 +351,35 @@ def test_section_dirs_does_answer_on_a_subset():
     sub = pack.subset(XS_TWELVE)
     assert sub.section_dirs() == [s.dir_name for s in sub.sections]
     assert len(sub.section_dirs()) == 12
+
+
+def test_subset_refuses_to_drop_a_core_section():
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    without_transaction = [d for d in XS_TWELVE if d != "18_transaction"]
+    with pytest.raises(DomainError, match="18_transaction"):
+        pack.subset(without_transaction)
+
+
+def test_subset_names_every_core_section_it_is_missing_at_once():
+    # One round trip, not four: an author fixing these one at a time re-runs
+    # /vdr-scope once per missing section.
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    with pytest.raises(DomainError) as exc:
+        pack.subset(["03_tax", "19_esg"])
+    message = str(exc.value)
+    for dir_name in ("01_corporate", "02_financial", "05_commercial", "18_transaction"):
+        assert dir_name in message
+
+
+def test_subset_refuses_a_section_the_pack_does_not_have():
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    with pytest.raises(DomainError, match="21_nonexistent"):
+        pack.subset(XS_TWELVE + ["21_nonexistent"])
+
+
+def test_subset_tolerates_a_repeated_section():
+    # dict.fromkeys de-dups. A caller composing the list from two sources
+    # should get a room, not an error about its own bookkeeping.
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    sub = pack.subset(XS_TWELVE + ["03_tax"])
+    assert len(sub.sections) == 12
