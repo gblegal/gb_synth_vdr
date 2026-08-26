@@ -224,6 +224,27 @@ twice before and never in this instruction until now. Get the count from the loa
 `FindingSet`, not by counting rows in the YAML by eye — a document shared between findings,
 or a non-markdown evidence path, both make an eyeballed count wrong in a different direction.
 
+Then check every evidence path lands in a section this room actually builds:
+
+```python
+from pathlib import Path
+from synthvdr.roomconf import load_room_conf
+from synthvdr.schema import evidence_outside_sections, load_distractors, load_findings
+
+conf = load_room_conf(Path("room.conf"))
+findings = load_findings(Path("_key/findings.yaml"))
+distractors = load_distractors(Path("_key/distractors.yaml"))
+
+stranded = evidence_outside_sections(findings, distractors, conf.get_list("SECTION_DIRS"))
+print(stranded or "every evidence path lands in a declared section")
+```
+
+Anything printed is a finding or distractor with nowhere to be planted, because the room
+does not build that section — `/vdr-scope` may have dropped it at `XS`/`S`. Fix it here, by
+rehoming the evidence or by rescoping the room, never later: the alternative is
+`build_flagged_tree` raising `TwinError` waves into the build, on a registry the user has
+already signed off.
+
 ## Gate B — hard stop
 
 Show the user the complete registry: every finding with its severity, its source and
