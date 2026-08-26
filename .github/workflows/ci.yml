@@ -8,12 +8,20 @@ on:
 
 jobs:
   tests:
+    # pyproject declares requires-python = ">=3.9", so the floor is tested, not
+    # assumed. The first CI run here failed on 3.11 alone, on a `Path.resolve()`
+    # behaviour that changed in 3.13 — exactly the class of defect a single
+    # version hides.
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
       - run: pip install --editable '.[dev,docx]'
       - run: pytest -q
 
