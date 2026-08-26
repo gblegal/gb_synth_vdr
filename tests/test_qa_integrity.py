@@ -1,3 +1,5 @@
+import shutil
+
 import pytest
 
 from synthvdr.qa.integrity import (
@@ -284,6 +286,32 @@ def test_gate_15_reports_both_categories_when_findings_are_mixed(room):
     assert "ENV-2" in result.detail
     assert "not reachable" in result.detail.lower()
     assert "not audited" in result.detail.lower()
+
+
+def test_gate_15_skips_when_the_blind_tree_is_absent(room):
+    # Gate 15 states a conclusion ABOUT the blind room ("N findings reachable
+    # from the blind room"), but reads only the answer key's audit flags. On a
+    # room whose blind tree was never built, every other blind-tree gate SKIPs
+    # with "absent or empty" and gate 15 alone reported a confident PASS —
+    # a conclusion asserted against no oracle, which is this project's worst
+    # defect class. The audit flags describe a tree that is not there.
+    shutil.rmtree(room / "data-room")
+    result = gate_15_discoverability(ctx_for(room))
+    assert result.status == "SKIP"
+    assert "absent or empty" in result.detail
+
+
+def test_gate_15_skips_when_the_blind_tree_holds_no_documents(room):
+    # Same conclusion-without-an-oracle problem, reached by the likelier
+    # route: the directory exists (a build started, or the ownership marker
+    # went down) but carries no .md or .csv document for a finding to be
+    # reachable from. Matches gate 13's "absent or empty" predicate exactly.
+    for f in (room / "data-room").rglob("*"):
+        if f.is_file():
+            f.unlink()
+    result = gate_15_discoverability(ctx_for(room))
+    assert result.status == "SKIP"
+    assert "absent or empty" in result.detail
 
 
 # --- Fix round 1: matching-layer defects (F1, F2, F6) and an honest SKIP (Fix C) ---

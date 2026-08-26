@@ -271,10 +271,21 @@ def gate_15_discoverability(ctx):
     category and hiding the second would cost the author a second gate run
     to learn something the gate already knew on the first pass. An
     unaudited finding is not, by default, presumed reachable.
+
+    The audit flags are read from the answer key, but the conclusion this
+    gate reports is about the BLIND TREE — so it must not state that
+    conclusion when there is no blind tree to state it about. Without the
+    guard below, a room whose documents were never authored drew a
+    confident "N findings reachable from the blind room" while every other
+    blind-tree gate SKIPped beside it: a count reported against no oracle,
+    which is this project's worst defect class. The flags in that state
+    describe a tree that no longer exists, or never did.
     """
     findings = ctx.findings.findings
     if not findings:
         return skip("15", "discoverability audit", "no findings in the answer key")
+    if not [p for p in ctx.blind_files() if p.suffix in (".md", ".csv")]:
+        return skip("15", "discoverability audit", f"{ctx.blind_root} absent or empty")
     unreachable = [f.id for f in findings if f.discoverable_from_blind is False]
     unaudited = [f.id for f in findings if f.discoverable_from_blind is None]
     if unreachable or unaudited:
