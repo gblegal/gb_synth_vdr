@@ -44,6 +44,15 @@ otherwise, and that the other sizes are `XS` 40 / `S` 60 / `L` 800 / `XL` 2,000+
 line of reply, or no reply beyond "make one up", is enough to proceed. Invent everything
 else yourself: deal structure, entity tree, cast, sites, financials, dates, section budget.
 
+In that same message, also **propose the workstreams this deal has**, as a list they can
+correct in passing — not as a second question. At `XS` and `S` a room does not have to build
+all twenty: 40 documents over twelve sections is three to four per section instead of two,
+which is what lets an ordinary reference to a sibling document resolve to a sibling that
+exists. Propose from the sector you were given — a D2C brand plausibly has no defined-benefit
+pension scheme and no bank facility — and say which four are always present:
+`01_corporate`, `02_financial`, `05_commercial`, `18_transaction`. At `M` and above, build
+all twenty; the thin-section problem is specific to the small sizes.
+
 If the user hands you a `room.conf` to seed a repeatable build (distinct from step 0's case
 of one already sitting in the working directory from a prior run), skip the interview
 entirely and scope from the values it supplies.
@@ -57,14 +66,22 @@ from synthvdr.slots import SIZE_PRESETS, build_slot_manifest, write_anchors_csv
 from synthvdr.index_build import write_index_sources, render_index
 
 pack = load_domain(DEFAULT_DOMAIN_ROOT)
-preset = SIZE_PRESETS["M"]  # or whichever size the user picked in step 1
-slots = build_slot_manifest(pack, preset)
+preset = SIZE_PRESETS["XS"]  # or whichever size the user picked in step 1
+
+# The sections this room builds, agreed in step 1. At M and above, use every one:
+# delete this list and pass `pack` to build_slot_manifest instead.
+chosen_section_dirs = [
+    "01_corporate", "02_financial", "05_commercial", "18_transaction",
+]
+room_pack = pack.subset(chosen_section_dirs)
+
+slots = build_slot_manifest(room_pack, preset)
 write_anchors_csv(slots, Path("_key/anchors.csv"))
-write_index_sources(slots, pack, Path("_key/index-src"))
+write_index_sources(slots, room_pack, Path("_key/index-src"))
 Path("index.md").write_text(render_index(Path("_key/index-src")))
 
-print(len(slots))                      # -> INDEX_TOTAL / BLIND_TOTAL / FLAGGED_TOTAL
-print(" ".join(pack.section_dirs()))   # -> SECTION_DIRS, space-separated
+print(len(slots))                           # -> INDEX_TOTAL / BLIND_TOTAL / FLAGGED_TOTAL
+print(" ".join(room_pack.section_dirs()))   # -> SECTION_DIRS, space-separated
 ```
 
 `len(slots)` equals `preset.docs` — every slot the room will ever hold is already accounted
@@ -78,7 +95,7 @@ from synthvdr.qa.depth import floor_for
 
 profile = {}
 for slot in slots:
-    floor = floor_for(slot.slot_id, Path(slot.rel_path).name, slot.tier, pack)
+    floor = floor_for(slot.slot_id, Path(slot.rel_path).name, slot.tier, room_pack)
     count, heaviest = profile.get(slot.section_dir, (0, 0))
     profile[slot.section_dir] = (count + 1, max(heaviest, floor))
 
@@ -88,15 +105,17 @@ for section_dir, (count, heaviest) in profile.items():
 
 **Read this before you invent anything.** The domain pack allocates at least one document to
 every workstream at every size, `XS` included, and gate 10 will hold each one to the floor
-printed here. On the shipped M&A pack at `XS` that means `04_financing-banking`,
-`13_pensions` and `17_management-presentations` each want a 2,500-word document, and
-`20_jv-minority-interests` wants one at all — so the group in step 3 needs bank debt, a
-pension arrangement and a minority holding, whether or not the sector you were handed
-suggests them.
+printed here — for whichever sections step 1 chose to keep. On the shipped M&A pack at `XS`
+that means `04_financing-banking`, `13_pensions` and `17_management-presentations` each want
+a 2,500-word document if kept, and `20_jv-minority-interests` wants one at all if kept — so
+keep any of these four only if the deal genuinely has them, and if you keep one, the group in
+step 3 must give it something real to be about: bank debt, a pension arrangement, a
+management-presentation programme or a minority holding. A section that has no place in the
+sector's fiction belongs dropped in step 1, not carried into step 3 and invented to order.
 
 Getting this wrong is expensive in a specific way. The fact sheet is what the user signs off
 at Gate A, and it is the one file every document in the room reconciles to; discovering
-mid-build that three sections have nothing to be about means retro-fitting facts into a
+mid-build that a section you kept has nothing to be about means retro-fitting facts into a
 document that was already signed off, which is exactly the change Gate A exists to prevent.
 
 ## 3. Invent the deal and write the fact sheet
@@ -297,20 +316,26 @@ values step 2 just printed, plus:
   for, so they must never occur there by coincidence. `"Key diligence points"` and `"DD flag"`
   are the strings this project's own fixtures use and are a safe choice unless the domain
   already uses that exact phrasing incidentally.
-- `FINDING_PREFIXES` — one `|`-separated, uppercase-letter-starting token **per workstream, in
-  the domain pack's own order** (`pack.workstreams()` — the same order `sections.yaml` and
-  `finding-archetypes.yaml` both declare and `load_domain` requires them to agree on), e.g.
-  `CORP|FIN|TAX|FING|COMM|IP|IT|PROP|EMPL|REG|ENV|INS|PEN|DATA|LIT|OPS|MGMT|TXN|ESG|JV` for the
-  shipped M&A domain pack — covering **every** workstream, not just the ones you expect to
-  carry a finding — `/vdr-findings` has not run yet, so you do not yet know which workstreams
-  will. A workstream left out here is a workstream whose finding IDs the leakage gate cannot
-  recognise if one ever leaked into the blind room. **The order is load-bearing, not
-  cosmetic**: `/vdr-build` pairs this list positionally with `pack.workstreams()` to work out
-  which prefix a mid-authoring discovery gets — get the token count right but the order wrong
-  and every discovered finding is silently numbered under the wrong workstream's prefix.
+- `FINDING_PREFIXES` — one `|`-separated, uppercase-letter-starting token **per workstream in
+  the FULL domain pack, in its own order** — `pack.workstreams()`, never
+  `room_pack.workstreams()`, which raises for exactly this reason. That order is the same one
+  `sections.yaml` and `finding-archetypes.yaml` both declare and `load_domain` requires them
+  to agree on. For the shipped M&A pack:
+  `CORP|FIN|TAX|FING|COMM|IP|IT|PROP|EMPL|REG|ENV|INS|PEN|DATA|LIT|OPS|MGMT|TXN|ESG|JV`.
+
+  **A room building a subset still declares all twenty.** A dropped workstream's prefix must
+  still be recognised by gate 4 if a token shaped like one ever leaks into the blind room —
+  and `/vdr-findings` has not run yet, so you do not know which workstreams will carry a
+  finding anyway.
+
+  **The order is load-bearing, not cosmetic.** `/vdr-build` pairs this list positionally with
+  `pack.workstreams()` to work out which prefix a mid-authoring discovery gets. Get the token
+  count right but the order wrong — or shrink the list to match a subset — and every
+  discovered finding is silently numbered under the wrong workstream's prefix.
 - `EXPECTED_KDP_CARRIERS=0` — no findings exist yet; `/vdr-findings` sets the real number.
 - `INDEX_TOTAL`, `BLIND_TOTAL`, `FLAGGED_TOTAL` — all equal to `len(slots)` from step 2.
-- `SECTION_DIRS` — the space-separated `pack.section_dirs()` string from step 2.
+- `SECTION_DIRS` — the space-separated `room_pack.section_dirs()` string from step 2. This one
+  IS the subset: it is what gate 6 checks the built tree against.
 
 Then copy the harness into the room so it is self-contained: copy
 `${CLAUDE_PLUGIN_ROOT}/tools/check.sh` (this plugin's own harness entry point) to

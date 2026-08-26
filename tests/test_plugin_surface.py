@@ -1750,3 +1750,57 @@ def test_version_check_ignores_a_change_outside_the_plugin_surface(tmp_path):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "nothing to bump" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Task 7: /vdr-scope and /vdr-findings now use the section-subset machinery
+# (DomainPack.subset, evidence_outside_sections). subset().workstreams() raises by
+# design, so FINDING_PREFIXES and SECTION_DIRS must be drawn from opposite packs —
+# getting that backwards is the one mistake this task must not make.
+# ---------------------------------------------------------------------------
+
+
+def test_scope_skill_uses_the_subset_pack_for_sections_and_the_full_pack_for_prefixes():
+    # The one place both packs are in scope. Getting them the wrong way round
+    # gives a room whose SECTION_DIRS lists sections it never builds, and a
+    # FINDING_PREFIXES that mispairs every discovered finding.
+    body = _read(ROOT / "skills" / "vdr-scope" / "SKILL.md")
+    assert "room_pack.section_dirs()" in body, "SECTION_DIRS must come from the subset"
+    # A bare substring check for "pack.workstreams()" is satisfied by
+    # "room_pack.workstreams()" alone (it ends in "...pack.workstreams()"), so it
+    # would pass even if the skill never once told the reader to call the correct,
+    # full-pack form. Require the un-prefixed call to appear literally...
+    assert re.search(r"(?<!room_)`pack\.workstreams\(\)`", body), (
+        "FINDING_PREFIXES must come from the full pack via a bare `pack.workstreams()` call"
+    )
+    # ...and require every mention of the subset's (forbidden) form to sit in a
+    # sentence that is warning the reader off it, never instructing them to use it.
+    for line in body.splitlines():
+        if "room_pack.workstreams()" in line:
+            assert "never" in line or "raises" in line, (
+                "room_pack.workstreams() must appear only as a prohibited example, "
+                f"not an instruction to call it: {line!r}"
+            )
+    assert "build_slot_manifest(room_pack" in body, (
+        "the manifest must be built from the subset, or the room builds every section"
+    )
+    assert "write_index_sources(slots, room_pack" in body, (
+        "the index must describe the sections the room actually builds"
+    )
+
+
+def test_findings_skill_checks_evidence_against_the_declared_sections():
+    body = _read(ROOT / "skills" / "vdr-findings" / "SKILL.md")
+    assert "evidence_outside_sections" in body
+    assert "SECTION_DIRS" in body
+
+
+def test_scope_skill_names_the_core_sections_the_pack_marks():
+    # Prose derived from sections.yaml, so it can go stale. Recompute it.
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    body = _read(ROOT / "skills" / "vdr-scope" / "SKILL.md")
+    for section in pack.sections:
+        if section.core:
+            assert section.dir_name in body, (
+                f"/vdr-scope does not tell the author {section.dir_name} is always present"
+            )

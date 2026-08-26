@@ -13,6 +13,7 @@ from synthvdr.schema import (
     allocate_new_finding_ids,
     consolidate_wave_incoming,
     derive_prefix_for_workstream,
+    evidence_outside_sections,
     load_bearing_paths,
     load_distractors,
     load_findings,
@@ -776,6 +777,100 @@ def test_load_bearing_paths_covers_findings_and_distractors(tmp_path):
 def test_load_bearing_paths_with_no_distractors_is_just_the_evidence(tmp_path):
     findings = load_findings(write(tmp_path, "findings.yaml", FINDINGS))
     assert load_bearing_paths(findings, []) == findings.all_evidence_paths()
+
+
+def test_evidence_outside_sections_names_a_path_in_a_dropped_section(tmp_path):
+    findings = load_findings(write(tmp_path, "findings.yaml", FINDINGS))
+    # FINDINGS plants ENV-1 in 11_environmental-hs and FIN-3 in 02_financial.
+    # A room that dropped 11_environmental-hs cannot hold ENV-1's source.
+    offenders = evidence_outside_sections(findings, [], ["02_financial"])
+    assert offenders == [
+        "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md"
+    ]
+
+
+def test_evidence_outside_sections_is_empty_when_every_section_is_declared(tmp_path):
+    findings = load_findings(write(tmp_path, "findings.yaml", FINDINGS))
+    declared = sorted({p.split("/")[0] for p in findings.all_evidence_paths()})
+    assert evidence_outside_sections(findings, [], declared) == []
+
+
+# A fixture built for this check specifically: the shipped DISTRACTORS puts DX-1's
+# two ends in one section, which cannot tell a both-ends implementation from a
+# location-only one. Here the ends are in DIFFERENT sections, and the finding's
+# corroboration deliberately collides with the distractor's location.
+SPLIT_FINDINGS = textwrap.dedent(
+    """
+    schema_version: 1
+    room: "Project Testbed"
+    findings:
+      - id: ENV-1
+        title: Contamination under-provisioned
+        severity: critical
+        workstream: environmental
+        multi_document: true
+        source: 11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md
+        location: "Table 4"
+        corroboration:
+          - 02_financial/2.4_provisions/2.4.1_provision.md
+        substance: Estimate far above the provision.
+    """
+).strip()
+
+SPLIT_DISTRACTORS = textwrap.dedent(
+    """
+    distractors:
+      - id: DX-1
+        title: Alarming-looking notice, fully remediated
+        shape_matches: ENV-1
+        location: 02_financial/2.4_provisions/2.4.1_provision.md
+        resolution: 15_litigation/15.3_correspondence/15.3.1_closure-letter.md
+    """
+).strip()
+
+
+def test_evidence_outside_sections_flags_a_resolution_whose_own_section_is_dropped(tmp_path):
+    # The end that is easy to forget. A trap whose RESOLVING document was dropped
+    # is not a trap — it reads as a real finding, and scores a review tool against
+    # evidence the room does not contain. Here only the resolution's section is
+    # dropped, so a location-only implementation returns [] and fails this.
+    findings = load_findings(write(tmp_path, "findings.yaml", SPLIT_FINDINGS))
+    distractors = load_distractors(write(tmp_path, "distractors.yaml", SPLIT_DISTRACTORS))
+
+    offenders = evidence_outside_sections(
+        findings, distractors, ["11_environmental-hs", "02_financial"]
+    )
+
+    assert offenders == ["15_litigation/15.3_correspondence/15.3.1_closure-letter.md"]
+
+
+def test_evidence_outside_sections_reports_a_shared_path_only_once(tmp_path):
+    # 2.4.1_provision.md is BOTH the finding's corroboration and the distractor's
+    # location. Dropping 02_financial must surface it once, not twice.
+    findings = load_findings(write(tmp_path, "findings.yaml", SPLIT_FINDINGS))
+    distractors = load_distractors(write(tmp_path, "distractors.yaml", SPLIT_DISTRACTORS))
+
+    offenders = evidence_outside_sections(
+        findings, distractors, ["11_environmental-hs", "15_litigation"]
+    )
+
+    assert offenders == ["02_financial/2.4_provisions/2.4.1_provision.md"]
+
+
+def test_evidence_outside_sections_returns_paths_in_sorted_order(tmp_path):
+    # Sorted so the same room always reports the same list in the same order —
+    # asserted against a KNOWN multi-element expectation, not against sorted() of
+    # whatever came back, which would be true of any return at all.
+    findings = load_findings(write(tmp_path, "findings.yaml", SPLIT_FINDINGS))
+    distractors = load_distractors(write(tmp_path, "distractors.yaml", SPLIT_DISTRACTORS))
+
+    offenders = evidence_outside_sections(findings, distractors, [])
+
+    assert offenders == [
+        "02_financial/2.4_provisions/2.4.1_provision.md",
+        "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md",
+        "15_litigation/15.3_correspondence/15.3.1_closure-letter.md",
+    ]
 
 
 # ---------------------------------------------------------------------------
