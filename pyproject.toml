@@ -4,9 +4,11 @@ version = "0.1.0"
 description = "Synthetic M&A data room generator with a verified ground-truth answer key"
 requires-python = ">=3.9"
 dependencies = ["PyYAML>=6.0"]
+license = "MIT"
+license-files = ["LICENSE"]
 
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project.optional-dependencies]

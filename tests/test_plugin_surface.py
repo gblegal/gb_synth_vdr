@@ -1262,3 +1262,23 @@ def test_every_make_target_the_docs_tell_you_to_run_exists():
     assert referenced, "no `make <target>` commands found — has the docs wiring changed?"
     missing = {t: doc for t, doc in referenced.items() if t not in declared}
     assert not missing, f"documented but not declared in the Makefile: {missing}"
+
+
+def test_the_licence_file_matches_what_the_manifests_declare():
+    """A repo whose manifest and LICENCE file disagree states two different
+    sets of terms at once, which is worse than either alone — and it is only
+    discoverable by reading both. Caught exactly that before publication:
+    plugin.json said MIT while an open PR added GPL v3.
+    """
+    import json
+
+    licence_file = ROOT / "LICENSE"
+    assert licence_file.is_file(), "no LICENSE file, but the manifests declare a licence"
+    body = licence_file.read_text(encoding="utf-8")
+
+    declared = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())["license"]
+    first_line = body.strip().splitlines()[0].strip()
+    assert declared.lower() in first_line.lower(), (
+        f"plugin.json declares {declared!r} but LICENSE opens with {first_line!r}"
+    )
+    assert "Greg Baker" in body, "LICENSE names no copyright holder"
