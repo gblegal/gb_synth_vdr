@@ -93,7 +93,18 @@ class DomainPack:
         pack's canonical order" that stays correct even if a future domain
         pack adds a third file that also has an opinion about workstream
         order.
+
+        Raises on a subset — see the guard below.
         """
+        if self.is_subset:
+            raise DomainError(
+                "workstreams() is meaningless on a subset: it exists to be zipped "
+                "positionally against room.conf's FINDING_PREFIXES, and on a subset "
+                "every prefix after the first dropped section pairs with the wrong "
+                "workstream. Pass the FULL pack — load_domain(DEFAULT_DOMAIN_ROOT) — "
+                "to derive_prefix_for_workstream. FINDING_PREFIXES covers all twenty "
+                "workstreams even in a room that builds a subset of them."
+            )
         return [s.workstream for s in self.sections]
 
     def subset(self, dir_names: Iterable[str]) -> "DomainPack":

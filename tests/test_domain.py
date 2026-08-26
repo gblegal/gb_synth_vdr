@@ -324,3 +324,30 @@ def test_subset_marks_itself_as_one_and_the_full_pack_does_not():
     pack = load_domain(DEFAULT_DOMAIN_ROOT)
     assert pack.is_subset is False
     assert pack.subset(XS_TWELVE).is_subset is True
+
+
+def test_workstreams_refuses_on_a_subset_and_says_what_to_use_instead():
+    # derive_prefix_for_workstream zips this POSITIONALLY against room.conf's
+    # FINDING_PREFIXES. On a subset every prefix after the first dropped
+    # section shifts by one, and each mid-authoring discovery is numbered under
+    # the wrong workstream's prefix — silently. Same class as the B1 registry
+    # overwrite; made unreachable rather than documented.
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    sub = pack.subset(XS_TWELVE)
+    with pytest.raises(DomainError, match="FINDING_PREFIXES"):
+        sub.workstreams()
+
+
+def test_workstreams_still_answers_on_the_full_pack():
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    assert pack.workstreams() == [s.workstream for s in pack.sections]
+    assert len(pack.workstreams()) == 20
+
+
+def test_section_dirs_does_answer_on_a_subset():
+    # The counterpart: SECTION_DIRS in room.conf is exactly the kept list, so
+    # this one must keep working where workstreams() must not.
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    sub = pack.subset(XS_TWELVE)
+    assert sub.section_dirs() == [s.dir_name for s in sub.sections]
+    assert len(sub.section_dirs()) == 12
