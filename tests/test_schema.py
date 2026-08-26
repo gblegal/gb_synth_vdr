@@ -6,11 +6,14 @@ import pytest
 from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
 from synthvdr.roomconf import load_room_conf
 from synthvdr.schema import (
+    SEVERITIES,
     ConsolidationResult,
     SchemaError,
+    severity_targets,
     allocate_new_finding_ids,
     consolidate_wave_incoming,
     derive_prefix_for_workstream,
+    load_bearing_paths,
     load_distractors,
     load_findings,
     parse_new_findings_ledger,
@@ -644,3 +647,180 @@ def test_consolidate_wave_incoming_rejects_a_findings_row_not_in_the_gate_b_regi
     incoming_docs = {"wave2-batch-a": {"findings": [{"id": "NOT-REGISTERED"}]}}
     with pytest.raises(SchemaError, match="NOT-REGISTERED"):
         consolidate_wave_incoming(FINDINGS_DOC, incoming_docs, {}, {})
+
+
+# ---------------------------------------------------------------------------
+# Review 2026-08-26, B1: `consolidate_wave_incoming` upserted every key the author sent, so a
+# vdr-author subagent that echoed back a rewritten `workstream`, `title` or `corroboration`
+# overwrote the signed-off Gate B registry with it — silently, because `validate()` has no
+# opinion on any of those values. Consolidation refines `location` and `substance`; a row that
+# reaches for anything else has misunderstood its brief, and must say so rather than land.
+# ---------------------------------------------------------------------------
+
+FINDINGS_DOC_WITH_CORROBORATION = {
+    "schema_version": 1,
+    "room": "Project Testbed",
+    "findings": [
+        {
+            "id": "IP-1",
+            "title": "Founder IP never assigned",
+            "severity": "critical",
+            "workstream": "ip",
+            "multi_document": True,
+            "source": "06_ip-it/6.1_registrations/6.1.1_trade-marks.md",
+            "corroboration": ["06_ip-it/6.2_assignments/6.2.1_founder-deed.md"],
+            "substance": "Seed finding.",
+        }
+    ],
+}
+
+
+def test_consolidate_wave_incoming_rejects_a_row_that_rewrites_a_gate_b_field():
+    """The observed corruption: an author returned the ID prefix as the workstream and a title
+    of its own. Neither is caught by `validate()` — `workstream` is a free-form string in the
+    schema — so the rewritten registry would have shipped, and a wrong `workstream` also feeds
+    `derive_prefix_for_workstream`'s correspondence cross-check.
+    """
+    incoming_docs = {
+        "wave1-batch-a": {
+            "findings": [
+                {
+                    "id": "ENV-1",
+                    "workstream": "ENV",
+                    "title": "Author retitled it",
+                    "location": "Condition 3",
+                    "substance": "Refined substance.",
+                }
+            ]
+        }
+    }
+    with pytest.raises(SchemaError, match=r"ENV-1.*'title', 'workstream'"):
+        consolidate_wave_incoming(FINDINGS_DOC, incoming_docs, {}, {})
+
+
+def test_consolidate_wave_incoming_leaves_the_registry_untouched_when_it_rejects():
+    incoming_docs = {
+        "wave1-batch-a": {"findings": [{"id": "ENV-1", "workstream": "ENV"}]}
+    }
+    with pytest.raises(SchemaError):
+        consolidate_wave_incoming(FINDINGS_DOC, incoming_docs, {}, {})
+    assert FINDINGS_DOC["findings"][0]["workstream"] == "environmental"
+
+
+def test_consolidate_wave_incoming_rejects_a_string_valued_corroboration():
+    """The loud half of the same bug. A string where the registry holds a list survives
+    consolidation, then loads as a character list — `evidence_paths()` returns
+    ['...', 'b', '.', 'm', 'd'] and `build_flagged_tree` raises far from the cause.
+    """
+    incoming_docs = {
+        "wave1-batch-a": {
+            "findings": [
+                {
+                    "id": "IP-1",
+                    "corroboration": "06_ip-it/6.2_assignments/6.2.1_founder-deed.md",
+                    "substance": "Refined substance.",
+                }
+            ]
+        }
+    }
+    with pytest.raises(SchemaError, match=r"IP-1.*'corroboration'"):
+        consolidate_wave_incoming(FINDINGS_DOC_WITH_CORROBORATION, incoming_docs, {}, {})
+
+
+def test_consolidate_wave_incoming_rejects_a_gate_b_field_the_registry_does_not_hold():
+    """A key absent from the master row is still a Gate B field the author does not own.
+    Dropping it silently would be the same defect one layer quieter: the author believes it
+    added a cross-link, the registry never hears about it, and nothing says otherwise.
+    """
+    incoming_docs = {
+        "wave1-batch-a": {
+            "findings": [{"id": "ENV-1", "cross_links": ["FIN-9"], "substance": "Refined."}]
+        }
+    }
+    with pytest.raises(SchemaError, match=r"ENV-1.*'cross_links'"):
+        consolidate_wave_incoming(FINDINGS_DOC, incoming_docs, {}, {})
+
+
+def test_consolidate_wave_incoming_accepts_a_row_carrying_only_location_and_substance():
+    incoming_docs = {
+        "wave1-batch-a": {
+            "findings": [
+                {"id": "ENV-1", "location": "Condition 3", "substance": "Refined substance."}
+            ]
+        }
+    }
+    result = consolidate_wave_incoming(FINDINGS_DOC, incoming_docs, {}, {})
+    (row,) = result.findings_doc["findings"]
+    assert row["location"] == "Condition 3"
+    assert row["substance"] == "Refined substance."
+    assert row["title"] == "Existing environmental finding"
+    assert row["workstream"] == "environmental"
+
+
+def test_load_bearing_paths_covers_findings_and_distractors(tmp_path):
+    """Review 2026-08-26, B2. What `/vdr-build` must author first is every document the
+    answer key depends on — a finding's `source` and `corroboration`, and BOTH ends of a
+    distractor, since a trap whose resolving document does not exist yet is a trap that
+    reads as a real finding.
+    """
+    findings = load_findings(write(tmp_path, "findings.yaml", FINDINGS))
+    distractors = load_distractors(write(tmp_path, "distractors.yaml", DISTRACTORS))
+    paths = load_bearing_paths(findings, distractors)
+
+    assert findings.all_evidence_paths() <= paths
+    for distractor in distractors:
+        assert distractor.location in paths
+        assert distractor.resolution in paths
+
+
+def test_load_bearing_paths_with_no_distractors_is_just_the_evidence(tmp_path):
+    findings = load_findings(write(tmp_path, "findings.yaml", FINDINGS))
+    assert load_bearing_paths(findings, []) == findings.all_evidence_paths()
+
+
+# ---------------------------------------------------------------------------
+# Review 2026-08-26, S5. /vdr-findings asked for "roughly a 1 : 3 : 4 : 3 split
+# across critical / high / medium / low". That needs at least 11 findings, and XS
+# budgets 4. Scaled down it reads 0.36 / 1.1 / 1.45 / 1.1, which is not a split
+# anyone can write, so the skill left the author to improvise the one case its
+# smallest preset always hits. The ratio is a function now, defined at every
+# preset the tool ships.
+# ---------------------------------------------------------------------------
+
+
+def test_severity_targets_sums_to_the_budget_at_every_shipped_preset():
+    from synthvdr.slots import SIZE_PRESETS
+
+    for preset in SIZE_PRESETS.values():
+        targets = severity_targets(preset.findings)
+        assert sum(targets.values()) == preset.findings, preset.name
+
+
+def test_severity_targets_gives_every_band_at_least_one_finding():
+    from synthvdr.slots import SIZE_PRESETS
+
+    for preset in SIZE_PRESETS.values():
+        targets = severity_targets(preset.findings)
+        assert set(targets) == set(SEVERITIES), preset.name
+        assert min(targets.values()) >= 1, f"{preset.name}: {targets}"
+
+
+def test_severity_targets_at_xs_is_one_per_band():
+    # The case that could not be expressed at all before: four findings, four
+    # bands, which is also the widest scoring signal available at that size.
+    assert severity_targets(4) == {"critical": 1, "high": 1, "medium": 1, "low": 1}
+
+
+def test_severity_targets_holds_the_ratio_where_there_is_room_for_it():
+    targets = severity_targets(110)
+    assert targets == {"critical": 10, "high": 30, "medium": 40, "low": 30}
+
+
+def test_severity_targets_adds_to_medium_first():
+    # Stated in the skill as the tie-break rule, so it must be the real one.
+    assert severity_targets(12)["medium"] > severity_targets(11)["medium"]
+
+
+def test_severity_targets_refuses_a_budget_smaller_than_the_bands():
+    with pytest.raises(SchemaError, match="four severity bands"):
+        severity_targets(3)

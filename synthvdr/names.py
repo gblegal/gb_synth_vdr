@@ -38,7 +38,10 @@ The rest is not chased. Guarding the mask's left edge (refuse to mask when a
 capitalised word precedes the occurrence) reopens the exact false-positive class
 above, since "See" and "Registered" are capitalised too. And gate 14 is a safety
 net, not a proof: the primary control is /vdr-scope checking every fact-sheet
-name at Gate A, and invented fact-sheet casts do not produce nested names. The
+name at Gate A — which now also runs this same mask-then-scan pass over the
+fact sheet against the record it just wrote, so a name present in the prose but
+missing from or miscategorised in the record surfaces before any document
+inherits it — and invented fact-sheet casts do not produce nested names. The
 degenerate end of the same shape — a one-word or bare-suffix ENTITY row, which
 would blanket-mask a whole suffix family — is malformed input rather than a
 matching problem, and `malformed_cast_entries` makes gate 14 reject it loudly
@@ -114,6 +117,12 @@ def entity_tokens(text: str) -> Set[str]:
     return {match.group(1).strip() for match in _ENTITY.finditer(text)}
 
 
+# Separator allowed between the words of a cast name: any run of spaces and
+# tabs, optionally spanning ONE line break. Never empty, and never two breaks
+# — see `mask_cast_names` for why both bounds matter.
+_WITHIN_NAME = r"(?:[ \t]*\n[ \t]*|[ \t]+)"
+
+
 def mask_cast_names(text: str, cast: Set[str]) -> str:
     """Remove every known cast name from `text`, longest entry first.
 
@@ -130,9 +139,22 @@ def mask_cast_names(text: str, cast: Set[str]) -> str:
     string, so the words either side of a removed name cannot fuse into a
     candidate of their own.
 
-    Matching allows any run of spaces or tabs between a name's words, since
-    a name wrapped across a table cell or padded in a document is the same
-    name as the one the cast list writes with single spaces.
+    Matching allows any run of spaces or tabs between a name's words, and a
+    single line break, since a name wrapped across a table cell or padded
+    in a document is the same name as the one the cast list writes with
+    single spaces. The line break is not a nicety: markdown prose wraps, so
+    a long entity name arrives split mid-phrase as a matter of course, and
+    while the separator was spaces-and-tabs only the half after the break
+    kept its corporate suffix and came back as an unchecked name. One XS
+    build produced nine such false positives across three rounds, and hit
+    its own fact sheet at /vdr-scope before a single document existed.
+
+    `_WITHIN_NAME`'s exact shape carries both bounds. It cannot match the
+    empty string, so a cast entry never masks a run-together word it has no
+    business touching, and it admits ONE newline rather than an unbounded run
+    of whitespace — one break is a wrap, two is a paragraph or table-row
+    boundary, and a mask that jumps a boundary deletes text on both sides of
+    a break the cast entry never spanned.
 
     Matching is also CASE-INSENSITIVE, for the same reason and to the same
     end as `entity_tokens` matching its suffixes that way. The two are one
@@ -159,7 +181,7 @@ def mask_cast_names(text: str, cast: Set[str]) -> str:
         if not words:
             continue
         text = re.sub(
-            r"[ \t]+".join(re.escape(word) for word in words),
+            _WITHIN_NAME.join(re.escape(word) for word in words),
             " ",
             text,
             flags=re.IGNORECASE,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, Iterable, List, Set
 
 from .domain import DomainPack, Section
 
@@ -126,3 +126,69 @@ def write_anchors_csv(slots: List[Slot], path: Path) -> None:
 def read_anchors_csv(path: Path) -> Dict[str, str]:
     with path.open(newline="", encoding="utf-8") as handle:
         return {row["slot_id"]: row["tier"] for row in csv.DictReader(handle)}
+
+
+def read_slot_manifest(path: Path) -> List[Slot]:
+    """`anchors.csv` back into the `Slot` objects `write_anchors_csv` wrote.
+
+    `read_anchors_csv` above returns only `{slot_id: tier}`, which is all gate
+    10's depth lint needs. `authoring_order` needs `rel_path` as well, because
+    the answer key names documents by path and never by slot id, so the two
+    only meet there.
+    """
+    slots: List[Slot] = []
+    with path.open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            section_dir, subsection, filename = row["rel_path"].split("/")
+            slots.append(
+                Slot(
+                    slot_id=row["slot_id"],
+                    section_dir=section_dir,
+                    subsection=subsection,
+                    slug=filename[: -len(".md")],
+                    tier=row["tier"],
+                )
+            )
+    return slots
+
+
+def authoring_order(slots: Iterable[Slot], load_bearing: Set[str]) -> List[Slot]:
+    """The order `/vdr-build` authors a room in: load-bearing slots first, tier
+    order after, manifest order within each group.
+
+    `load_bearing` is a set of rel_paths — `synthvdr.schema.load_bearing_paths`
+    over the room's findings and distractors. A path in it that matches no slot
+    is ignored here; that is a findings.yaml defect, and gate 12 and
+    `build_flagged_tree` are the two things that already name it.
+
+    WHY THIS IS NOT "SORT BY TIER". `/vdr-build` used to say exactly that, and
+    glossed tier `A` as "anchor — carries a finding, a distractor, or is
+    otherwise load-bearing". Tier means nothing of the sort. `build_slot_manifest`
+    assigns it POSITIONALLY, at /vdr-scope time, before the findings registry
+    exists to consult: the first ~35% of each section's slots are `A` and the
+    rest are `F`, and nothing ever revisits that. In the XS build that surfaced
+    this, 6 of the 10 registry evidence paths were tier `F`, including both
+    distractor documents. Sorting by tier therefore deferred half the findings'
+    evidence behind every filler-tier document — the precise opposite of the
+    invariant the rule was written to protect, which is that an interrupted
+    build never strands a finding half-planted.
+
+    Tier is kept as the SECOND key rather than dropped. It is a real signal,
+    just not the one the old rule claimed: it is a structural depth and
+    prominence tier (gate 10's floors are keyed off it), so among documents the
+    answer key does not depend on, the more substantial ones are still written
+    first.
+
+    Sorting is stable, so slots keep manifest order inside each group and a
+    resumed build picks up where the manifest says. Re-tiering `anchors.csv`
+    after /vdr-findings was the alternative considered; it was rejected because
+    tier drives gate 10's depth floors, so promoting a slot silently changes
+    what an existing room is required to meet.
+    """
+    return sorted(
+        slots,
+        key=lambda slot: (
+            slot.rel_path not in load_bearing,
+            slot.tier != TIER_ANCHOR,
+        ),
+    )

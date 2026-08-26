@@ -14,6 +14,14 @@ python3 -m synthvdr.qa --room . --strict   # release mode
 `bash tools/check.sh . --strict`) — use whichever is at hand, they run the identical
 seventeen gates.
 
+If either form reports that it cannot import `synthvdr`, the room's `python3` is not the
+interpreter the package was installed into — which is the normal case, since a room is a
+directory of its own. Name the right one and carry on:
+
+```bash
+SYNTHVDR_PYTHON=/path/to/.venv/bin/python bash tools/check.sh .
+```
+
 ## Reading the output
 
 Every gate prints exactly one line: `PASS`, `FAIL`, `SKIP` or `WARN`, its number, its name

@@ -1,7 +1,14 @@
 import pytest
 
 from synthvdr.domain import Archetype, DEFAULT_DOMAIN_ROOT, DomainPack, load_domain
-from synthvdr.qa.depth import DepthLintError, classify_archetype, floor_for, strip_annotation, wordcount
+from synthvdr.qa.depth import (
+    DepthLintError,
+    classify_archetype,
+    depth_problems,
+    floor_for,
+    strip_annotation,
+    wordcount,
+)
 
 PACK = load_domain(DEFAULT_DOMAIN_ROOT)
 
@@ -105,3 +112,68 @@ def test_every_archetype_floor_is_at_least_the_tier_f_floor():
     # standard than tier-F filler. Checked over every archetype, not just
     # register, so a future edit to any one floor can't reintroduce this.
     assert all(a.floor >= PACK.tier_f_floor for a in PACK.archetypes.values())
+
+
+# ---------------------------------------------------------------------------
+# Review 2026-08-26, S2. `vdr-author` subagents have no Bash, so they cannot run
+# wordcount() and every depth figure they report is a visual estimate — and every
+# estimate in the build that surfaced this was HIGH (~1,450 for 1,190 against a
+# 1,200 floor, ~3,050 for 2,447 against 2,500). Seven of 40 documents landed
+# under floor and cost a whole remediation wave. /vdr-build measures the batch
+# itself now, and it must measure it with gate 10's own code rather than a
+# reimplementation in a fenced example that can drift from the gate.
+# ---------------------------------------------------------------------------
+
+
+def _pack():
+    from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
+
+    return load_domain(DEFAULT_DOMAIN_ROOT)
+
+
+def test_depth_problems_names_a_document_below_its_floor(tmp_path):
+    pack = _pack()
+    path = tmp_path / "1.1.1_constitutional-01.md"
+    path.write_text("word " * 100, encoding="utf-8")
+
+    problems = depth_problems([path], {"1.1.1": "A"}, pack, "Key diligence points")
+
+    assert len(problems) == 1
+    assert "1.1.1" in problems[0]
+    assert "100 words" in problems[0]
+    assert str(floor_for("1.1.1", path.name, "A", pack)) in problems[0]
+
+
+def test_depth_problems_is_silent_for_a_document_above_its_floor(tmp_path):
+    pack = _pack()
+    path = tmp_path / "1.1.1_constitutional-01.md"
+    path.write_text("word " * 5000, encoding="utf-8")
+    assert depth_problems([path], {"1.1.1": "A"}, pack, "Key diligence points") == []
+
+
+def test_depth_problems_reports_a_slot_missing_from_anchors(tmp_path):
+    pack = _pack()
+    path = tmp_path / "9.9.9_unknown-01.md"
+    path.write_text("word " * 5000, encoding="utf-8")
+    (problem,) = depth_problems([path], {}, pack, "Key diligence points")
+    assert "9.9.9" in problem and "anchors.csv" in problem
+
+
+def test_depth_problems_reports_a_placeholder_before_a_word_count(tmp_path):
+    # A short document full of TODO is a placeholder problem, not a depth one —
+    # telling the author to write more words would be the wrong instruction.
+    pack = _pack()
+    path = tmp_path / "1.1.1_constitutional-01.md"
+    path.write_text("TODO finish this", encoding="utf-8")
+    (problem,) = depth_problems([path], {"1.1.1": "A"}, pack, "Key diligence points")
+    assert "placeholder" in problem
+
+
+def test_depth_problems_ignores_an_annotation_block(tmp_path):
+    # The flagged twin's annotation must not count toward the floor, or a
+    # flagged document would clear a floor its blind twin does not.
+    pack = _pack()
+    path = tmp_path / "1.1.1_constitutional-01.md"
+    path.write_text("word " * 100 + "\n## Key diligence points\n" + "word " * 5000)
+    (problem,) = depth_problems([path], {"1.1.1": "A"}, pack, "Key diligence points")
+    assert "100 words" in problem

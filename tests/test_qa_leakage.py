@@ -286,6 +286,16 @@ def test_entity_tokens_still_detects_the_real_suffix_in_its_canonical_case():
         # Caps must not become a way to smuggle an unchecked entity past the
         # gate: the widened mask must still leave a genuinely unknown name.
         ("A DEED WITH UNLISTED TRADING LIMITED.", "FAIL"),
+        # Markdown prose wraps, so a cast name arrives split across a line
+        # break like any other phrase. The mask allowed spaces and tabs
+        # between a name's words but not a newline, so the half after the
+        # break kept its suffix and was reported as unchecked.
+        ("The parties include Ashfell\nHoldings Limited and others.", "PASS"),
+        ("Executed by Kessler\nWerke GmbH on the date shown.", "PASS"),
+        ("A wrapped name indented on the\n    next line: Ashfell\n    Holdings Limited.", "PASS"),
+        # ...and widening the separator must not open a blind spot: an
+        # unknown entity split the same way is still caught.
+        ("A deed with Unlisted\nTrading Limited.", "FAIL"),
     ],
 )
 def test_gate_14_masks_the_cast_before_scanning_the_residue(room, prose, expected):
@@ -361,6 +371,41 @@ def test_mask_cast_names_matches_a_cast_entry_whatever_its_case():
     ):
         residue = mask_cast_names(rendering, {"Ashfell Holdings Limited"})
         assert entity_tokens(residue) == set(), rendering
+
+
+def test_mask_cast_names_matches_a_name_wrapped_across_a_line_break():
+    # Review 2026-08-26, B3. The separator was `[ \t]+`, so a cast name that
+    # markdown wrapped mid-phrase never matched: the residue kept "Beauty
+    # SAS" and gate 14 reported it as unchecked. Over one XS build this
+    # produced nine false positives across three rounds, and hit the fact
+    # sheet during /vdr-scope before a single document existed.
+    for rendering in (
+        "Ashfell\nHoldings Limited",
+        "Ashfell Holdings\nLimited",
+        "Ashfell\n    Holdings Limited",
+        "Ashfell   \n\tHoldings Limited",
+    ):
+        residue = mask_cast_names(rendering, {"Ashfell Holdings Limited"})
+        assert entity_tokens(residue) == set(), rendering
+
+
+def test_mask_cast_names_does_not_reach_across_a_blank_line():
+    # The reason the separator is `[ \t]*\n[ \t]*` and not `\s+`: one
+    # newline is a wrap, two is a paragraph or table-row boundary, and a
+    # mask that jumps one deletes text either side of a break that the cast
+    # entry never spanned. Reporting is the safe direction here.
+    residue = mask_cast_names(
+        "Ashfell\n\nHoldings Limited", {"Ashfell Holdings Limited"}
+    )
+    assert entity_tokens(residue) != set()
+
+
+def test_mask_cast_names_still_requires_whitespace_between_a_names_words():
+    # And why it is not `[ \t]*\n?[ \t]*`: that alternative can match the
+    # empty string, so a cast entry would mask a run-together word it has
+    # no business touching.
+    residue = mask_cast_names("AshfellHoldings Limited", {"Ashfell Holdings Limited"})
+    assert "AshfellHoldings" in residue
 
 
 def test_gate_14_reports_the_right_name_when_a_shorter_cast_entry_is_nested(room):

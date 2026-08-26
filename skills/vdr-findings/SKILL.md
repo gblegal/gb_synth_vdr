@@ -28,9 +28,23 @@ print(preset.findings, preset.distractors)
 ```
 
 Target `preset.findings` findings and `preset.distractors` distractors: XS 4/2, S 12/5,
-M 25/10, L 60/18, XL 90/25. Aim for roughly a 1 : 3 : 4 : 3 split across
-critical / high / medium / low severity, with **at least half** of all findings
-multi-document.
+M 25/10, L 60/18, XL 90/25, with **at least half** of all findings multi-document.
+
+For the severity split, ask rather than scale it by hand:
+
+```python
+from synthvdr.schema import severity_targets
+
+print(severity_targets(preset.findings))
+```
+
+The underlying shape is 1 : 3 : 4 : 3 across critical / high / medium / low, but that needs
+eleven findings before it can be written down, and `XS` budgets four. `severity_targets`
+holds the ratio wherever there is room for it and floors every band at one finding where
+there is not — so `XS` comes back one per band, which is the widest scoring signal four
+documents can carry, and `S` comes back 1 / 3 / 5 / 3. A band with nothing in it produces no
+signal at all for how a tool behaves at that severity, which is why the floor wins over the
+ratio at small sizes rather than the other way round.
 
 ## 2. Draft the registry
 

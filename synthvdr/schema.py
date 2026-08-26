@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set
 
 import yaml
 
@@ -402,6 +402,14 @@ def parse_new_findings_ledger(build_status_text: str) -> Dict[str, str]:
     }
 
 
+# The only two fields a wave's author subagent owns. Everything else on a finding row was
+# fixed at Gate B, when the user signed the registry off; consolidation refines where the
+# finding sits in the document it has now written and what it says there, and nothing more.
+# Kept as a constant rather than inlined because `agents/vdr-author.md` documents the same
+# two names to the author, and the pair should be readable in one place from the code side.
+AUTHOR_OWNED_FINDING_FIELDS = ("location", "substance")
+
+
 @dataclass(frozen=True)
 class ConsolidationResult:
     """Result of one `consolidate_wave_incoming` call."""
@@ -433,11 +441,26 @@ def consolidate_wave_incoming(
     `incoming_docs` maps each incoming file's label (its filename stem) to its parsed YAML
     document. `findings_doc` is `_key/findings.yaml`'s parsed document (with a `findings` key,
     a list of row mappings — the same shape `synthvdr.schema.load_findings` reads). A
-    `findings:` row inside an incoming doc upserts onto the matching existing row by id, and
-    raises `SchemaError` if that id is not already in `findings_doc` (Gate B's registry is
-    closed; consolidation never introduces a new id under that key). A `new_findings:` row
-    proposes a discovery under a provisional id; unless that id is already in `already_mapped`,
-    it is passed to `allocate_new_finding_ids` (sorted there by `(label, provisional_id)`, so
+    `findings:` row inside an incoming doc upserts `AUTHOR_OWNED_FINDING_FIELDS` onto the
+    matching existing row by id, and raises `SchemaError` if that id is not already in
+    `findings_doc` (Gate B's registry is closed; consolidation never introduces a new id under
+    that key).
+
+    The upsert is deliberately NOT `dict.update(row)`. Authors are handed their registry rows
+    and write the intake in the same shape, so they echo the whole row back — and one that
+    echoes it back CHANGED (the observed case: an author returned the ID prefix `IP` as its
+    `workstream`, a `corroboration` string where the registry holds a list, and a title of its
+    own) would otherwise overwrite the signed-off registry silently. `validate()` cannot catch
+    it: `workstream` and `title` are free-form strings, so the corrupted registry passes clean
+    and ships, and a wrong `workstream` additionally feeds `derive_prefix_for_workstream`'s
+    correspondence cross-check — the one thing meant to catch a reordered `FINDING_PREFIXES`.
+    So every non-author-owned key is compared against the registry and must match it exactly;
+    an echo is accepted, a change raises. Raising rather than quietly dropping is the point —
+    an author reaching for a Gate B field has misunderstood its brief, and that is worth
+    seeing.
+
+    A `new_findings:` row proposes a discovery under a provisional id; unless that id is
+    already in `already_mapped`, it is passed to `allocate_new_finding_ids` (sorted there by `(label, provisional_id)`, so
     the allocation itself is deterministic across reruns too) and the resulting row is added
     under its real, newly allocated id.
     """
@@ -453,7 +476,22 @@ def consolidate_wave_incoming(
                     "consolidation only refines an existing finding, it never adds one "
                     "under the `findings:` key"
                 )
-            by_id[row["id"]].update(row)
+            target = by_id[row["id"]]
+            claimed = sorted(
+                key
+                for key, value in row.items()
+                if key != "id"
+                and key not in AUTHOR_OWNED_FINDING_FIELDS
+                and (key not in target or target[key] != value)
+            )
+            if claimed:
+                raise SchemaError(
+                    f"{label}: finding {row['id']!r} tries to set Gate B fields {claimed} — "
+                    f"consolidation refines {list(AUTHOR_OWNED_FINDING_FIELDS)} only"
+                )
+            target.update(
+                {key: row[key] for key in AUTHOR_OWNED_FINDING_FIELDS if key in row}
+            )
         for row in incoming.get("new_findings") or []:
             if row["id"] in already_mapped:
                 continue
@@ -473,3 +511,81 @@ def consolidate_wave_incoming(
         for provisional_id, final_id in new_mapping.items()
     }
     return ConsolidationResult(updated_doc, new_mapping, workstream_by_final_id)
+
+
+def load_bearing_paths(
+    findings: FindingSet, distractors: Iterable[Distractor]
+) -> Set[str]:
+    """Every document the answer key depends on, by rel_path.
+
+    A finding's `source` and `corroboration`, and BOTH ends of every distractor.
+    The resolution end matters as much as the location end: a trap whose
+    resolving document has not been authored yet is not a trap, it is an
+    unresolved finding, and a room interrupted in that state scores a tool
+    against evidence the room does not actually contain.
+
+    This is what `synthvdr.slots.authoring_order` sorts a wave's slot list by —
+    see its docstring for why tier could not answer the same question.
+    """
+    paths = set(findings.all_evidence_paths())
+    for distractor in distractors:
+        paths.add(distractor.location)
+        paths.add(distractor.resolution)
+    return paths
+
+
+# The shape /vdr-findings aims a registry at, as parts of a whole rather than a
+# percentage — critical : high : medium : low.
+SEVERITY_RATIO = (1, 3, 4, 3)
+
+
+def severity_targets(total: int) -> Dict[str, int]:
+    """How many findings of each severity a registry of `total` should hold.
+
+    A function rather than the ratio in prose, because the two disagreed at the
+    size this tool ships as its smallest. /vdr-findings asked for "roughly a
+    1 : 3 : 4 : 3 split", which needs at least eleven findings; the XS preset
+    budgets four, where the ratio scales to 0.36 / 1.1 / 1.45 / 1.1 — not a split
+    anyone can write. The skill then left its author to improvise the one case
+    its own smallest preset always hits.
+
+    The ratio is applied first, largest-remainder, and only then is any empty
+    band repaired to one by taking from the largest — so a registry big enough
+    to hold the ratio gets the ratio exactly (110 findings is 10/30/40/30), and
+    the floor only bites where the ratio cannot be expressed at all. Doing it
+    the other way round — a floor of one everywhere, then the ratio over the
+    remainder — distorts every size, including the ones that had no problem.
+
+    That floor is a scoring argument, not a rounding convenience: a band with no
+    findings in it produces no signal at all for a tool's behaviour at that
+    severity, and at XS four findings across four bands is the widest signal
+    four documents can carry.
+
+    Ties in the remainder go to the heavier-weighted band, then alphabetically.
+    Deterministic, and the same answer on every run.
+    """
+    if total < len(SEVERITIES):
+        raise SchemaError(
+            f"a registry of {total} cannot cover the four severity bands — "
+            "every band needs at least one finding to produce any scoring signal"
+        )
+    parts = sum(SEVERITY_RATIO)
+    exact = {
+        severity: total * weight / parts
+        for severity, weight in zip(SEVERITIES, SEVERITY_RATIO)
+    }
+    targets = {severity: int(value) for severity, value in exact.items()}
+    order = sorted(
+        zip(SEVERITIES, SEVERITY_RATIO),
+        key=lambda pair: (-(exact[pair[0]] - int(exact[pair[0]])), -pair[1], pair[0]),
+    )
+    for severity, _weight in order[: total - sum(targets.values())]:
+        targets[severity] += 1
+
+    # Repair: every band carries at least one, taken from whichever band has most.
+    for severity in SEVERITIES:
+        if targets[severity] == 0:
+            donor = max(SEVERITIES, key=lambda s: (targets[s], -SEVERITY_RATIO[SEVERITIES.index(s)]))
+            targets[donor] -= 1
+            targets[severity] += 1
+    return targets

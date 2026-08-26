@@ -25,7 +25,10 @@ resolution is forced to be noticed, not quietly tolerated forever.
 """
 
 import ast
+import importlib
 import json
+import os
+import sys
 import re
 import shutil
 import subprocess
@@ -40,10 +43,12 @@ from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
 from synthvdr.qa.structural import SLOT_REF, parse_gaps_allowlist
 from synthvdr.roomconf import load_room_conf
 from synthvdr.schema import (
+    AUTHOR_OWNED_FINDING_FIELDS,
     Distractor,
     Finding,
     FindingSet,
     allocate_new_finding_ids,
+    consolidate_wave_incoming,
     load_distractors,
     load_findings,
     render_findings_md,
@@ -442,6 +447,17 @@ def test_plugin_manifest_version_agrees_with_package_version():
     """
     manifest = _plugin_manifest()
     assert manifest["version"] == synthvdr.__version__
+
+    # pyproject.toml carries it a third time and is the one pip actually reads, so a
+    # release that bumps the other two ships a package still claiming the old version.
+    # Review 2026-08-26, R1: the published build being behind master is what made the
+    # version numbers worth checking against each other in the first place.
+    declared = re.search(
+        r'(?m)^version = "([^"]+)"', _read(ROOT / "pyproject.toml")
+    ).group(1)
+    assert declared == synthvdr.__version__, (
+        f"pyproject.toml says {declared}, synthvdr.__version__ says {synthvdr.__version__}"
+    )
 
 
 def test_scope_skill_blocks_on_unresolved_name_collisions():
@@ -878,30 +894,60 @@ def test_auditor_is_given_the_finding_substance_but_never_its_location():
         assert withheld in auditor_body, f"the auditor's doc no longer mentions {withheld!r}"
 
 
-def test_incoming_example_in_build_skill_validates_as_findings(tmp_path):
-    """The `_key/incoming/<label>.yaml` example `/vdr-build` tells a vdr-author subagent to
-    copy — the answer-key refinement it writes alongside its documents — must itself load and
-    validate through the real `synthvdr.schema` functions, the same discipline Task 17's fix
-    round established for findings.yaml/distractors.yaml in `/vdr-findings`. It is exactly the
-    `findings.yaml` shape (a subset of rows, upserted into the master registry), so it is
-    checked the same way: read straight out of the shipped skill file, never a copy kept here.
-    """
+def _build_skill_incoming_findings_rows():
     path = ROOT / "skills" / "vdr-build" / "SKILL.md"
     incoming_yaml = find_example_by_top_level_key(yaml_examples(path), "findings", path)
+    rows = yaml.safe_load(incoming_yaml)["findings"]
+    assert rows, "the incoming.yaml example in the skill has no findings"
+    return rows
 
-    incoming_path = tmp_path / "incoming-example.yaml"
-    incoming_path.write_text(incoming_yaml, encoding="utf-8")
 
-    findings = load_findings(incoming_path)
-    assert findings.findings, "the incoming.yaml example in the skill has no findings"
+def test_incoming_findings_example_carries_only_the_authors_own_fields():
+    """Review 2026-08-26, B1. This example USED to show a full `findings.yaml` row, and that
+    is what invited the corruption: an author copying it echoed `workstream`, `title` and
+    `corroboration` back, and `consolidate_wave_incoming`'s blanket `dict.update` wrote
+    whatever it echoed straight into the signed-off registry. Consolidation is narrow now, so
+    the example a subagent is told to copy must be narrow too — an example that raises when
+    consolidated is worse than no example at all.
+    """
+    for row in _build_skill_incoming_findings_rows():
+        assert set(row) == {"id", *AUTHOR_OWNED_FINDING_FIELDS}, (
+            f"incoming `findings:` row {row['id']!r} carries {sorted(set(row))} — the author "
+            f"owns 'id' plus {list(AUTHOR_OWNED_FINDING_FIELDS)} and nothing else"
+        )
 
-    errors = validate(findings, [])
-    assert errors == [], f"the skill's own incoming.yaml example fails validate(): {errors}"
 
-    # SEMANTIC validation, fix round 1 — see assert_evidence_paths_resolve_under_blind_tree's
-    # docstring: this is the check that would have caught vdr-build's data-room/-prefixed
-    # source/corroboration paths, which validate() above cannot see.
-    assert_evidence_paths_resolve_under_blind_tree(tmp_path, findings)
+def test_incoming_findings_example_consolidates_into_a_registry():
+    """The shape check above is necessary but not sufficient: it would still pass if the rows
+    were narrow and the function rejected them anyway. Drive the real consolidation the skill
+    names, against a registry holding the example's own ids.
+    """
+    rows = _build_skill_incoming_findings_rows()
+    registry = {
+        "schema_version": 1,
+        "room": "Project Testbed",
+        "findings": [
+            {
+                "id": row["id"],
+                "title": f"Registry title for {row['id']}",
+                "severity": "medium",
+                "workstream": "financial",
+                "multi_document": False,
+                "source": "02_financial/2.1_statutory-accounts/2.1.3_accounts-03.md",
+                "substance": "Registry substance, superseded by the author's refinement.",
+            }
+            for row in rows
+        ],
+    }
+
+    result = consolidate_wave_incoming(registry, {"wave1-batch-a": {"findings": rows}}, {}, {})
+
+    consolidated = {row["id"]: row for row in result.findings_doc["findings"]}
+    for row in rows:
+        assert consolidated[row["id"]]["substance"] == row["substance"]
+        assert consolidated[row["id"]]["title"] == f"Registry title for {row['id']}", (
+            "consolidating the skill's own example overwrote a Gate B field"
+        )
 
 
 NEW_FINDING_ID = re.compile(r"\A(?P<label>.+)-NEW-\d+\Z")
@@ -1318,3 +1364,286 @@ def test_the_generated_name_check_record_states_the_register_limits():
     ).lower()
     assert "former name" in body or "previous name" in body
     assert "trade mark" in body or "trademark" in body
+
+
+# ---------------------------------------------------------------------------
+# Review 2026-08-26, B2. The ordering rule drifted from the code it described:
+# the skill said "sort by tier" and glossed tier `A` as carrying a finding,
+# while `build_slot_manifest` assigned tier positionally at /vdr-scope time,
+# before any finding existed. Prose alone could drift because nothing checked
+# it. The rule is a function now, and these check the skill still calls it.
+# ---------------------------------------------------------------------------
+
+
+def test_build_skill_orders_waves_with_authoring_order_not_by_tier():
+    body = _read(ROOT / "skills" / "vdr-build" / "SKILL.md")
+    assert "authoring_order" in body, (
+        "the build skill must name the function that owns the ordering rule"
+    )
+    assert "sort the slot list by tier" not in body, (
+        "the tier-sort rule is the B2 defect — it must not come back as prose"
+    )
+
+
+def test_every_skill_import_resolves_to_something_real():
+    """A skill's fenced example is the only interface most of this package has, and
+    `ast.parse` above proves only that it is syntactically Python. A renamed or deleted
+    function leaves the fence parsing perfectly and failing the moment anyone runs it.
+    """
+    for name in SKILL_NAMES:
+        path = ROOT / "skills" / name / "SKILL.md"
+        blocks = python_examples(path) + [
+            snippet
+            for block in bash_examples(path)
+            for snippet in embedded_python_snippets(block)
+        ]
+        for block in blocks:
+            for node in ast.walk(ast.parse(block)):
+                if not isinstance(node, ast.ImportFrom) or not node.module:
+                    continue
+                if not node.module.startswith("synthvdr"):
+                    continue
+                module = importlib.import_module(node.module)
+                for alias in node.names:
+                    assert hasattr(module, alias.name), (
+                        f"{path}: an example imports {alias.name!r} from {node.module}, "
+                        "which does not exist"
+                    )
+
+
+# ---------------------------------------------------------------------------
+# Review 2026-08-26, S1. /vdr-scope invented the deal in step 2 and generated the
+# slot manifest in step 4, so the fiction was written with no knowledge of which
+# sections the room would contain or how substantial a document each demanded.
+# The domain pack allocates a slot to all 20 workstreams even at XS, several with
+# a 2,500-word floor, so a deal invented without them had to be retro-fitted with
+# bank debt, a pension arrangement and a minority stake AFTER the user signed the
+# fact sheet off at Gate A — the exact change Gate A exists to prevent.
+# ---------------------------------------------------------------------------
+
+
+def _scope_body():
+    return _read(ROOT / "skills" / "vdr-scope" / "SKILL.md")
+
+
+def test_vdr_scope_generates_the_structure_before_inventing_the_deal():
+    body = _scope_body()
+    structure = body.index("## 2. Generate the structure")
+    fact_sheet = body.index("## 3. Invent the deal and write the fact sheet")
+    name_check = body.index("## 4. Check every invented name")
+    assert structure < fact_sheet < name_check, (
+        "the slot manifest must be generated before the fact sheet is written, or the "
+        "deal is invented with no knowledge of what the room will demand of it"
+    )
+
+
+def test_vdr_scope_names_every_section_that_demands_a_longform_document():
+    """The skill tells the author which sections need a substantial document before they
+    invent anything, and names them literally. That list is derived from the domain pack,
+    so it goes stale the moment the pack changes — which is how the B2 defect happened one
+    file over. Recompute it and check the prose still matches.
+    """
+    from synthvdr.qa.depth import floor_for
+    from synthvdr.slots import SIZE_PRESETS, build_slot_manifest
+
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    longform = pack.archetypes["longform"].floor
+    heaviest = {}
+    for slot in build_slot_manifest(pack, SIZE_PRESETS["XS"]):
+        floor = floor_for(slot.slot_id, Path(slot.rel_path).name, slot.tier, pack)
+        heaviest[slot.section_dir] = max(heaviest.get(slot.section_dir, 0), floor)
+
+    body = _scope_body()
+    demanding = sorted(d for d, f in heaviest.items() if f == longform)
+    assert demanding, "this test is meaningless if no XS section carries the longform floor"
+    for section_dir in demanding:
+        assert section_dir in body, (
+            f"/vdr-scope does not warn that {section_dir} demands a {longform}-word "
+            "document at XS — the author will invent a deal that cannot fill it"
+        )
+    assert str(longform) in body or f"{longform:,}" in body, (
+        "the skill quotes the longform floor in prose; it has drifted from the pack"
+    )
+
+
+def test_vdr_scope_warns_that_every_workstream_gets_a_slot_even_at_xs():
+    # The other half of the same trap: a section with a low floor still needs the
+    # fiction to give it something to be about.
+    from synthvdr.slots import SIZE_PRESETS, build_slot_manifest
+
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    slots = build_slot_manifest(pack, SIZE_PRESETS["XS"])
+    assert {s.section_dir for s in slots} == set(pack.section_dirs()), (
+        "the premise of the warning below is that XS still allocates to every workstream"
+    )
+    assert "every workstream at every size" in _scope_body()
+
+
+def test_every_step_cross_reference_in_every_skill_points_at_a_real_step():
+    """A skill that renumbers its own steps and misses a back-reference sends the reader to
+    a step that says something else, which is worse than no reference at all. Cheap to
+    check, and it makes reordering a skill (see /vdr-scope, review item S1) a safe edit
+    rather than a careful one.
+    """
+    step_heading = re.compile(r"(?m)^#{2,3} (\d+)\. ")
+    single = re.compile(r"\bSteps? (\d+)\b")
+    span = re.compile(r"\bSteps (\d+)[–-](\d+)\b")
+
+    for name in SKILL_NAMES:
+        path = ROOT / "skills" / name / "SKILL.md"
+        body = _read(path)
+        declared = {int(n) for n in step_heading.findall(body)}
+        if not declared:
+            continue
+        referenced = {int(n) for n in single.findall(body)}
+        for first, last in span.findall(body):
+            referenced |= set(range(int(first), int(last) + 1))
+        missing = sorted(referenced - declared)
+        assert not missing, (
+            f"{path}: refers to step(s) {missing} that no heading declares "
+            f"(declared: {sorted(declared)})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Review 2026-08-26, S2/S3/S4. Three instructions in /vdr-build that are only
+# correct because of a fact stated somewhere else — the author agent's tool
+# grant, gate 15's tri-state, and room.conf's key names. Each would go quietly
+# wrong if that other fact changed, so each is pinned against it here rather
+# than against a copy of it.
+# ---------------------------------------------------------------------------
+
+
+def test_vdr_author_neither_can_measure_words_nor_is_asked_to():
+    """S2. The agent has no Bash, so it cannot run `wordcount()` and every depth figure it
+    could report is a visual estimate. If it is ever granted Bash, the instruction below
+    stops being true and this test should fail so someone revisits it.
+    """
+    body = _read(ROOT / "agents" / "vdr-author.md")
+    tools = re.search(r"(?m)^tools:\s*(.+)$", body).group(1)
+    assert "Bash" not in tools, (
+        "vdr-author has been granted Bash — it can measure now, so revisit both its "
+        "'Do not report word counts' instruction and /vdr-build's Step 3"
+    )
+    assert "Do not report word counts" in body
+    assert "depth_problems" in body, (
+        "the agent should name the function that measures for it, so the instruction is "
+        "a division of labour rather than a bare prohibition"
+    )
+
+
+def test_build_skill_excepts_every_gate_that_cannot_pass_before_the_audit():
+    """S3. Gate 15 fails on a finding whose `discoverable_from_blind` is None, and nothing
+    sets that until vdr-auditor runs — which /vdr-build dispatches only after the last wave.
+    So every earlier wave necessarily fails it, and the skill must say so; it used to name
+    only gates 2, 7 and 8 and then assert that a FAIL on anything else was a real defect.
+    """
+    from synthvdr.schema import Finding
+
+    unaudited = Finding(
+        id="ENV-1", title="t", severity="high", workstream="environmental",
+        multi_document=False, source="a.md", location="L", substance="S",
+    )
+    assert unaudited.discoverable_from_blind is None, (
+        "the premise of gate 15's mid-build exception is that a fresh finding is unaudited"
+    )
+
+    body = _read(ROOT / "skills" / "vdr-build" / "SKILL.md")
+    excepted = body[body.index("### 7. Run the gates") : body.index("### 8.")]
+    assert "Gate 15" in excepted, "gate 15 is not in the named mid-build exception list"
+    assert "three of the seventeen gates" in excepted, (
+        "the exception list says how many gates it names; that count has drifted"
+    )
+
+
+def test_build_skill_names_real_room_conf_keys_for_the_author_invariants():
+    """S4. The dispatch step tells you to hand every author four room-level invariants by
+    value, naming the room.conf keys they come from. A renamed key would leave the
+    instruction pointing at nothing.
+    """
+    from synthvdr.roomconf import REQUIRED_KEYS
+
+    body = _read(ROOT / "skills" / "vdr-build" / "SKILL.md")
+    # Scoped to the dispatch step: these keys appear elsewhere in the skill for other
+    # reasons, so a whole-file search would pass even with the invariants paragraph gone.
+    dispatch = body[body.index("### 2. Dispatch the authors") : body.index("### 3.")]
+    for key in ("FLAG_STRING_1", "FLAG_STRING_2", "FINDING_PREFIXES"):
+        assert key in REQUIRED_KEYS, f"{key} is no longer a required room.conf key"
+        assert key in dispatch, f"the dispatch step no longer hands the author {key}"
+    assert "_key/gaps.yaml" in dispatch and "## Invented names" in dispatch, (
+        "the other two invariants — the gap allowlist and the closed name list — are gone"
+    )
+
+
+def test_findings_skill_quotes_the_severity_split_its_own_function_returns():
+    """Review 2026-08-26, S5. The skill quotes two worked severity splits in prose. They come
+    from `severity_targets`, so they can go stale the moment its tie-breaks change — the same
+    drift that made the old "1 : 3 : 4 : 3" line unusable at XS in the first place.
+    """
+    from synthvdr.schema import severity_targets
+    from synthvdr.slots import SIZE_PRESETS
+
+    body = _read(ROOT / "skills" / "vdr-findings" / "SKILL.md")
+
+    xs = severity_targets(SIZE_PRESETS["XS"].findings)
+    assert len(set(xs.values())) == 1 and set(xs.values()) == {1}, (
+        "the skill says XS comes back one per band"
+    )
+    assert "one per band" in body
+
+    s_split = severity_targets(SIZE_PRESETS["S"].findings)
+    quoted = " / ".join(str(s_split[k]) for k in ("critical", "high", "medium", "low"))
+    assert quoted in body, (
+        f"the skill quotes an S split that severity_targets no longer returns ({quoted})"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Review 2026-08-26, R1. `tools/check.sh` is copied into each room and execs a
+# bare `python3 -m synthvdr.qa`. A room is a directory of its own, nowhere near
+# whatever environment synthvdr was installed into, so on any machine where the
+# system python is not that environment the harness died on a raw
+# ModuleNotFoundError traceback — the first thing a new user meets, and it names
+# neither the cause nor the fix.
+# ---------------------------------------------------------------------------
+
+
+def _run_check_sh(env_python, tmp_path):
+    return subprocess.run(
+        ["bash", str(ROOT / "tools" / "check.sh"), str(tmp_path)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "SYNTHVDR_PYTHON": env_python},
+    )
+
+
+def test_check_sh_explains_itself_when_synthvdr_is_not_importable(tmp_path):
+    if not shutil.which("bash"):
+        pytest.skip("bash not available in this environment")
+    stub = tmp_path / "python-without-synthvdr"
+    stub.write_text('#!/usr/bin/env bash\nexit 1\n')
+    stub.chmod(0o755)
+
+    result = _run_check_sh(str(stub), tmp_path)
+
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "synthvdr" in combined and "pip install" in combined, (
+        f"check.sh gave no actionable message: {combined!r}"
+    )
+    assert "SYNTHVDR_PYTHON" in combined, (
+        "the message must name the override, or a user with a venv has no way through"
+    )
+    assert "Traceback" not in combined, "the raw traceback is what this replaces"
+
+
+def test_check_sh_uses_the_interpreter_it_is_told_to(tmp_path):
+    if not shutil.which("bash"):
+        pytest.skip("bash not available in this environment")
+    result = _run_check_sh(sys.executable, tmp_path)
+    # tmp_path is not a room, so the run fails on a missing room.conf — but it must
+    # fail INSIDE synthvdr.qa, having imported it, not on the import itself.
+    combined = result.stdout + result.stderr
+    assert "pip install" not in combined, (
+        f"check.sh did not use SYNTHVDR_PYTHON: {combined!r}"
+    )
