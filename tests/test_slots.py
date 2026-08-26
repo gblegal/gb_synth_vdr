@@ -1,4 +1,5 @@
 import pytest
+from collections import Counter
 
 from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
 from synthvdr.slots import (
@@ -183,3 +184,58 @@ def test_read_slot_manifest_round_trips_every_field_authoring_order_needs(tmp_pa
     path = tmp_path / "anchors.csv"
     write_anchors_csv(slots, path)
     assert read_slot_manifest(path) == slots
+
+
+XS_TWELVE = [
+    "01_corporate",
+    "02_financial",
+    "03_tax",
+    "05_commercial",
+    "06_intellectual-property",
+    "07_information-technology",
+    "09_employment",
+    "14_data-protection",
+    "15_litigation",
+    "16_operations-quality",
+    "18_transaction",
+    "19_esg",
+]
+
+
+def test_a_subset_still_builds_the_full_document_budget():
+    # The bug this whole feature turns on: filtering sections without
+    # renormalising weights builds 35 documents for a room whose room.conf
+    # declares 40, because _allocate's largest-remainder pass runs out of
+    # sections to hand the shortfall to.
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    slots = build_slot_manifest(pack.subset(XS_TWELVE), SIZE_PRESETS["XS"])
+    assert len(slots) == SIZE_PRESETS["XS"].docs == 40
+
+
+def test_a_subset_spends_the_budget_on_fewer_deeper_sections():
+    # The point of the feature. Over twenty sections XS gives every section
+    # exactly two documents — one per subsection, which is why ordinary sibling
+    # cross-references had nothing to resolve to.
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    full = build_slot_manifest(pack, SIZE_PRESETS["XS"])
+    sub = build_slot_manifest(pack.subset(XS_TWELVE), SIZE_PRESETS["XS"])
+
+    assert max(Counter(s.section_dir for s in full).values()) == 2
+    assert max(Counter(s.section_dir for s in sub).values()) > 2
+    assert {s.section_dir for s in sub} == set(XS_TWELVE)
+
+
+def test_a_subset_manifest_is_deterministic():
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    first = build_slot_manifest(pack.subset(XS_TWELVE), SIZE_PRESETS["XS"])
+    second = build_slot_manifest(pack.subset(XS_TWELVE), SIZE_PRESETS["XS"])
+    assert [s.rel_path for s in first] == [s.rel_path for s in second]
+
+
+def test_the_full_pack_is_unaffected_by_the_subset_machinery():
+    # Existing rooms declare all twenty and never call subset(). This is the
+    # regression guard for them.
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    slots = build_slot_manifest(pack, SIZE_PRESETS["XS"])
+    assert len(slots) == 40
+    assert len({s.section_dir for s in slots}) == 20
