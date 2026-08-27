@@ -61,7 +61,7 @@ never ran."
 | 11 | Subset reconciliation | `subset/`, if built, reproduces every finding with its full evidence chain |
 | 12 | Answer-key containment | Nothing under `_key/` leaks into the blind tree |
 | 13 | Fact-sheet reconciliation | Canonical figures in `_key/fact-sheet.md` appear consistently, with no superseded value surviving |
-| 14 | Unchecked names | Every entity-shaped token in the room is in the fact-sheet cast list or already name-checked |
+| 14 | Unchecked names | Every entity-shaped token in the room is on the fact-sheet cast list, and no recorded verdict is a collision |
 | 15 | Discoverability audit | Every registered finding has a recorded `discoverable_from_blind` verdict |
 | 16 | Render parity | DOCX/PDF renders, if built, mirror the blind tree's document set by filename, in both directions (never checks rendered content) |
 | 17 | Answer-key validation | `_key/findings.yaml`/`_key/distractors.yaml` pass `synthvdr.schema.validate()`'s own internal-consistency checks |
@@ -85,9 +85,19 @@ never ran."
   `synthvdr.subset.build_subset` (see `/vdr-package`) before re-running the gate.
 - **Gate 13** — a canonical figure appears nowhere, or a superseded one survived a
   correction. Fix the room, not the fact sheet.
-- **Gate 14** — an entity-shaped name has crept into the room since `/vdr-scope`'s
-  collision check ran. Register it in the fact sheet's `## Cast` or `## Invented names`
-  table and name-check it, or remove it.
+- **Gate 14** — one of two things, and the detail says which. Either an entity-shaped name
+  has crept into the room since `/vdr-scope`'s collision check ran — register it in the fact
+  sheet's `## Cast` or `## Invented names` table and name-check it, or remove it. Or
+  `_key/name-check.md` records a **collision**: a name the check positively found to belong
+  to a real company. That is `/vdr-scope`'s Gate A hard block, and there is no sign-off that
+  waives it — invent a replacement name, re-check it, and rebuild every document that used
+  the old one. This is reported however far the build has got, including before any document
+  exists, because that is when replacing the name is cheapest.
+- **Gate 14 WARN** — a name is recorded `ambiguous`, `unchecked` (what `/vdr-scope` writes
+  when WebSearch was unavailable), or with a verdict that is neither of those nor `clear`.
+  None of these blocks automatically and none affects the exit code, but Gate A requires the
+  user's explicit acknowledgement of each, so the warning exists to stop a room quietly
+  shipping with one forgotten. Resolve the name or confirm with the user that they accept it.
 - **Gate 15** — a finding is not yet audited. Run the `vdr-auditor` subagent (see
   `/vdr-build`'s "After the last wave" section) and write its verdict into
   `_key/findings.yaml`.

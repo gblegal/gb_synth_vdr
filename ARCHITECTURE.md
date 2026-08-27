@@ -217,7 +217,7 @@ structurally, with no stoplist and no bound.
 | 11 | Subset reconciliation | `subset/`, if built, reproduces every finding with its full evidence chain |
 | 12 | Answer-key containment | Nothing under `_key/` leaks into the blind tree |
 | 13 | Fact-sheet reconciliation | Canonical figures in `_key/fact-sheet.md` appear consistently, with no superseded value surviving |
-| 14 | Unchecked names | Every entity-shaped token in the room is in the fact-sheet cast list or already name-checked |
+| 14 | Unchecked names | Every entity-shaped token in the room is on the fact-sheet cast list, and no recorded verdict is a collision |
 | 15 | Discoverability audit | Every registered finding has a recorded `discoverable_from_blind` verdict |
 | 16 | Render parity | DOCX/PDF renders, if built, mirror the blind tree's document set by filename, in both directions |
 | 17 | Answer-key validation | `_key/findings.yaml` / `_key/distractors.yaml` pass `synthvdr.schema.validate()`'s internal-consistency checks |

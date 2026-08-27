@@ -14,8 +14,9 @@ import re
 from pathlib import Path
 from typing import List, Set, Tuple
 
+from ..namecheck import load_name_check, unresolved
 from ..names import cast_list, entity_tokens, malformed_cast_entries, mask_cast_names
-from .runner import fail, ok, skip, truncated
+from .runner import fail, ok, skip, truncated, warn
 
 # Gate 4. "registry" is deliberately absent: Land Registry is legitimate in-room.
 ANSWER_KEY_NOUNS = (
@@ -197,10 +198,64 @@ def gate_14_unchecked_names(ctx):
     A malformed cast list is rejected before any file is read: a single-word
     or bare-suffix entity row would blanket-mask a whole suffix family, and
     a gate that silently cannot fail is worse than one that reports the row.
+
+    THE RECORDED VERDICTS ARE READ, NOT JUST THE NAMES. Until this gate did
+    that, nothing in `synthvdr/` ever looked at name-check.md's Verdict
+    column: `cast_list` takes columns 1 and 2 (Name, Kind) and stops, so a
+    name the check had positively found to COLLIDE with a real company was
+    masked out exactly like a cleared one and the room shipped. /vdr-scope
+    calls a collision "a hard block ... there is no sign-off that waives a
+    collision", and `namecheck.unresolved()` was written to find them — but
+    it had no caller anywhere outside the tests, which left Gate A's hardest
+    rule enforced by prose alone, through `/vdr-qa --strict` and
+    `/vdr-package --strict` alike. Same shape as gate 17's own history: a
+    real check, written and tested, wired to nothing.
+
+    The two outcomes are deliberately different, and they track what
+    /vdr-scope actually says rather than flattening both into one verdict:
+
+      * `collision` FAILS. It is the hard block, and there is no
+        acknowledgement that waives it — the name must be regenerated.
+      * any OTHER non-clear verdict (`ambiguous`, the `unchecked` that
+        /vdr-scope writes when WebSearch was unavailable, or a value that is
+        simply a typo) WARNS. Gate A does not block automatically on these,
+        but requires the user's explicit acknowledgement, so the gate's job
+        is to make sure the room can never quietly forget one — WARN is
+        counted in the runner's summary without failing a build over a risk
+        the user is entitled to accept. Anything not spelled `clear` lands
+        here, which is the safe direction for a typo.
+
+    The verdict read runs BEFORE the blind-tree guard below, deliberately: a
+    recorded collision is a defect in the answer key's own record, true
+    whether or not a single document has been authored yet, and gating it on
+    the corpus existing would hide it for the whole of /vdr-findings.
     """
     name_check = ctx.key_root / "name-check.md"
     if not name_check.is_file():
         return skip("14", "unchecked names", "_key/name-check.md absent — run /vdr-scope name check")
+
+    outstanding = unresolved(load_name_check(name_check))
+    collisions = [v for v in outstanding if v.verdict == "collision"]
+    if collisions:
+        return fail(
+            "14",
+            "unchecked names",
+            "_key/name-check.md records a collision for "
+            + truncated([repr(v.text) for v in collisions], sep=", ")
+            + " — /vdr-scope Gate A treats a collision as a hard block with no sign-off that"
+            " waives it: invent a replacement name, re-check it, and rebuild",
+        )
+    # Held rather than returned: an unchecked name in the corpus is the more
+    # fundamental problem and gets to speak first if both are true. Appended
+    # to whatever this gate concludes below so it can never be dropped.
+    unresolved_note = ""
+    if outstanding:
+        named = ", ".join(f"{v.text!r} ({v.verdict})" for v in outstanding)
+        unresolved_note = (
+            f"; {len(outstanding)} name(s) not cleared: {named} — not an automatic block,"
+            " but Gate A requires the user's explicit acknowledgement of each"
+        )
+
     # Entity rows only, stated explicitly at the call site because it is
     # load-bearing rather than a default worth inheriting silently: a person
     # row would delete its own words out of the document text and blind the
@@ -214,11 +269,12 @@ def gate_14_unchecked_names(ctx):
             "malformed cast row(s) in _key/name-check.md: "
             + truncated([repr(name) for name in malformed], sep=", ")
             + " — a single-word or bare-suffix entity row masks every name ending in it;"
-            " regenerate the name check from the fact sheet",
+            " regenerate the name check from the fact sheet"
+            + unresolved_note,
         )
     files = ctx.blind_files()
     if not files:
-        return skip("14", "unchecked names", f"{ctx.blind_root} absent or empty")
+        return skip("14", "unchecked names", f"{ctx.blind_root} absent or empty" + unresolved_note)
     unchecked: Set[str] = set()
     replaced = 0
     for path in files:
@@ -232,10 +288,14 @@ def gate_14_unchecked_names(ctx):
         unchecked |= entity_tokens(mask_cast_names(path.name, cast))
     if unchecked:
         detail = truncated(sorted(unchecked), sep=", ") + " — not on the cast list; check or remove"
-        return fail("14", "unchecked names", detail + _fallback_note(replaced))
-    return ok(
-        "14",
-        "unchecked names",
+        return fail("14", "unchecked names", detail + _fallback_note(replaced) + unresolved_note)
+
+    cleared = (
         f"{len(cast)} entity cast name{'' if len(cast) == 1 else 's'}, none unchecked"
-        + _fallback_note(replaced),
+        + _fallback_note(replaced)
     )
+    # WARN rather than PASS, so a room carrying an ambiguous or never-searched
+    # name cannot read as a clean sweep in the one line most people skim.
+    if outstanding:
+        return warn("14", "unchecked names", cleared + unresolved_note)
+    return ok("14", "unchecked names", cleared)

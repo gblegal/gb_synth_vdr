@@ -617,3 +617,87 @@ def test_gate_14_does_not_report_a_separator_row_as_malformed(room):
     blind_doc(room).write_text("# Articles\n\nA deed with Ashfell Holdings Limited.\n")
     result = gate_14_unchecked_names(ctx_for(room))
     assert result.status == "PASS", result.detail
+
+
+# --- gate 14 reads the Verdict column, not only Name and Kind -------------
+#
+# Before these, nothing in synthvdr/ ever looked at a recorded verdict:
+# cast_list takes columns 1 and 2 and stops, so a name the check had found to
+# COLLIDE with a real company was masked out exactly like a cleared one, and
+# passed /vdr-qa --strict and /vdr-package --strict. namecheck.unresolved()
+# existed to catch precisely that and had no caller outside its own tests.
+
+
+def _record(room, *rows):
+    (room / "_key" / "name-check.md").write_text(
+        "| Name | Kind | Verdict | Checked | Note |\n|---|---|---|---|---|\n"
+        + "".join(f"| {name} | entity | {verdict} | 2026-08-24 | {note} |\n"
+                 for name, verdict, note in rows)
+    )
+
+
+def test_gate_14_fails_on_a_recorded_collision(room):
+    """/vdr-scope: "Do not close Gate A while any name's verdict is
+    `collision` — that is a hard block ... there is no sign-off that waives
+    a collision." A room built past that must not then pass QA."""
+    _record(room, ("Ashfell Holdings Limited", "collision", "Real company, same sector."))
+    blind_doc(room).write_text("# Articles\n\nA deed with Ashfell Holdings Limited.\n")
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "Ashfell Holdings Limited" in result.detail
+    assert "collision" in result.detail
+
+
+def test_gate_14_reports_a_collision_even_with_no_documents_yet(room):
+    """The verdict read runs BEFORE the blind-tree guard. A collision is a
+    defect in the record itself, true from the moment /vdr-scope writes it —
+    gating it on the corpus existing would hide it for all of /vdr-findings,
+    which is the whole window in which regenerating the name is cheap."""
+    _record(room, ("Ashfell Holdings Limited", "collision", "Real company."))
+    blind_doc(room).unlink()
+    assert gate_14_unchecked_names(ctx_for(room)).status == "FAIL"
+
+
+@pytest.mark.parametrize("verdict", ["ambiguous", "unchecked", "clera"])
+def test_gate_14_warns_but_does_not_fail_on_a_non_clear_non_collision_verdict(room, verdict):
+    """Gate A does not block automatically on these — it requires the user's
+    explicit acknowledgement — so the gate surfaces them without failing a
+    build over a risk the user is entitled to accept. `unchecked` is what
+    /vdr-scope writes when WebSearch was unavailable; 'clera' stands for any
+    typo, which must land here rather than be read as cleared."""
+    _record(room, ("Ashfell Holdings Limited", verdict, "See note."))
+    blind_doc(room).write_text("# Articles\n\nA deed with Ashfell Holdings Limited.\n")
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "WARN", result.detail
+    assert verdict in result.detail and "Ashfell Holdings Limited" in result.detail
+
+
+def test_gate_14_prefers_the_collision_when_both_kinds_are_outstanding(room):
+    _record(
+        room,
+        ("Ashfell Holdings Limited", "collision", "Real company."),
+        ("Kessler Werke GmbH", "ambiguous", "Unclear."),
+    )
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "Ashfell Holdings Limited" in result.detail
+
+
+def test_gate_14_still_reports_an_unchecked_name_alongside_an_outstanding_verdict(room):
+    """An unchecked name in the corpus is the more fundamental problem and
+    speaks first, but the outstanding verdict must not be dropped to make
+    room for it — a reader fixing one should see both."""
+    _record(room, ("Ashfell Holdings Limited", "ambiguous", "Unclear."))
+    blind_doc(room).write_text("# Articles\n\nA deed with Northgate Trading Limited.\n")
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "Northgate Trading Limited" in result.detail
+    assert "ambiguous" in result.detail
+
+
+def test_gate_14_passes_when_every_verdict_is_clear(room):
+    """The control: the verdict read must not turn an ordinary clean room
+    into a warning, or the WARN above carries no information."""
+    _record(room, ("Ashfell Holdings Limited", "clear", "No collision found."))
+    blind_doc(room).write_text("# Articles\n\nA deed with Ashfell Holdings Limited.\n")
+    assert gate_14_unchecked_names(ctx_for(room)).status == "PASS"
