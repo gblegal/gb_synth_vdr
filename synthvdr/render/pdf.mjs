@@ -58,6 +58,26 @@ function parseArgs(argv) {
 // synthvdr.render.docx.render_tree_docx's own minimal handling, so the
 // DOCX and PDF renders present the same structure. No external markdown
 // dependency: puppeteer is this toolchain's one optional dependency.
+//
+// ATX_HEADING is a character-for-character port of
+// `synthvdr.render.docx._ATX_HEADING`, and the separator MUST stay `[ \t]+`
+// — read that constant's own comment before touching this one. It records
+// the separator going wrong twice on the Python side (`startswith("#")`
+// too loose one way, `\s` too loose another) and ends: "name the exact
+// separator set the spec names, never the one that merely reads
+// naturally."
+//
+// This port shipped with `\s*`, which is BOTH of the rejected spellings at
+// once — optional, so `#MeToo` and `#1 supplier` became headings that the
+// DOCX render correctly left as paragraphs, and `#1 supplier` additionally
+// lost its leading "#" to the capture; and Unicode-wide, so `# Title`
+// became a heading on an NBSP that copy-pasted prose carries constantly.
+// Gate 16 checks filename parity only and never opens a rendered file, so
+// nothing in the harness would have caught the divergence;
+// test_pdf_mjs_headings_match_python_exactly now runs this regex against
+// the Python one over a shared corpus and is what does.
+const ATX_HEADING = /^(#{1,6})[ \t]+(.*)$/;
+
 function mdToHtml(markdown) {
   const escape = (s) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -65,10 +85,13 @@ function mdToHtml(markdown) {
   const body = [];
   for (const raw of lines) {
     const line = raw.trimEnd();
-    const heading = /^(#{1,6})\s*(.*)$/.exec(line);
+    const heading = ATX_HEADING.exec(line);
     if (heading) {
       const level = Math.min(heading[1].length, 4);
-      body.push(`<h${level}>${escape(heading[2].trim())}</h${level}>`);
+      // group(2) verbatim, never re-trimmed: `[ \t]+` is greedy and has
+      // already consumed the separator, so anything left is the title —
+      // including a title that legitimately begins with "#".
+      body.push(`<h${level}>${escape(heading[2])}</h${level}>`);
     } else if (line.trim()) {
       body.push(`<p>${escape(line.trim())}</p>`);
     }
