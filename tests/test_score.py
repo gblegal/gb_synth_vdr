@@ -918,3 +918,59 @@ def test_render_scorecard_omits_distractor_citation_caveat_when_none_occurred():
     card = score(out, findings(), distractors())
     text = render_scorecard(card, out, findings())
     assert "Distractor citations inside otherwise-matched reports:** 0" in text
+
+
+# --- every distractor a report cites counts, not just the first ------------
+#
+# The scan over a report's citations used to short-circuit on `next(...)`, so
+# a report naming two traps was scored as having fallen for one: the second id
+# never reached the list, let alone the de-duplication at the end. False
+# alarms is one of the four headline metrics and measuring them is a stated
+# reason the distractors exist, so the undercount was silent and material.
+
+DX_DOC_2 = "05_commercial/5.3_disputes/5.3.1_letter-before-action.md"
+
+
+def two_distractors():
+    return [
+        Distractor(id="DX-1", title="Remediated notice", location=DX_DOC, resolution="x.md"),
+        Distractor(id="DX-2", title="Settled dispute", location=DX_DOC_2, resolution="y.md"),
+    ]
+
+
+def test_one_report_citing_two_distractors_is_two_false_alarms():
+    out = output(ToolFinding("Sweeping concern", "high", [DX_DOC, DX_DOC_2], "both look bad"))
+    card = score(out, findings(), two_distractors())
+    assert card.false_alarms == ["DX-1", "DX-2"]
+
+
+def test_one_matched_report_citing_two_distractors_records_both_citations():
+    """The bundled case: the report also cites real evidence, so it is not a
+    false alarm — but both traps still partly worked and both must show."""
+    out = output(ToolFinding("Land issue", "critical", [SRC, DX_DOC, DX_DOC_2], "x"))
+    card = score(out, findings(), two_distractors())
+    assert card.false_alarms == []
+    assert card.distractor_citations == ["DX-1", "DX-2"]
+
+
+def test_the_same_distractor_cited_by_two_reports_is_still_one_false_alarm():
+    """Counting every citation must not turn into counting duplicates: the
+    de-duplication that made the old short-circuit look harmless is still the
+    thing that keeps this at one."""
+    out = output(
+        ToolFinding("Notice A", "high", [DX_DOC], "looks bad"),
+        ToolFinding("Notice again", "high", [DX_DOC], "still looks bad"),
+    )
+    card = score(out, findings(), two_distractors())
+    assert card.false_alarms == ["DX-1"]
+
+
+def test_two_distractor_false_alarms_are_ordered_independently_of_citation_order():
+    """Deterministic across runs and across PYTHONHASHSEED: the report's own
+    citation order must not leak into the scorecard through set iteration."""
+    forward = output(ToolFinding("c", "high", [DX_DOC, DX_DOC_2], "x"))
+    reverse = output(ToolFinding("c", "high", [DX_DOC_2, DX_DOC], "x"))
+    assert (
+        score(forward, findings(), two_distractors()).false_alarms
+        == score(reverse, findings(), two_distractors()).false_alarms
+    )
