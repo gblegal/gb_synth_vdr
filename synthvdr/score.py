@@ -524,17 +524,29 @@ def score(
     # is the separate, explicitly-labelled record of the bundled case, so
     # precision and false_alarms are never corrupted by it while the fact
     # is still visible on the scorecard.
+    #
+    # EVERY distractor a report cites counts, not just the first one found.
+    # This used to short-circuit on `next(...)`, which meant a single report
+    # citing two traps was scored as having fallen for one: the second id was
+    # dropped before the de-duplication below ever saw it, so the headline
+    # "false alarms" figure under-reported by exactly the number of extra
+    # traps in the report. Measuring false alarms is a stated reason the
+    # distractors exist at all, and a tool that takes two baits in one breath
+    # is not the same result as one that takes a single bait.
     distractor_docs = {d.location: d.id for d in distractors}
     false_alarms: List[str] = []
     distractor_citations: List[str] = []
     for index, reported in enumerate(output.findings):
-        distractor_id = next((distractor_docs[d] for d in reported.documents if d in distractor_docs), None)
-        if distractor_id is None:
+        cited_ids = {distractor_docs[d] for d in reported.documents if d in distractor_docs}
+        if not cited_ids:
             continue
+        # Sorted before extending so the per-report contribution does not
+        # depend on PYTHONHASHSEED-salted set order, the same discipline
+        # prematch() applies to its own match lists.
         if index in matched:
-            distractor_citations.append(distractor_id)
+            distractor_citations.extend(sorted(cited_ids))
         else:
-            false_alarms.append(distractor_id)
+            false_alarms.extend(sorted(cited_ids))
 
     # Recall counts distinct findings matched by anything, across every
     # report — a finding hit by two reports is still one finding found.

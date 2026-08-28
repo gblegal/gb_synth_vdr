@@ -67,11 +67,37 @@ from pathlib import Path
 from synthvdr.render.docx import render_tree_docx
 print(render_tree_docx(Path('data-room'), Path('data-room-docx')))
 "
+python3 -c "
+from pathlib import Path
+from synthvdr.render.docx import default_scanned_count, write_scanned_csv
+from synthvdr.schema import load_findings
+f = load_findings(Path('_key/findings.yaml'))
+slots = write_scanned_csv(f, default_scanned_count(f), Path('_key/scanned.csv'))
+print(str(len(slots)) + ' document(s) will render as scans:')
+for slot in slots:
+    print('  ' + slot)
+"
 node "${CLAUDE_PLUGIN_ROOT}/synthvdr/render/pdf.mjs" --src data-room --out data-room-pdf
 ```
 
 (Use the room's actual `BLIND_TREE` name from `room.conf` in place of `data-room` above if it
 differs.)
+
+**Write `_key/scanned.csv` before running `pdf.mjs`, not after** — the renderer reads it once,
+at startup, and a room whose manifest arrives later just renders every page as live text with
+no error. Those scanned pages are the only thing the PDF render adds that a tool cannot get
+from the markdown directly: the named documents come out as rotated, image-only pages with no
+selectable text, so a tool has to OCR them or lose the finding. `write_scanned_csv` draws only
+from evidence documents, so OCR failure costs a planted finding rather than a filler document
+nobody is scored on, and `default_scanned_count` decides how many — do not substitute a number
+of your own here, for the same reason `/vdr-findings` calls `severity_targets` instead of
+quoting a ratio.
+
+Two limits worth knowing before you read the output. `pdf.mjs` looks for the manifest at a
+literal `_key/scanned.csv` beside the blind tree rather than at whatever `KEY_ROOT` says —
+which is correct for the one sanctioned layout `/vdr-scope` writes (`KEY_ROOT="_key"`) and
+silently finds nothing under any other. And every row is page 1, because that is the only page
+`pdf.mjs` honours today; a manifest naming page 3 parses cleanly and scans nothing.
 
 Both are optional in the sense that you choose which toolchain(s) to use — DOCX needs only the
 `docx` extra (`pip install -e ".[docx]"`), PDF needs Node, puppeteer and a local Chrome. But

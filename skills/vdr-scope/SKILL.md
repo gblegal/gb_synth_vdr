@@ -351,5 +351,12 @@ verdict does not block automatically, but must be shown to the user by name with
 and closing Gate A with either still outstanding requires the user's explicit acknowledgement
 that they are accepting that risk, recorded in the conversation.
 
+Both halves of that rule are now enforced by gate 14, which reads the Verdict column and not
+only the Name and Kind: a recorded `collision` FAILs, and anything else that is not `clear`
+WARNs. So a room carried past this gate anyway does not reach `/vdr-package` quietly. Do not
+read that as a reason to close Gate A loosely and let QA catch it — a collision found here
+costs one re-check, and the same collision found after `/vdr-build` costs re-authoring every
+document that used the name.
+
 Ask for sign-off on the fact sheet and the name check in as many words. Only `/vdr-findings`
 runs next — nothing else in this plugin authors a single document before Gate A closes.

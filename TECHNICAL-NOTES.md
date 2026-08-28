@@ -197,11 +197,29 @@ A room is markdown at heart, and a tool can be evaluated against clean markdown 
 - **PDF**, via `synthvdr/render/pdf.mjs`, a separate Node process (requires Node and a local
   Chrome/Chromium for Puppeteer), into `<blind-tree>-pdf/`.
 
-Both are deterministic and idempotent: no RNG, no clock, no clock-derived filenames. If
-`_key/scanned.csv` exists — `slot,page` rows — the named pages are re-rendered as image-only
-pages, slightly rotated, so a tool under test has to OCR them. Its absence is not an error.
-The two renderers share the rotation formula by direct port, not by importing across a
-language boundary, so they agree on the same `(slot, page)` pair.
+Both are deterministic and idempotent: no RNG, no clock, no clock-derived filenames.
+
+`/vdr-package` writes `_key/scanned.csv` — `slot,page` rows — immediately before running
+`pdf.mjs`, via `synthvdr.render.docx.write_scanned_csv`, and the named pages are then
+re-rendered as image-only pages, slightly rotated, so a tool under test has to OCR them.
+`default_scanned_count` sets how many (a quarter of the room's markdown evidence, rounded,
+never zero while there is any), and `scanned_slots` chooses which — drawn only from evidence
+documents, so OCR failure costs a planted finding rather than a filler document nobody is
+scored on. Its absence is not an error; the render simply produces live text throughout.
+
+Three limits apply. `pdf.mjs` resolves the manifest to a literal `_key/scanned.csv` beside
+the blind tree rather than reading `KEY_ROOT`, which is right for the one sanctioned layout
+(`KEY_ROOT="_key"`) and finds nothing under any other. Every row is written as page 1,
+because page 1 is the only page `pdf.mjs` honours — it parses a higher page number, stores
+it, and never acts on it. And there is no scanned page in the DOCX tree at all: scanning is
+a PDF-only mechanism.
+
+The two renderers share the rotation formula, and the ATX-heading rule, by direct port rather
+than by importing across a language boundary — so they agree on the same `(slot, page)` pair
+and on what a heading is. Both ports are pinned by cross-language tests that read the shipped
+`pdf.mjs` and run it under `node` (`test_pdf_mjs_rotation_matches_python_exactly`,
+`test_pdf_mjs_headings_match_python_exactly`); they SKIP, never silently pass, where `node`
+is unavailable.
 
 Both renderers are optional and **non-destructive** — they only create or overwrite the
 files they are responsible for, and never delete a stale render — and neither is imported at

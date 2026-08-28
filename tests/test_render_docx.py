@@ -10,9 +10,11 @@ import pytest
 from synthvdr.render.docx import (
     _ATX_HEADING,
     RenderUnavailable,
+    default_scanned_count,
     render_tree_docx,
     rotation_for,
     scanned_slots,
+    write_scanned_csv,
 )
 from synthvdr.schema import Finding, FindingSet
 
@@ -269,6 +271,105 @@ def test_pdf_mjs_rotation_matches_python_exactly():
     assert js_values == py_values
     assert any(v > 0 for v in py_values), "fixture pairs must cover the positive case"
     assert any(v < 0 for v in py_values), "fixture pairs must cover the negative case"
+
+
+# --- the SECOND cross-language port: ATX heading detection ----------------
+#
+# rotation_for was not the only formula hand-ported into pdf.mjs, but it was
+# the only one pinned. The heading regex was ported too, and drifted: pdf.mjs
+# shipped `\s*` where docx.py has `[ \t]+` — optional AND Unicode-wide, both
+# of the spellings _ATX_HEADING's own comment records as already having gone
+# wrong once each on the Python side. Gate 16 compares filenames only and
+# never opens a render, so the DOCX and PDF trees disagreed about what a
+# heading was with nothing in the harness looking.
+
+# Every line here is a documented boundary of the rule, not a sample: the two
+# rejected separator spellings (absent, and non-ASCII whitespace), the level
+# bound at 6, a title that legitimately starts with '#', and controls that
+# must stay headings so a regex that simply never matches cannot pass.
+HEADING_CORPUS = [
+    "# Articles of association",     # ordinary heading (control)
+    "###### Deepest real level",     # H6, the bound (control)
+    "#\tTab separated",              # tab is a legal separator (control)
+    "#   Extra spaces",              # greedy separator, title not re-trimmed
+    "# #1 priority",                 # title legitimately begins with '#'
+    "#MeToo campaign details",       # no separator -> paragraph
+    "#1 supplier by volume",         # no separator -> paragraph, keeps its '#'
+    "# NBSP separated",         # non-ASCII space -> paragraph
+    "#　ideographic space",      # non-ASCII space -> paragraph
+    "####### Beyond H6",             # 7 hashes -> paragraph
+    "#",                             # bare hash -> paragraph
+    "Ref #4821 was closed",          # mid-line hash -> paragraph
+    "",                              # blank -> dropped by both
+]
+
+
+def _extract_atx_heading_source(mjs_text: str) -> str:
+    """Pull the real ATX_HEADING declaration out of pdf.mjs, for the same
+    reason _extract_rotation_for_source pulls the real rotationFor: a test
+    carrying its own copy of the pattern proves the two authors agree, not
+    that the shipped file does."""
+    match = re.search(r"^const ATX_HEADING = /.*/;$", mjs_text, re.MULTILINE)
+    if not match:
+        raise AssertionError(
+            "could not find `const ATX_HEADING = /.../;` in synthvdr/render/pdf.mjs "
+            "— has it been renamed or inlined back into mdToHtml? update the "
+            "extraction regex"
+        )
+    return match.group(0)
+
+
+def _run_node_headings(node: str, lines):
+    """What pdf.mjs's own regex makes of each line: (level, title) for a
+    heading, or None for a paragraph — the same shape _python_headings
+    returns below, so the two are directly comparable."""
+    script = (
+        f"{_extract_atx_heading_source(PDF_MJS.read_text(encoding='utf-8'))}\n"
+        f"const lines = {json.dumps(lines)};\n"
+        "console.log(JSON.stringify(lines.map((raw) => {\n"
+        "  const m = ATX_HEADING.exec(raw.trimEnd());\n"
+        "  return m ? [Math.min(m[1].length, 4), m[2]] : null;\n"
+        "})));\n"
+    )
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", script],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(f"node failed to run pdf.mjs's ATX_HEADING: {proc.stderr}")
+    return json.loads(proc.stdout.strip())
+
+
+def _python_headings(lines):
+    out = []
+    for raw in lines:
+        match = _ATX_HEADING.match(raw.rstrip())
+        out.append([min(len(match.group(1)), 4), match.group(2)] if match else None)
+    return out
+
+
+def test_pdf_mjs_headings_match_python_exactly():
+    """pdf.mjs's ATX_HEADING is a hand-written JS port of
+    synthvdr.render.docx._ATX_HEADING. Both renderers claim to present the
+    same structure, and this is the only check that holds them to it.
+
+    Needs `node`, not `docx`, so it SKIPs (never silently passes) when node
+    is unavailable — same SKIP discipline as every gate in this project.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available — cross-language heading parity unverified")
+
+    py_results = _python_headings(HEADING_CORPUS)
+    assert _run_node_headings(node, HEADING_CORPUS) == py_results
+
+    # A pattern that matched nothing would satisfy the equality above, so
+    # pin both sides of the rule the corpus exists to express.
+    assert py_results[0] == [1, "Articles of association"], "controls must still be headings"
+    assert py_results[4] == [1, "#1 priority"], "a title starting with '#' must survive intact"
+    assert py_results[5] is None and py_results[7] is None, (
+        "a missing or non-ASCII separator must not make a heading"
+    )
 
 
 # --- F1: ATX heading detection must require whitespace (round 2, fix 1) ----
@@ -583,3 +684,150 @@ def test_heading_levels_map_correctly_and_clamp_at_four(tmp_path):
     }
     for text, level in expected_levels.items():
         assert style_by_text[text] == f"Heading {level}", (text, style_by_text[text])
+
+
+# --- the scanned-page manifest: written here, read by pdf.mjs ------------
+#
+# scanned_slots and pdf.mjs's loadScannedSlots were both written and both
+# tested, and nothing ever produced the file between them: no room shipped a
+# scanned page, while README and TECHNICAL-NOTES §5 described the feature as
+# working. write_scanned_csv is that missing step, so these tests pin the
+# join — not each half in isolation, which is how the gap survived.
+
+
+def _findings_with(*paths):
+    return FindingSet(
+        [
+            Finding(
+                id=f"ENV-{i}", title="t", severity="high", workstream="environment",
+                multi_document=False, source=path, location="", substance="s",
+            )
+            for i, path in enumerate(paths, start=1)
+        ],
+        "Project Testbed",
+    )
+
+
+def _csv_slots(path):
+    rows = path.read_text(encoding="utf-8").splitlines()
+    assert rows[0] == "slot,page", "pdf.mjs skips row 1 as a header; it must be one"
+    return [row.split(",")[0] for row in rows[1:] if row.strip()]
+
+
+def test_write_scanned_csv_draws_only_from_markdown_evidence(tmp_path):
+    """A CSV register named as evidence is real evidence with no page to
+    scan — pdf.mjs only walks *.md. Selecting it and then dropping it would
+    quietly return fewer scans than asked for."""
+    findings = _findings_with(
+        "01_corporate/1.1_x/1.1.1_a.md",
+        "02_financial/2.1_y/2.1.1_register.csv",
+        "05_commercial/5.1_z/5.1.1_c.md",
+    )
+    out = tmp_path / "_key" / "scanned.csv"
+    slots = write_scanned_csv(findings, 3, out)
+    assert all(s.endswith(".md") for s in slots)
+    assert len(slots) == 2
+    assert not any("register" in s for s in _csv_slots(out))
+
+
+def test_write_scanned_csv_is_byte_identical_across_runs(tmp_path):
+    """Determinism is a project-wide rule and this file feeds a render, so a
+    reordering here would silently re-scan different documents between two
+    builds of the same room."""
+    findings = _findings_with(*(f"0{i}_s/{i}.1_x/{i}.1.1_d.md" for i in range(1, 8)))
+    first, second = tmp_path / "a.csv", tmp_path / "b.csv"
+    write_scanned_csv(findings, 3, first)
+    write_scanned_csv(findings, 3, second)
+    assert first.read_bytes() == second.read_bytes()
+
+
+def test_default_scanned_count_never_returns_zero_while_there_is_evidence(tmp_path):
+    """A room with no scanned page does not test OCR at all, which is the one
+    thing the PDF render adds over the markdown a tool could read directly."""
+    assert default_scanned_count(_findings_with("01_a/1.1_x/1.1.1_a.md")) == 1
+    assert default_scanned_count(_findings_with("01_a/1.1_x/1.1.1_a.csv")) == 0
+    eight = _findings_with(*(f"0{i}_s/{i}.1_x/{i}.1.1_d.md" for i in range(1, 9)))
+    assert default_scanned_count(eight) == 2
+
+
+def _extract_pdf_mjs(pattern: str, what: str, flags: int = re.MULTILINE) -> str:
+    """`flags` defaults to MULTILINE only. DOTALL is opt-in per call because a
+    single-line pattern anchored with `$` silently swallows the rest of the
+    file under it — which is exactly what this helper's first version did."""
+    match = re.search(pattern, PDF_MJS.read_text(encoding="utf-8"), flags)
+    if not match:
+        raise AssertionError(
+            f"could not find {what} in synthvdr/render/pdf.mjs — has it been "
+            "renamed or restructured? update the extraction regex"
+        )
+    return match.group(0)
+
+
+def test_scanned_csv_slots_match_pdf_mjs_slot_ids(tmp_path):
+    """The `slot` column must equal the id pdf.mjs derives from its OWN walk.
+    A mismatch is invisible — an unmatched slot is simply never scanned, and
+    the render succeeds — so the expectation is taken from that file's real
+    expression rather than restated here."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available — cross-language slot-id parity unverified")
+
+    rels = ["01_corporate/1.1_x/1.1.1_a.md", "11_environmental-hs/11.2_y/11.2.1_b.md"]
+    out = tmp_path / "_key" / "scanned.csv"
+    write_scanned_csv(_findings_with(*rels), len(rels), out)
+
+    slot_expr = _extract_pdf_mjs(r"^\s*const slotId = .*$", "the `const slotId = ...` line")
+    script = (
+        'import path from "node:path";\n'
+        f"const rels = {json.dumps(rels)};\n"
+        "console.log(JSON.stringify(rels.map((rel) => {\n"
+        f"{slot_expr}\n"
+        "  return slotId;\n"
+        "})));\n"
+    )
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", script], capture_output=True, text=True
+    )
+    if proc.returncode != 0:
+        raise AssertionError(f"node failed to run pdf.mjs's slotId expression: {proc.stderr}")
+    assert sorted(json.loads(proc.stdout.strip())) == sorted(_csv_slots(out))
+
+
+def test_pdf_mjs_loads_the_manifest_write_scanned_csv_writes(tmp_path):
+    """The end-to-end pin: run pdf.mjs's REAL loadScannedSlots over a file
+    this module actually wrote. Everything else here tests one side; this is
+    the join whose absence meant no room ever shipped a scanned page."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available — scanned-manifest round trip unverified")
+
+    room = tmp_path / "room"
+    (room / "data-room").mkdir(parents=True)
+    rels = ["01_corporate/1.1_x/1.1.1_a.md", "05_commercial/5.1_y/5.1.1_b.md"]
+    write_scanned_csv(_findings_with(*rels), len(rels), room / "_key" / "scanned.csv")
+
+    loader = _extract_pdf_mjs(
+        r"^async function loadScannedSlots\(src\) \{.*?\n\}",
+        "loadScannedSlots",
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    script = (
+        'import { readFile } from "node:fs/promises";\n'
+        'import { existsSync } from "node:fs";\n'
+        'import path from "node:path";\n'
+        f"{loader}\n"
+        f"const slots = await loadScannedSlots({json.dumps(str(room / 'data-room'))});\n"
+        "console.log(JSON.stringify([...slots].map(([k, v]) => [k, [...v]]).sort()));\n"
+    )
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", script], capture_output=True, text=True
+    )
+    if proc.returncode != 0:
+        raise AssertionError(f"node failed to run pdf.mjs's loadScannedSlots: {proc.stderr}")
+
+    loaded = json.loads(proc.stdout.strip())
+    assert loaded, "pdf.mjs read the manifest as empty — the two halves are not connected"
+    assert sorted(slot for slot, _ in loaded) == sorted(_csv_slots(room / "_key" / "scanned.csv"))
+    # Page 1 for every row, because that is the only page pdf.mjs honours —
+    # see write_scanned_csv on why a higher number must not be written yet.
+    assert all(pages == [1] for _, pages in loaded)

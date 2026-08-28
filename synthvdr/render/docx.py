@@ -16,10 +16,11 @@ both directions: sources missing a render, and renders missing a source.
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import re
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from ..schema import FindingSet
 
@@ -78,7 +79,7 @@ def rotation_for(slot_id: str, page: int) -> float:
     return magnitude if digest[1] % 2 == 0 else -magnitude
 
 
-def scanned_slots(findings: FindingSet, count: int) -> List[str]:
+def scanned_slots(findings: FindingSet, count: int, *, suffix: Optional[str] = None) -> List[str]:
     """Pick `count` scanned slots, drawn only from evidence documents — the
     OCR challenge belongs where the substance is, so OCR failure costs the
     tool a finding. Never backfilled with non-evidence documents: if
@@ -90,10 +91,74 @@ def scanned_slots(findings: FindingSet, count: int) -> List[str]:
     order collapses through it, and the two sorts below (first
     lexicographic, then by sha256 digest) fix one specific, seed-independent
     order out of that set every time.
+
+    `suffix`, when given, narrows the pool BEFORE selection rather than
+    filtering the result afterwards — filtering after would silently return
+    fewer than `count` for a reason that has nothing to do with the
+    "never backfill" rule above, and the two shortfalls must not be
+    confusable. `write_scanned_csv` passes ".md" because the renderers only
+    produce a page per markdown source; a CSV register named as evidence is
+    real evidence with no page to scan.
     """
     evidence = sorted(findings.all_evidence_paths())
+    if suffix is not None:
+        evidence = [path for path in evidence if path.endswith(suffix)]
     ordered = sorted(evidence, key=lambda p: hashlib.sha256(p.encode("utf-8")).hexdigest())
     return ordered[:count]
+
+
+# The share of a room's markdown evidence documents that ships as a scan.
+# A function below rather than a number quoted in prose in /vdr-package, for
+# the same reason synthvdr.schema.severity_targets is a function: the moment
+# the rule lives in a skill's prose, the skill and the code can disagree
+# about it and nothing notices.
+SCANNED_SHARE = 0.25
+
+
+def default_scanned_count(findings: FindingSet) -> int:
+    """How many evidence documents a room of this size should ship as scans.
+
+    A quarter of the markdown evidence, rounded, and never zero while there
+    is anything to scan — a room with no scanned page at all does not test
+    OCR, which is the one thing the PDF render exists to add over the
+    markdown a tool could otherwise read directly. Returns 0 only when there
+    is genuinely no markdown evidence to draw from.
+    """
+    pool = [path for path in findings.all_evidence_paths() if path.endswith(".md")]
+    if not pool:
+        return 0
+    return max(1, round(len(pool) * SCANNED_SHARE))
+
+
+def write_scanned_csv(findings: FindingSet, count: int, path: Path) -> List[str]:
+    """Write the `slot,page` manifest `pdf.mjs` reads, and return the slots.
+
+    THIS IS THE STEP THAT WAS MISSING. `scanned_slots` and `pdf.mjs`'s
+    `loadScannedSlots` were both written, both tested, and never connected:
+    nothing in this package or in any skill ever produced the file, so
+    `loadScannedSlots` returned an empty map on every real run and no room
+    ever shipped a scanned page — while README and TECHNICAL-NOTES §5 both
+    described the feature as if it did.
+
+    `slot` is the source path relative to BLIND_TREE with `.md` stripped and
+    forward slashes, exactly as `pdf.mjs` reconstructs it from its own walk;
+    a mismatch here is invisible (an unmatched slot is simply never scanned),
+    which is why `test_scanned_csv_slots_match_pdf_mjs_slot_ids` derives the
+    expectation from that file's own expression rather than restating it.
+
+    Every row is page 1. `pdf.mjs` today honours only page 1 — it reads and
+    stores every row and then asks `scannedPages.has(1)` — so writing a
+    higher page number would produce a manifest line that silently does
+    nothing. When that is fixed, this is where multi-page rows belong.
+    """
+    slots = scanned_slots(findings, count, suffix=".md")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["slot", "page"])
+        for rel in slots:
+            writer.writerow([rel[: -len(".md")], 1])
+    return slots
 
 
 def render_tree_docx(src: Path, out: Path) -> int:
