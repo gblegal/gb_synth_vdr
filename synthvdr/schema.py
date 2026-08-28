@@ -70,6 +70,20 @@ def _require(row: dict, key: str, context: str):
     return row[key]
 
 
+def _require_mapping(row, context: str) -> None:
+    """Reject a row that is not a mapping, before any key is asked for.
+
+    `_require` closes the missing-key hole but not this one: on a string row
+    — what `findings: [foo]` parses to — `"id" not in row` is a SUBSTRING
+    test that can pass, and `row["id"]` then raises
+    `TypeError: string indices must be integers`. Same escape as a bare
+    KeyError, same untrusted input, so it is guarded on the same terms.
+    `load_findings` and `load_distractors` both already do this inline.
+    """
+    if not isinstance(row, dict):
+        raise SchemaError(f"{context}: not a mapping — got {type(row).__name__}")
+
+
 def _load_yaml(path: Path) -> dict:
     try:
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -463,20 +477,35 @@ def consolidate_wave_incoming(
     already in `already_mapped`, it is passed to `allocate_new_finding_ids` (sorted there by `(label, provisional_id)`, so
     the allocation itself is deterministic across reruns too) and the resulting row is added
     under its real, newly allocated id.
+
+    THE TWO INPUTS HAVE DIFFERENT TRUST, and the guards differ accordingly.
+    Every row of `incoming_docs` is subagent output — a `vdr-author` wrote it,
+    which is the whole reason this function polices anything — so each is
+    checked for being a mapping and for the fields read out of it, raising
+    `SchemaError` naming the file and the row index like the rest of this
+    module. `findings_doc` is the signed-off Gate B registry and is NOT
+    re-checked here, deliberately: /vdr-build calls `load_findings` on
+    `_key/findings.yaml` before it re-reads that same file raw and passes it
+    in, so a row there with no `id` has already produced a readable error
+    naming the file. That is a stated precondition, not an oversight — if a
+    caller ever hands this an unvalidated registry, the guard belongs at that
+    caller, beside the load it skipped.
     """
     by_id = {row["id"]: dict(row) for row in (findings_doc.get("findings") or [])}
 
     discoveries = []
     new_rows_by_provisional: Dict[str, dict] = {}
     for label, incoming in sorted(incoming_docs.items()):
-        for row in incoming.get("findings") or []:
-            if row["id"] not in by_id:
+        for index, row in enumerate(incoming.get("findings") or []):
+            _require_mapping(row, f"{label}: findings[{index}]")
+            fid = _require(row, "id", f"{label}: findings[{index}]")
+            if fid not in by_id:
                 raise SchemaError(
-                    f"{label}: finding {row['id']!r} is not in the Gate B registry — "
+                    f"{label}: finding {fid!r} is not in the Gate B registry — "
                     "consolidation only refines an existing finding, it never adds one "
                     "under the `findings:` key"
                 )
-            target = by_id[row["id"]]
+            target = by_id[fid]
             claimed = sorted(
                 key
                 for key, value in row.items()
@@ -486,17 +515,28 @@ def consolidate_wave_incoming(
             )
             if claimed:
                 raise SchemaError(
-                    f"{label}: finding {row['id']!r} tries to set Gate B fields {claimed} — "
+                    f"{label}: finding {fid!r} tries to set Gate B fields {claimed} — "
                     f"consolidation refines {list(AUTHOR_OWNED_FINDING_FIELDS)} only"
                 )
             target.update(
                 {key: row[key] for key in AUTHOR_OWNED_FINDING_FIELDS if key in row}
             )
-        for row in incoming.get("new_findings") or []:
-            if row["id"] in already_mapped:
+        for index, row in enumerate(incoming.get("new_findings") or []):
+            _require_mapping(row, f"{label}: new_findings[{index}]")
+            provisional = _require(row, "id", f"{label}: new_findings[{index}]")
+            if provisional in already_mapped:
                 continue
-            discoveries.append((label, row["id"], row["workstream"]))
-            new_rows_by_provisional[row["id"]] = row
+            # `workstream` is required AFTER the already_mapped skip, not
+            # before it. A resumed build re-reads incoming files whose rows it
+            # has already allocated ids for, and validating a row this run is
+            # deliberately ignoring would make a rerun fail where the first run
+            # succeeded — the exact idempotency
+            # test_consolidate_wave_incoming_is_idempotent_across_a_resumed_build
+            # exists to protect. `id` has to come first because it is the key
+            # that skip is decided on.
+            workstream = _require(row, "workstream", f"{label}:{provisional}")
+            discoveries.append((label, provisional, workstream))
+            new_rows_by_provisional[provisional] = row
 
     new_mapping = allocate_new_finding_ids(set(by_id), prefix_for_workstream, discoveries)
     for provisional_id, final_id in new_mapping.items():
