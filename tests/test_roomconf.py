@@ -77,11 +77,6 @@ def test_get_absent_non_required_key_raises(tmp_path):
         conf.get("NONEXISTENT_KEY")
 
 
-def test_get_pattern_returns_raw_value(tmp_path):
-    conf = load_room_conf(write(tmp_path))
-    assert conf.get_pattern("FINDING_PREFIXES") == "CORP|ENV|FIN"
-
-
 def test_trailing_comment_on_bare_value(tmp_path):
     conf = load_room_conf(write(tmp_path, SAMPLE.replace("INDEX_TOTAL=20", "INDEX_TOTAL=20  # total docs")))
     assert conf.get_int("INDEX_TOTAL") == 20

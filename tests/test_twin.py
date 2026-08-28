@@ -1144,3 +1144,23 @@ def test_an_unreadable_blind_subdirectory_does_not_destroy_the_previous_flagged_
         locked.chmod(0o755)
 
     assert (previous / "previous.md").read_text(encoding="utf-8") == "from the last good build\n"
+
+
+# ---------------------------------------------------------------------------
+# Review item 14: the three path helpers are re-exported from roomconf on
+# purpose, and the comment above twin.__all__ says so — but until this pin
+# existed the DECLARATION was only a comment. _overlaps in particular is
+# called nowhere in twin.py, so a linter reports it as an unused import and
+# the only thing that would break on deleting it is this test file.
+
+
+def test_the_shared_path_helpers_are_declared_re_exports():
+    from synthvdr import roomconf, twin
+
+    for name in ("_is_inside", "_overlaps", "_same_file"):
+        assert name in twin.__all__, f"{name} is re-exported but not declared"
+        assert getattr(twin, name) is getattr(roomconf, name), (
+            f"twin.{name} must BE roomconf.{name}, not a second copy — one "
+            "implementation of 'are these two paths the same tree?' is the "
+            "whole point of the re-export"
+        )

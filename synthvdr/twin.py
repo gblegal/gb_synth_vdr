@@ -45,12 +45,22 @@ from .schema import Distractor, Finding, FindingSet
 # applied to a destructive operation. _overlaps is not called by this module
 # itself; it is part of that shared vocabulary and is used by the tests that
 # prove the string-level comparison cannot see a same-inode alias.
+#
+# All three are named in __all__ below, which is where a re-export is
+# DECLARED rather than merely described. Naming them matters most for
+# _overlaps, the one this module never calls itself: without the entry it
+# reads to a linter as an unused import (ruff F401) and to the next reader as
+# a line to delete — and deleting it would not break anything here, only in
+# tests/test_twin.py, which is the worst possible place to find out.
 __all__ = [
     "MARKER_NAME",
     "MARKER_TEXT",
     "SUBJECT_KEY",
     "TwinError",
     "TwinReport",
+    "_is_inside",
+    "_overlaps",
+    "_same_file",
     "annotation_block",
     "assert_safe_delete_target",
     "assert_target_is_ours",

@@ -404,9 +404,6 @@ class RoomConf:
     def get_list(self, key: str) -> List[str]:
         return self.get(key).split()
 
-    def get_pattern(self, key: str) -> str:
-        return self.get(key)
-
     def get_relative_path(self, key: str) -> str:
         """Like get(), but for a key whose value must be a safe relative
         path. Applies the same non-empty / non-absolute / no-'..' / not-the-
