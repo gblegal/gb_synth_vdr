@@ -1907,6 +1907,35 @@ def test_version_check_survives_a_base_ref_with_no_plugin_manifest(tmp_path):
     assert "no manifest there" in result.stdout
 
 
+def test_version_check_fails_in_its_own_voice_on_a_base_ref_it_cannot_diff(tmp_path):
+    """A base ref the diff cannot resolve is a comparison that never ran.
+
+    It must fail — a check that cannot see what changed must never fall
+    through to the "nothing to bump" pass — and it must say so as
+    version-check rather than leaving a bare `fatal: bad revision` from git
+    with nothing naming the script or the argument.
+
+    Unlike version_at()'s exit-128 bug, this line never suppressed git's
+    stderr, so the failure was always visible. What it lacked was the
+    script's own voice and a chosen exit code; the pass/fail outcome is
+    unchanged.
+    """
+    if not shutil.which("bash"):
+        pytest.skip("bash not available in this environment")
+    _throwaway_repo(tmp_path)
+
+    result = _run_version_check(tmp_path, "no-such-ref")
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    combined = result.stdout + result.stderr
+    assert "version-check: cannot compare against 'no-such-ref'" in combined
+    assert "fatal: bad revision" in combined, "keep git's own reason, do not swallow it"
+    assert "fetch-depth" in combined, "name the usual cause: a shallow clone"
+    assert "nothing to bump" not in combined, (
+        "a comparison that never ran must never report the pass"
+    )
+
+
 def test_version_check_ignores_a_change_outside_the_plugin_surface(tmp_path):
     # A README or a review document is not something an install serves, so it must
     # not force a release nobody needs.
