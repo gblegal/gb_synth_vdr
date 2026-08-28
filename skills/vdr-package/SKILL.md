@@ -93,11 +93,18 @@ nobody is scored on, and `default_scanned_count` decides how many — do not sub
 of your own here, for the same reason `/vdr-findings` calls `severity_targets` instead of
 quoting a ratio.
 
-Two limits worth knowing before you read the output. `pdf.mjs` looks for the manifest at a
-literal `_key/scanned.csv` beside the blind tree rather than at whatever `KEY_ROOT` says —
-which is correct for the one sanctioned layout `/vdr-scope` writes (`KEY_ROOT="_key"`) and
-silently finds nothing under any other. And every row is page 1, because that is the only page
-`pdf.mjs` honours today; a manifest naming page 3 parses cleanly and scans nothing.
+A listed document is scanned **in full**, page by page — the unit is the document, not the
+page, because a real data room scans whole documents and because mixing image pages with
+live-text pages inside one PDF needs page-level splicing this toolchain has no library for.
+Each page takes its own skew, which is what a sheet-fed scanner does.
+
+One limit worth knowing: `pdf.mjs` looks for the manifest at a literal `_key/scanned.csv`
+beside the blind tree rather than at whatever `KEY_ROOT` says — correct for the one
+sanctioned layout `/vdr-scope` writes (`KEY_ROOT="_key"`) and it finds nothing under any
+other. Read its final line: it names how many documents were scanned and how many image
+pages that produced, and it exits non-zero naming any slot in the manifest that matched no
+document — a slot that matches nothing renders that document as live text while the answer
+key believes it is a scan.
 
 Both are optional in the sense that you choose which toolchain(s) to use — DOCX needs only the
 `docx` extra (`pip install -e ".[docx]"`), PDF needs Node, puppeteer and a local Chrome. But

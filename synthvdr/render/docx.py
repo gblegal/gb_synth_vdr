@@ -131,7 +131,8 @@ def default_scanned_count(findings: FindingSet) -> int:
 
 
 def write_scanned_csv(findings: FindingSet, count: int, path: Path) -> List[str]:
-    """Write the `slot,page` manifest `pdf.mjs` reads, and return the slots.
+    """Write the one-column `slot` manifest `pdf.mjs` reads, and return the
+    slots (as evidence paths, `.md` suffix intact).
 
     THIS IS THE STEP THAT WAS MISSING. `scanned_slots` and `pdf.mjs`'s
     `loadScannedSlots` were both written, both tested, and never connected:
@@ -142,22 +143,27 @@ def write_scanned_csv(findings: FindingSet, count: int, path: Path) -> List[str]
 
     `slot` is the source path relative to BLIND_TREE with `.md` stripped and
     forward slashes, exactly as `pdf.mjs` reconstructs it from its own walk;
-    a mismatch here is invisible (an unmatched slot is simply never scanned),
-    which is why `test_scanned_csv_slots_match_pdf_mjs_slot_ids` derives the
-    expectation from that file's own expression rather than restating it.
+    a mismatch here would be invisible from this side, which is why
+    `test_scanned_csv_slots_match_pdf_mjs_slot_ids` derives the expectation
+    from that file's own expression rather than restating it — and why
+    `pdf.mjs` now names any slot that matched no document instead of
+    skipping it quietly.
 
-    Every row is page 1. `pdf.mjs` today honours only page 1 — it reads and
-    stores every row and then asks `scannedPages.has(1)` — so writing a
-    higher page number would produce a manifest line that silently does
-    nothing. When that is fixed, this is where multi-page rows belong.
+    ONE COLUMN, NOT `slot,page`. The manifest briefly carried a page number,
+    which `pdf.mjs` parsed, stored, and then ignored for every value but 1:
+    a row naming page 3 did nothing, silently. Scanning is per document now —
+    a listed slot is scanned in full, page by page — so there is no per-page
+    selection left to express and the column is gone. `pdf.mjs` still reads a
+    stale two-column file (the first cell is the slot either way) and says so
+    rather than ignoring the dead column.
     """
     slots = scanned_slots(findings, count, suffix=".md")
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["slot", "page"])
+        writer.writerow(["slot"])
         for rel in slots:
-            writer.writerow([rel[: -len(".md")], 1])
+            writer.writerow([rel[: -len(".md")]])
     return slots
 
 

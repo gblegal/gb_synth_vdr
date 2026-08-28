@@ -199,20 +199,40 @@ A room is markdown at heart, and a tool can be evaluated against clean markdown 
 
 Both are deterministic and idempotent: no RNG, no clock, no clock-derived filenames.
 
-`/vdr-package` writes `_key/scanned.csv` — `slot,page` rows — immediately before running
-`pdf.mjs`, via `synthvdr.render.docx.write_scanned_csv`, and the named pages are then
-re-rendered as image-only pages, slightly rotated, so a tool under test has to OCR them.
-`default_scanned_count` sets how many (a quarter of the room's markdown evidence, rounded,
-never zero while there is any), and `scanned_slots` chooses which — drawn only from evidence
-documents, so OCR failure costs a planted finding rather than a filler document nobody is
-scored on. Its absence is not an error; the render simply produces live text throughout.
+`/vdr-package` writes `_key/scanned.csv` — one `slot` per row — immediately before running
+`pdf.mjs`, via `synthvdr.render.docx.write_scanned_csv`, and every page of each named
+document is then re-rendered as an image-only page, slightly rotated, so a tool under test
+has to OCR it. `default_scanned_count` sets how many documents (a quarter of the room's
+markdown evidence, rounded, never zero while there is any), and `scanned_slots` chooses
+which — drawn only from evidence documents, so OCR failure costs a planted finding rather
+than a filler document nobody is scored on. Its absence is not an error; the render simply
+produces live text throughout.
 
-Three limits apply. `pdf.mjs` resolves the manifest to a literal `_key/scanned.csv` beside
+**The unit is the document, not the page.** The manifest briefly carried a `slot,page`
+pair, and `pdf.mjs` read every row, stored it, and then honoured only page 1 — a row naming
+page 3 parsed cleanly and did nothing, silently. Since a real data room scans whole
+documents, and since mixing image pages with live-text pages in one PDF needs page-level
+splicing this toolchain has no library for, the unit became the document and the dead column
+went. A listed slot is scanned in full, page by page, each page taking its own skew from
+`rotation_for(slot, page)`. `pdf.mjs` still reads a stale two-column manifest — the first
+cell is the slot either way — and says so rather than ignoring the dead column.
+
+That change is about geometry, not lost content, and the distinction is worth stating
+because it is easy to assume otherwise: the old single `fullPage: true` screenshot did reach
+every page, because Chrome flowed the one tall image across as many PDF pages as it needed.
+A 2,629-word deed renders as 5 image pages under both the old and the new code, at
+near-identical file size. What the old form did was rotate that document-tall image about
+its own centre, so the sideways displacement grew with the document's length — roughly ±46px
+at the extremes of that deed against ±10px per page now, and worse the longer the document,
+clipping the margins at top and bottom. Every page also shared one angle, which is why
+`rotation_for`'s page argument was effectively dead: it was only ever called with 1.
+
+Two limits remain. `pdf.mjs` resolves the manifest to a literal `_key/scanned.csv` beside
 the blind tree rather than reading `KEY_ROOT`, which is right for the one sanctioned layout
-(`KEY_ROOT="_key"`) and finds nothing under any other. Every row is written as page 1,
-because page 1 is the only page `pdf.mjs` honours — it parses a higher page number, stores
-it, and never acts on it. And there is no scanned page in the DOCX tree at all: scanning is
-a PDF-only mechanism.
+(`KEY_ROOT="_key"`) and finds nothing under any other. And there is no scanned page in the
+DOCX tree at all: scanning is a PDF-only mechanism. A slot that matches no document under
+the blind tree is reported and exits non-zero, never skipped in silence — an unmatched slot
+renders that document as live text while the answer key believes it is a scan.
 
 The two renderers share the rotation formula, and the ATX-heading rule, by direct port rather
 than by importing across a language boundary — so they agree on the same `(slot, page)` pair
