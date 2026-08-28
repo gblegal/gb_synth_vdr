@@ -10,7 +10,7 @@ the limits of what this project actually checks. For what synth-vdr is, see
 
 ```bash
 pip install -e .              # the plugin's Python package (synthvdr) — required before any /vdr-* skill runs
-pip install -e ".[dev]"       # adds pytest, for the test suite
+pip install -e ".[dev]"       # adds pytest and ruff, for the test suite and the lint gate
 pip install -e ".[docx]"      # adds python-docx, only if you want DOCX renders (see §5)
 ```
 
@@ -169,7 +169,14 @@ It is the closest thing this project has to a smoke test for the whole pipeline:
 ```bash
 make test                                     # creates .venv on first use, runs everything
 make test ARGS="tests/test_end_to_end.py -v"  # ARGS reaches pytest unchanged
+make lint                                     # the same ruff check CI runs
 ```
+
+CI runs the suite on Python 3.9, 3.11 and 3.13, and runs `ruff check .` as a
+separate job. The rule set lives in `pyproject.toml` under `[tool.ruff.lint]`
+rather than in either caller, so `make lint` and CI cannot disagree about what
+passing means — and the comment there says why it is named rather than
+inherited from whichever ruff version resolves.
 
 Or drive pytest yourself, if you manage your own environment:
 

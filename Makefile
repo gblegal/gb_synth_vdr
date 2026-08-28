@@ -12,12 +12,19 @@ PY    := $(VENV)/bin/python
 STAMP := $(VENV)/.deps-installed
 
 .DEFAULT_GOAL := test
-.PHONY: test venv clean tag
+.PHONY: test lint venv clean tag
 
 # Run the full suite. ARGS passes through, so `make test ARGS="-k twin -x"`
 # reaches pytest unchanged rather than needing a target per invocation.
 test: $(STAMP)
 	$(PY) -m pytest $(ARGS)
+
+# The same check CI runs, reachable before you push rather than after. Both
+# callers read the rule set from pyproject.toml, so neither can be more or less
+# strict than the other — the reason this is a two-line target and not a place
+# where flags get chosen.
+lint: $(STAMP)
+	$(PY) -m ruff check $(ARGS) .
 
 # The environment on its own, for driving the CLIs by hand afterwards.
 venv: $(STAMP)

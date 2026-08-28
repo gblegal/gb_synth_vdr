@@ -7,7 +7,6 @@ from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
 from synthvdr.roomconf import load_room_conf
 from synthvdr.schema import (
     SEVERITIES,
-    ConsolidationResult,
     SchemaError,
     severity_targets,
     allocate_new_finding_ids,

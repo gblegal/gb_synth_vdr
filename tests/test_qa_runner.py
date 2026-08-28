@@ -1,4 +1,4 @@
-from synthvdr.qa.runner import GateResult, fail, ok, run_gates, skip, warn
+from synthvdr.qa.runner import fail, ok, run_gates, skip, warn
 
 
 class Ctx:

@@ -25,6 +25,32 @@ jobs:
       - run: pip install --editable '.[dev,docx]'
       - run: pytest -q
 
+  lint:
+    # Until this job existed ruff was a habit, not a guard. Register item 12 —
+    # five module-level imports stranded at line 44 of qa/structural.py — was
+    # caught because someone happened to run ruff locally, and nothing in CI
+    # would have stopped the PR that put them there. A guard nobody is obliged
+    # to run is indistinguishable from no guard, which is this repo's
+    # silence-is-never-a-pass rule pointed at its own tooling.
+    #
+    # One interpreter, not the test matrix: ruff reads `requires-python` from
+    # pyproject for its target version, so the Python it runs under does not
+    # change the verdict, and three identical runs would only cost time.
+    #
+    # `.[dev]` rather than a bare `pip install ruff`, so the version constraint
+    # has exactly one home. Naming it here as well would be a second
+    # declaration of the same thing, free to drift — and the rule set is in
+    # pyproject too, so `make lint` and this job cannot disagree about what
+    # passing means.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install --editable '.[dev]'
+      - run: ruff check .
+
   version:
     # This repo is its own marketplace, so master is the published artefact and
     # every install caches by version. A surface change under an unchanged

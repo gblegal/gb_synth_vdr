@@ -1,10 +1,7 @@
-import json
 import os
 import subprocess
 import sys
 from pathlib import Path
-
-import pytest
 
 from synthvdr.qa import ALL_GATES
 from synthvdr.qa.runner import GateContext, run_gates
