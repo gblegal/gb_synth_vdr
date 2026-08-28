@@ -68,8 +68,11 @@ annotation block") a meaningful check rather than a tautology.
         └── .synthvdr-flagged-tree ownership marker
 ```
 
-`room.conf` is deliberately a flat `KEY="VALUE"` file so that `tools/check.sh` can source
-the same file the Python reads. It declares the room codename, the document totals, the
+`room.conf` is deliberately a flat, shell-sourceable `KEY="VALUE"` file, so that whoever
+owns a room can read its constants from their own shell without a Python dependency. No
+shipped script sources it — `tools/check.sh` takes the room directory as an argument and
+execs `python3 -m synthvdr.qa`, reading no config at all — so the format is a guarantee
+kept for the room's owner rather than something the toolchain needs. It declares the room codename, the document totals, the
 three tree paths, the two annotation flag strings, the finding-ID prefixes, the section
 directories and the expected annotation-carrier count. Every path-valued key is validated
 against the room root when it is loaded — no key may escape the room, and no component may
@@ -164,7 +167,7 @@ judgement-shaped work. Anything that must be identical across runs lives here.
 
 | Module | Responsibility |
 |---|---|
-| `roomconf` | Parses `room.conf`, the single source of room constants. Validates every path-valued key against the room root; rejects escapes and redirecting symlinks. Shell-sourceable format so `tools/check.sh` reads the same file. |
+| `roomconf` | Parses `room.conf`, the single source of room constants. Validates every path-valued key against the room root; rejects escapes and redirecting symlinks. Shell-sourceable format, so a room's owner can read its constants from their own shell; no shipped script sources it. Rejects a key set twice rather than taking the last value. |
 | `domain` | Domain packs — the section taxonomy, document archetypes and finding seeds, loaded from `domain/ma/`. |
 | `slots` | The slot manifest: the deterministic list of document slots, each with a tier (`A` anchor / `F` filler). Holds the size presets — XS 40, S 60, M 200, L 800, XL 2,000 documents. |
 | `index_build` | Writes `_key/index-src/` and regenerates `index.md` from it. `index.md` is tool-facing but sits outside the blind tree, and is never hand-edited. |
