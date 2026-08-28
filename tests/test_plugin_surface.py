@@ -1354,11 +1354,13 @@ def test_the_licence_file_matches_what_the_manifests_declare():
 def test_scope_skill_checks_former_company_names_not_just_current_ones():
     """A company that HELD a name and later renamed keeps its history but not
     its name, so neither a plain web search nor an exact current-name register
-    lookup will surface it. Found in the wild: the shipped xs-room fixture's
-    "Halstead Fasteners Limited" collides with HENRY HALSTEAD (FASTENERS)
+    lookup will surface it. Found in the wild: the xs-room fixture's
+    "Halstead Fasteners Limited" collided with HENRY HALSTEAD (FASTENERS)
     LIMITED (00725298), which held that name 1962-1999, is still trading under
     a new one, and is in the same industry — recorded "clear" by a check that
-    only ever looked at names in use today.
+    only ever looked at names in use today. The fixture has since been renamed
+    to "Calverstoke Fasteners Limited"; this test keeps the LESSON pinned in
+    the skill, which is the part that must not be lost with the name.
     """
     body = _read(ROOT / "skills" / "vdr-scope" / "SKILL.md").lower()
     assert "former name" in body or "previous name" in body, (
@@ -1922,3 +1924,44 @@ def test_build_claude_skills_packages_only_skills_that_work_without_subagents():
     assert "vdr-author" in build, (
         "the premise for excluding /vdr-build is that it dispatches subagents"
     )
+
+
+def test_the_shipped_fixture_records_no_unresolved_name():
+    """The fixture is the worked example a reader copies, so a name it records
+    as anything but `clear` teaches the wrong thing — and gate 14 now reads
+    that column, so a `collision` here would fail the fixture's own QA run.
+
+    This is the check that would have caught "Halstead Fasteners Limited"
+    having been a real former company name, had anyone thought to run the
+    register search the skill now demands. It cannot re-run that search, so it
+    pins the weaker property it CAN hold: whatever the fixture records, it must
+    not be left outstanding.
+    """
+    from synthvdr.namecheck import load_name_check, unresolved
+
+    record = ROOT / "fixtures" / "xs-room" / "_key" / "name-check.md"
+    outstanding = unresolved(load_name_check(record))
+    assert not outstanding, (
+        "the shipped fixture records "
+        + ", ".join(f"{v.text!r} ({v.verdict})" for v in outstanding)
+    )
+
+
+def test_the_shipped_fixture_name_check_covers_every_name_its_fact_sheet_declares():
+    """The record and the fact sheet must not drift apart: a declared name with
+    no row is one nothing downstream ever checks, which is the hole
+    TECHNICAL-NOTES §6 warns an omitted row opens."""
+    from synthvdr.namecheck import _cast_candidates, _declared_candidates, load_name_check
+
+    key = ROOT / "fixtures" / "xs-room" / "_key"
+    fact_sheet = _read(key / "fact-sheet.md")
+    # The two DECLARED sources only, read with the parsers that own their
+    # format. entity_tokens' own prose scan is deliberately excluded: it
+    # reports the back half of a cast name wrapped across a line in the deal
+    # summary ("Bramcote\nIndustries Holdings Limited"), which is the accepted
+    # residual synthvdr/names.py documents, not a name anyone declared.
+    declared = {c.text for c in _declared_candidates(fact_sheet)}
+    declared |= {c.text for c in _cast_candidates(fact_sheet)}
+    recorded = {v.text for v in load_name_check(key / "name-check.md")}
+    assert declared <= recorded, sorted(declared - recorded)
+    assert declared, "the fixture declares no names at all — the check is vacuous"

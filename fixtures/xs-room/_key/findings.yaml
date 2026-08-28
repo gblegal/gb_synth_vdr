@@ -8,7 +8,7 @@ findings:
     multi_document: false
     source: "01_corporate/1.1_constitutional/1.1.1_constitutional-01.md"
     location: "Board minute dated 15 December 2025, clause 14.2 cross-reference"
-    substance: "As at the Completion Accounts Date of 31 December 2025, the board minutes of Halstead Fasteners Limited record that the change-of-control notice required under the facility agreement with its senior lender had not yet been served, and completion of the proposed sale would trigger a mandatory prepayment event without that consent."
+    substance: "As at the Completion Accounts Date of 31 December 2025, the board minutes of Calverstoke Fasteners Limited record that the change-of-control notice required under the facility agreement with its senior lender had not yet been served, and completion of the proposed sale would trigger a mandatory prepayment event without that consent."
     corroboration: []
     cross_links: []
     discoverable_from_blind: true

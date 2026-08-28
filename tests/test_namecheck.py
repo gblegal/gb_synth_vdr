@@ -443,3 +443,75 @@ def test_render_round_trips_plausible_names_cleanly(good_name, tmp_path):
     # Field for field, not just "some row came back" — the whole Verdict
     # must survive unchanged.
     assert loaded == verdicts
+
+
+# --- every matching heading's table is read, not just the first -----------
+#
+# _table_rows used to `break` on the first unrelated `##` heading, silently
+# ending the scan. integrity.parse_canonical_figures had the identical bug
+# over the identical file and was fixed the identical way ("Final review,
+# F3"). It matters more here: a brand, product, site or domain carries no
+# corporate suffix, so entity_tokens cannot find it and `## Invented names`
+# is its ONLY route into the check.
+
+SPLIT_FACT_SHEET = """# Project Testbed — fact sheet
+
+## Invented names
+
+| Name | Kind |
+|---|---|
+| Ashfell Holdings Limited | entity |
+
+## Deal summary
+
+Some prose that ends the first table.
+
+## Invented names
+
+| Name | Kind |
+|---|---|
+| Loomwright | brand |
+| ashfell.example | domain |
+
+## Cast
+
+| Name | Role |
+|---|---|
+| Priya Nandan | Finance Director |
+
+## Notes
+
+More prose.
+
+## Cast
+
+| Name | Role |
+|---|---|
+| Owen Kasprzak | General Counsel |
+"""
+
+
+def test_declared_names_under_a_second_invented_names_heading_are_still_read():
+    found = {c.text: c.kind for c in extract_candidates(SPLIT_FACT_SHEET)}
+    assert found["Ashfell Holdings Limited"] == "entity", "first table must still be read"
+    assert found["Loomwright"] == "brand", "a second ## Invented names table must be read too"
+    assert found["ashfell.example"] == "domain"
+
+
+def test_cast_rows_under_a_second_cast_heading_are_still_read():
+    found = {c.text: c.kind for c in extract_candidates(SPLIT_FACT_SHEET)}
+    assert found["Priya Nandan"] == "person"
+    assert found["Owen Kasprzak"] == "person", "a second ## Cast table must be read too"
+
+
+def test_a_contradiction_in_a_second_table_is_still_caught():
+    """The scan reaching further must not be a way to smuggle a
+    contradiction past _check_declared_person_consistency — the person/entity
+    conflict is exactly the masking hazard that check exists for."""
+    text = (
+        "## Cast\n\n| Name | Role |\n|---|---|\n| Priya Nandan | FD |\n\n"
+        "## Notes\n\nprose\n\n"
+        "## Invented names\n\n| Name | Kind |\n|---|---|\n| Priya Nandan | entity |\n"
+    )
+    with pytest.raises(NameCheckError, match="Priya Nandan"):
+        extract_candidates(text)

@@ -383,3 +383,55 @@ def test_subset_tolerates_a_repeated_section():
     pack = load_domain(DEFAULT_DOMAIN_ROOT)
     sub = pack.subset(XS_TWELVE + ["03_tax"])
     assert len(sub.sections) == 12
+
+
+# --- default_archetype must name a real archetype -------------------------
+#
+# classify_archetype falls back to it for any filename no pattern matches, and
+# floor_for then subscripts pack.archetypes[...]. A pack whose default names
+# nothing loaded cleanly and detonated later as a bare KeyError, surfacing
+# through the runner as "gate_10_depth: gate raised KeyError: 'standrd'" — a
+# message that names the typo but not the file, and reads like a bug in the
+# gate rather than in archetypes.yaml.
+
+
+def test_a_default_archetype_naming_nothing_is_refused_by_the_type():
+    with pytest.raises(DomainError) as excinfo:
+        DomainPack(
+            sections=[],
+            archetypes={"register": Archetype("register", 900, ["register"])},
+            default_archetype="registr",
+            tier_f_floor=800,
+            finding_archetypes={},
+        )
+    message = str(excinfo.value)
+    assert "registr" in message and "register" in message, (
+        "the error must name both the bad default and what the pack actually has"
+    )
+
+
+def test_a_default_archetype_naming_nothing_is_refused_when_loaded_from_disk(tmp_path):
+    """load_domain re-raises with the pack root, so a bad pack on disk still
+    says WHICH pack — the whole point of enforcing on the type instead."""
+    (tmp_path / "sections.yaml").write_text(
+        "sections:\n"
+        "  - {number: 1, dir_name: 01_x, title: X, workstream: x, weight: 1.0, subsections: [a]}\n"
+    )
+    (tmp_path / "archetypes.yaml").write_text(
+        "archetypes:\n"
+        '  register: {floor: 900, filename_patterns: ["register"]}\n'
+        "default_archetype: registr\n"
+        "tier_f_floor: 800\n"
+    )
+    (tmp_path / "finding-archetypes.yaml").write_text("finding_archetypes:\n  x: [a]\n")
+    with pytest.raises(DomainError) as excinfo:
+        load_domain(tmp_path)
+    assert str(tmp_path) in str(excinfo.value)
+    assert "registr" in str(excinfo.value)
+
+
+def test_the_shipped_domain_pack_has_a_valid_default_archetype():
+    """The control: the invariant must not be one only a synthetic pack can
+    satisfy, and this is the pack every real room is built from."""
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    assert pack.default_archetype in pack.archetypes

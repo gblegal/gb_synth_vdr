@@ -9,6 +9,7 @@ import pytest
 
 from synthvdr.render.docx import (
     _ATX_HEADING,
+    _FENCE,
     RenderUnavailable,
     default_scanned_count,
     render_tree_docx,
@@ -710,7 +711,7 @@ def _findings_with(*paths):
 
 def _csv_slots(path):
     rows = path.read_text(encoding="utf-8").splitlines()
-    assert rows[0] == "slot,page", "pdf.mjs skips row 1 as a header; it must be one"
+    assert rows[0] == "slot", "pdf.mjs skips row 1 as a header; it must be one"
     return [row.split(",")[0] for row in rows[1:] if row.strip()]
 
 
@@ -816,8 +817,9 @@ def test_pdf_mjs_loads_the_manifest_write_scanned_csv_writes(tmp_path):
         'import { existsSync } from "node:fs";\n'
         'import path from "node:path";\n'
         f"{loader}\n"
-        f"const slots = await loadScannedSlots({json.dumps(str(room / 'data-room'))});\n"
-        "console.log(JSON.stringify([...slots].map(([k, v]) => [k, [...v]]).sort()));\n"
+        f"const r = await loadScannedSlots({json.dumps(str(room / 'data-room'))});\n"
+        "console.log(JSON.stringify({slots: [...r.slots].sort(), "
+        "legacyPageRows: r.legacyPageRows}));\n"
     )
     proc = subprocess.run(
         [node, "--input-type=module", "-e", script], capture_output=True, text=True
@@ -826,8 +828,227 @@ def test_pdf_mjs_loads_the_manifest_write_scanned_csv_writes(tmp_path):
         raise AssertionError(f"node failed to run pdf.mjs's loadScannedSlots: {proc.stderr}")
 
     loaded = json.loads(proc.stdout.strip())
-    assert loaded, "pdf.mjs read the manifest as empty — the two halves are not connected"
-    assert sorted(slot for slot, _ in loaded) == sorted(_csv_slots(room / "_key" / "scanned.csv"))
-    # Page 1 for every row, because that is the only page pdf.mjs honours —
-    # see write_scanned_csv on why a higher number must not be written yet.
-    assert all(pages == [1] for _, pages in loaded)
+    assert loaded["slots"], "pdf.mjs read the manifest as empty — the two halves are not connected"
+    assert sorted(loaded["slots"]) == sorted(_csv_slots(room / "_key" / "scanned.csv"))
+    # No page column any more, so nothing for pdf.mjs to warn about. A
+    # non-zero count here would mean write_scanned_csv had regressed to the
+    # two-column format whose page number selected nothing.
+    assert loaded["legacyPageRows"] == 0
+
+
+# --- fenced code blocks, the second half of the docx.py port --------------
+
+FENCE_CORPUS = [
+    "# Real heading",
+    "```bash",
+    "# a shell comment",
+    "## not a heading either",
+    "```",
+    "# Heading again",
+    "~~~",
+    "# tilde-fenced comment",
+    "~~~",
+    "```python",
+    "# unclosed fence runs to EOF",
+    "# still inside the fence",
+]
+
+
+def _python_fenced_headings(lines):
+    """What docx.py's own state machine makes of each line: the heading level
+    for a heading, or None for a paragraph. Mirrors render_tree_docx's loop
+    exactly — the shape the node side is compared against below."""
+    out, in_fence, fence_char = [], None, None
+    in_fence = False
+    for raw in lines:
+        stripped = raw.rstrip()
+        if in_fence:
+            out.append(None)
+            closing = _FENCE.match(stripped)
+            if closing and closing.group(1)[0] == fence_char:
+                in_fence, fence_char = False, None
+            continue
+        fence = _FENCE.match(stripped)
+        if fence:
+            in_fence, fence_char = True, fence.group(1)[0]
+            out.append(None)
+            continue
+        match = _ATX_HEADING.match(stripped)
+        out.append(min(len(match.group(1)), 4) if match else None)
+    return out
+
+
+def test_pdf_mjs_fence_tracking_matches_python_exactly():
+    """pdf.mjs shipped with no fence handling at all, so every `# comment`
+    inside a fenced block became an <h1> while the DOCX render correctly left
+    it a paragraph. docx.py's own comment names the case: "# a shell comment"
+    is the most common line in any snippet, and is not a heading just because
+    a fence is open.
+
+    Runs the real FENCE regex out of the shipped pdf.mjs under node, same as
+    the rotation and heading ports; SKIPs, never silently passes, without node.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available — cross-language fence parity unverified")
+
+    fence_src = _extract_pdf_mjs(r"^const FENCE = /.*/;$", "the `const FENCE = /.../;` line")
+    atx_src = _extract_pdf_mjs(r"^const ATX_HEADING = /.*/;$", "the ATX_HEADING line")
+    script = (
+        f"{fence_src}\n{atx_src}\n"
+        f"const lines = {json.dumps(FENCE_CORPUS)};\n"
+        "let inFence = false, fenceChar = null;\n"
+        "const out = [];\n"
+        "for (const raw of lines) {\n"
+        "  const line = raw.trimEnd();\n"
+        "  if (inFence) {\n"
+        "    out.push(null);\n"
+        "    const c = FENCE.exec(line);\n"
+        "    if (c && c[1][0] === fenceChar) { inFence = false; fenceChar = null; }\n"
+        "    continue;\n"
+        "  }\n"
+        "  const f = FENCE.exec(line);\n"
+        "  if (f) { inFence = true; fenceChar = f[1][0]; out.push(null); continue; }\n"
+        "  const m = ATX_HEADING.exec(line);\n"
+        "  out.push(m ? Math.min(m[1].length, 4) : null);\n"
+        "}\n"
+        "console.log(JSON.stringify(out));\n"
+    )
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", script], capture_output=True, text=True
+    )
+    if proc.returncode != 0:
+        raise AssertionError(f"node failed to run pdf.mjs's FENCE: {proc.stderr}")
+
+    py_results = _python_fenced_headings(FENCE_CORPUS)
+    assert json.loads(proc.stdout.strip()) == py_results
+
+    # Pin the rule itself, so a pair of regexes that both matched nothing
+    # could not satisfy the equality above.
+    assert py_results[0] == 1, "a real heading outside any fence must stay a heading"
+    assert py_results[2] is None and py_results[3] is None, (
+        "'# a shell comment' inside a fence must not be a heading"
+    )
+    assert py_results[5] == 1, "the fence must close and headings resume after it"
+    assert py_results[7] is None, "a ~~~ fence must be tracked as well as ```"
+    assert py_results[-1] is None, "an unclosed fence must run to EOF"
+
+
+def test_render_tree_docx_keeps_a_hash_comment_inside_a_fence_as_a_paragraph(tmp_path):
+    """The Python side of the same rule, checked against real .docx output
+    rather than the regex — this is the behaviour pdf.mjs is being held to."""
+    src = tmp_path / "data-room" / "01_corporate"
+    src.mkdir(parents=True)
+    (src / "1.1.1_articles.md").write_text(
+        "# Articles\n\n```bash\n# a shell comment\n```\n", encoding="utf-8"
+    )
+    out = tmp_path / "data-room-docx"
+    render_tree_docx(tmp_path / "data-room", out)
+
+    document = docx_module.Document(str(out / "01_corporate" / "1.1.1_articles.docx"))
+    styles = {p.text: p.style.name for p in document.paragraphs}
+    assert styles["Articles"].startswith("Heading")
+    assert not styles["# a shell comment"].startswith("Heading")
+    assert "```bash" in styles, "fence markers must survive the render verbatim"
+
+
+# --- the scanned render is per PAGE, not per document-tall image ----------
+#
+# The manifest's page column used to select nothing but page 1, and the
+# page-1 branch rotated one document-tall screenshot about its own centre, so
+# the sideways displacement grew with the length of the document. Content
+# still reached every page (Chrome flowed the tall image across them), so the
+# fix is geometric: one page-sized image per page, each with its own skew.
+#
+# Driving the real renderer needs puppeteer and a Chromium, neither of which
+# is a dependency of this package, so these pin the arithmetic and the
+# constants out of the shipped file rather than rendering.
+
+
+def test_pdf_mjs_page_box_is_a4_at_96dpi():
+    width = int(_extract_pdf_mjs(r"^const PAGE_WIDTH_PX = (\d+);$", "PAGE_WIDTH_PX").split("=")[1].strip(" ;"))
+    height = int(_extract_pdf_mjs(r"^const PAGE_HEIGHT_PX = (\d+);$", "PAGE_HEIGHT_PX").split("=")[1].strip(" ;"))
+    # A4 is 210x297mm; at 96 CSS px/inch that is 793.7 x 1122.5, and Chrome
+    # lays out at 96dpi. Wrong constants here would tile at the wrong
+    # boundaries and cut every page in the same wrong place.
+    assert (width, height) == (794, 1123), (width, height)
+    assert round(height / width, 2) == round(297 / 210, 2), "page box must keep A4's aspect ratio"
+
+
+@pytest.mark.parametrize(
+    "content_height, expected_pages",
+    [
+        (0, 1),        # an empty document is still one page, never zero
+        (500, 1),      # shorter than a page
+        (1123, 1),     # exactly one page
+        (1124, 2),     # one pixel over rolls to a second page
+        (5246, 5),     # the 2,629-word deed this was verified against
+    ],
+)
+def test_pdf_mjs_page_count_arithmetic(content_height, expected_pages):
+    """Runs the real `const pageCount = ...` line out of the shipped pdf.mjs,
+    so a change to the tiling rule cannot pass by agreeing with a copy kept
+    here. The 5-page row is the case that matters: the old code called
+    rotationFor exactly once no matter how long the document was."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available — page-count arithmetic unverified")
+
+    height_const = _extract_pdf_mjs(r"^const PAGE_HEIGHT_PX = \d+;$", "PAGE_HEIGHT_PX")
+    count_expr = _extract_pdf_mjs(
+        r"^  const pageCount = .*$", "the `const pageCount = ...` line"
+    )
+    script = (
+        f"{height_const}\n"
+        f"const contentHeight = {content_height};\n"
+        f"{count_expr.strip()}\n"
+        "console.log(pageCount);\n"
+    )
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", script], capture_output=True, text=True
+    )
+    if proc.returncode != 0:
+        raise AssertionError(f"node failed to run pdf.mjs's pageCount: {proc.stderr}")
+    assert int(proc.stdout.strip()) == expected_pages
+
+
+def test_pdf_mjs_reports_a_legacy_page_column_instead_of_ignoring_it(tmp_path):
+    """A manifest from before per-document scanning still loads — the first
+    cell is the slot either way — but its page column now selects nothing, and
+    saying so is the whole point: an obsolete column that parses cleanly and
+    does nothing is how the page-1-only behaviour hid in the first place."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available — legacy-manifest handling unverified")
+
+    room = tmp_path / "room"
+    (room / "data-room").mkdir(parents=True)
+    (room / "_key").mkdir(parents=True)
+    (room / "_key" / "scanned.csv").write_text(
+        "slot,page\n01_a/1.1_x/1.1.1_a,1\n01_a/1.1_x/1.1.2_b,3\n", encoding="utf-8"
+    )
+    loader = _extract_pdf_mjs(
+        r"^async function loadScannedSlots\(src\) \{.*?\n\}",
+        "loadScannedSlots",
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    script = (
+        'import { readFile } from "node:fs/promises";\n'
+        'import { existsSync } from "node:fs";\n'
+        'import path from "node:path";\n'
+        f"{loader}\n"
+        f"const r = await loadScannedSlots({json.dumps(str(room / 'data-room'))});\n"
+        "console.log(JSON.stringify({slots: [...r.slots].sort(), "
+        "legacyPageRows: r.legacyPageRows}));\n"
+    )
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", script], capture_output=True, text=True
+    )
+    if proc.returncode != 0:
+        raise AssertionError(f"node failed to run loadScannedSlots: {proc.stderr}")
+
+    loaded = json.loads(proc.stdout.strip())
+    assert loaded["slots"] == ["01_a/1.1_x/1.1.1_a", "01_a/1.1_x/1.1.2_b"], (
+        "both slots must still be scanned — the page column is obsolete, not disqualifying"
+    )
+    assert loaded["legacyPageRows"] == 2, "every row carrying the dead column must be counted"

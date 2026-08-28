@@ -227,11 +227,13 @@ For each candidate, the test differs by Kind:
   signal: a company you have never heard of sitting at the top of a search for your invented
   name is usually there because it once WAS your invented name.
 
-  This is not hypothetical. The shipped `xs-room` fixture invented "Halstead Fasteners
-  Limited" for a precision-fastener manufacturer and recorded it `clear`. `HENRY HALSTEAD
-  (FASTENERS) LIMITED` (company 00725298) held that name from 1962 to 1999, still trades
-  today under a different one, and is in the same industry. An exact-name search finds
-  nothing; the register search puts it first.
+  This is not hypothetical, and this project shipped it. The `xs-room` fixture invented
+  "Halstead Fasteners Limited" for a precision-fastener manufacturer and recorded it
+  `clear`. `HENRY HALSTEAD (FASTENERS) LIMITED` (company 00725298) held that name from 1962
+  to 1999, still trades today under a different one, and is in the same industry. An
+  exact-name search finds nothing; the register search puts it first. The fixture has since
+  been renamed to "Calverstoke Fasteners Limited" — the fix a `collision` demands, applied
+  to this project's own room, and the reason the paragraph above exists.
 - **`person`**: a **notability** check only — is this a public figure? Never a collision
   check: every plausible surname exists somewhere, and treating an ordinary name as a hit
   would make the check impossible to pass.

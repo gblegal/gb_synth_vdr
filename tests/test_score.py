@@ -974,3 +974,63 @@ def test_two_distractor_false_alarms_are_ordered_independently_of_citation_order
         score(forward, findings(), two_distractors()).false_alarms
         == score(reverse, findings(), two_distractors()).false_alarms
     )
+
+
+# --- a level-5 heading is sub-structure, not another finding ---------------
+#
+# `^#{2,4}` is anchored only at the start, so on "##### Root cause" it matched
+# the first four hashes and handed the fifth back inside the capture — a
+# finding titled "# Root cause". Precision is matched / len(output.findings),
+# so a tool that uses ##### for sub-structure lost precision for its heading
+# style rather than its findings.
+
+
+def test_a_level_five_heading_is_not_a_reported_finding():
+    report = (
+        "## Contamination provision\n"
+        "Evidence in `11_env/11.1_x/11.1.1_report.md`.\n\n"
+        "##### Root cause\n"
+        "critical detail that belongs to the finding above\n"
+    )
+    out = parse_markdown_report(report)
+    assert [f.title for f in out.findings] == ["Contamination provision"]
+
+
+def test_a_level_five_heading_never_becomes_a_title_with_a_stray_hash():
+    """The specific corruption: the fifth hash used to survive into the
+    title, so even a reader of the scorecard could not tell what happened."""
+    out = parse_markdown_report("## Real\ntext\n\n##### Deep\ntext\n")
+    assert all(not f.title.startswith("#") for f in out.findings), (
+        [f.title for f in out.findings]
+    )
+
+
+@pytest.mark.parametrize(
+    "heading, is_finding",
+    [
+        ("## Two", True),
+        ("### Three", True),
+        ("#### Four", True),
+        ("##### Five", False),
+        ("###### Six", False),
+        ("# One", False),
+    ],
+)
+def test_which_heading_depths_count_as_findings(heading, is_finding):
+    """Level 1 is the report title and 5+ is sub-structure; 2-4 are findings.
+    Parametrised so a change to either bound shows up as a named failure."""
+    text = f"{heading}\nbody text\n"
+    if is_finding:
+        assert [f.title for f in parse_markdown_report(text).findings] == [heading.split(" ", 1)[1]]
+    else:
+        with pytest.raises(ToolOutputError):
+            parse_markdown_report(text)
+
+
+def test_a_lenient_separator_is_kept_for_third_party_reports():
+    """Deliberately NOT docx.py's `[ \\t]+`. That constant parses this
+    project's own generated markdown, where CommonMark conformance is the
+    point; this one parses a report from an arbitrary tool under test, where
+    refusing "##Finding" would score the tool down for its markdown style."""
+    out = parse_markdown_report("##Finding 1\nbody\n")
+    assert [f.title for f in out.findings] == ["Finding 1"]
