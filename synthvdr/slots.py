@@ -102,12 +102,21 @@ def build_slot_manifest(pack: DomainPack, preset: SizePreset) -> List[Slot]:
                     tier=tier,
                 )
             )
-    # Sort by (section_number, sub_index, ordinal) to ensure contiguous subsections.
-    # Keeps round-robin tier assignment while grouping same-subsection slots.
+    # The slots were appended in round-robin order across subsections, which
+    # is what spreads the anchor tier evenly instead of concentrating it in
+    # the first subsection of each section. That ordering is right for TIER
+    # ASSIGNMENT and wrong for the manifest, where a reader expects a
+    # section's subsections to run contiguously — so the tiers are assigned
+    # first and the list is re-sorted here, rather than building it in
+    # manifest order and losing the spread.
+    #
+    # Sorting on the parsed triple, not on slot_id: slot_id is a dotted
+    # STRING, so "10" sorts before "2" and section 10 would land between 1
+    # and 2. Every component is compared as an integer for that reason.
     def slot_sort_key(slot: Slot) -> tuple:
         parts = slot.slot_id.split(".")
         section_number = int(parts[0])
-        sub_index = int(parts[1]) - 1  # Convert back to 0-based
+        sub_index = int(parts[1]) - 1
         ordinal = int(parts[2])
         return (section_number, sub_index, ordinal)
 

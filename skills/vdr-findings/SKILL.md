@@ -213,16 +213,20 @@ error is far cheaper to fix now, before a single document exists, than after a f
 Then set `EXPECTED_KDP_CARRIERS` in `room.conf` to
 `len([p for p in f.all_evidence_paths() if p.endswith(".md")])` — the number of *distinct
 markdown* documents named across every finding's `source` and `corroboration` combined (a
-document corroborating two findings still counts once). **Markdown only, not every evidence
-path**: `synthvdr.twin.build_flagged_tree` never annotates non-markdown evidence (a CSV
-register, say — there is nowhere in a CSV to append prose), so a `.csv` evidence path can
-never become a carrier, and counting it here sets the scalar too high by exactly the number
-of non-markdown evidence paths. Gate 8 then hard-FAILs with "`EXPECTED_KDP_CARRIERS=N` in
-room.conf is stale", pointing at `room.conf` when the real defect is this formula — this is
-the third time that exact collision has appeared in this project, fixed in the gate's code
-twice before and never in this instruction until now. Get the count from the loaded
-`FindingSet`, not by counting rows in the YAML by eye — a document shared between findings,
-or a non-markdown evidence path, both make an eyeballed count wrong in a different direction.
+document corroborating two findings still counts once). **Edit the existing
+`EXPECTED_KDP_CARRIERS=` line — do not append a second one**: `load_room_conf` rejects a
+key set twice, by line number, rather than silently taking the last value.
+
+**Markdown only, not every evidence path**: `synthvdr.twin.build_flagged_tree` never
+annotates non-markdown evidence (a CSV register, say — there is nowhere in a CSV to append
+prose), so a `.csv` evidence path can never become a carrier, and counting it here sets the
+scalar too high by exactly the number of non-markdown evidence paths. Gate 8 then hard-FAILs
+with "`EXPECTED_KDP_CARRIERS=N` in room.conf is stale", pointing at `room.conf` when the
+real defect is this formula — this is the third time that exact collision has appeared in
+this project, fixed in the gate's code twice before and never in this instruction until now.
+Get the count from the loaded `FindingSet`, not by counting rows in the YAML by eye — a
+document shared between findings, or a non-markdown evidence path, both make an eyeballed
+count wrong in a different direction.
 
 Then check every evidence path lands in a section this room actually builds:
 

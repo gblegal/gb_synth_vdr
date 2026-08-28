@@ -658,6 +658,73 @@ def test_consolidate_wave_incoming_rejects_a_findings_row_not_in_the_gate_b_regi
 # reaches for anything else has misunderstood its brief, and must say so rather than land.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Review item 15: subagent intake was read with bare row["id"] / row["workstream"],
+# so an incoming file missing either field escaped as a raw KeyError mid-
+# consolidation instead of the SchemaError every other path in this module
+# raises — the thing that lets /vdr-build print one readable line rather than a
+# traceback. These files are written by a vdr-author subagent, which is exactly
+# the untrusted input consolidate_wave_incoming exists to police.
+#
+# pytest.raises(SchemaError) does not catch KeyError or TypeError, so each of
+# these fails for the right reason against the old code, not on a message match.
+
+
+def test_consolidation_names_the_file_and_row_for_a_findings_row_with_no_id():
+    incoming = {"wave2-batch-a": {"findings": [{"title": "no id here"}]}}
+    with pytest.raises(SchemaError, match=r"wave2-batch-a: findings\[0\].*'id'"):
+        consolidate_wave_incoming(
+            FINDINGS_DOC, incoming, {}, PREFIX_FOR_WORKSTREAM_CONSOLIDATION
+        )
+
+
+def test_consolidation_names_the_file_and_row_for_a_new_finding_with_no_id():
+    incoming = {"wave2-batch-a": {"new_findings": [{"workstream": "environmental"}]}}
+    with pytest.raises(SchemaError, match=r"wave2-batch-a: new_findings\[0\].*'id'"):
+        consolidate_wave_incoming(
+            FINDINGS_DOC, incoming, {}, PREFIX_FOR_WORKSTREAM_CONSOLIDATION
+        )
+
+
+def test_consolidation_names_the_field_for_a_new_finding_with_no_workstream():
+    incoming = {"wave2-batch-a": {"new_findings": [{"id": "wave2-batch-a-NEW-1"}]}}
+    with pytest.raises(SchemaError, match=r"wave2-batch-a:wave2-batch-a-NEW-1.*'workstream'"):
+        consolidate_wave_incoming(
+            FINDINGS_DOC, incoming, {}, PREFIX_FOR_WORKSTREAM_CONSOLIDATION
+        )
+
+
+def test_consolidation_skips_an_already_mapped_row_before_checking_its_workstream():
+    """Pins the ORDER of the two checks, which is not interchangeable.
+
+    A resumed build re-reads incoming files whose rows it has already allocated
+    ids for. `id` must be required first, because it is the key the skip is
+    decided on; `workstream` must be required after, or a rerun would start
+    validating rows this run is deliberately ignoring and fail where the first
+    run succeeded — breaking the idempotency property the resumed-build test
+    above exists to protect.
+    """
+    incoming = {"wave2-batch-a": {"new_findings": [{"id": "wave2-batch-a-NEW-1"}]}}
+    result = consolidate_wave_incoming(
+        FINDINGS_DOC,
+        incoming,
+        {"wave2-batch-a-NEW-1": "ENV-2"},
+        PREFIX_FOR_WORKSTREAM_CONSOLIDATION,
+    )
+    assert result.new_mapping == {}
+
+
+def test_consolidation_rejects_an_incoming_row_that_is_not_a_mapping():
+    # `findings: [foo]` parses to a list of strings. On a string row,
+    # `"id" not in row` is a substring test, so _require alone would let it
+    # through to `row["id"]` and a TypeError.
+    incoming = {"wave2-batch-a": {"findings": ["ENV-1"]}}
+    with pytest.raises(SchemaError, match=r"wave2-batch-a: findings\[0\].*not a mapping"):
+        consolidate_wave_incoming(
+            FINDINGS_DOC, incoming, {}, PREFIX_FOR_WORKSTREAM_CONSOLIDATION
+        )
+
+
 FINDINGS_DOC_WITH_CORROBORATION = {
     "schema_version": 1,
     "room": "Project Testbed",

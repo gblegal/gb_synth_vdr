@@ -311,13 +311,21 @@ def check_tree_identity(
 
 
 def _parse_line(line: str) -> tuple[str, str] | None:
-    """Parse KEY=VALUE, handling quoted and bare values plus comments.
+    """Parse one KEY=VALUE line the way bash would source it.
 
-    Raises RoomConfError if the line has a syntax error (e.g., unterminated quote).
-    Returns (key, value) or None if the line is malformed but not a syntax error.
+    Returns (key, value), or None if the line is not a KEY=VALUE assignment
+    at all — `load_room_conf` turns that None into a RoomConfError naming
+    the line number, so a line this function cannot read is never simply
+    skipped. Raises RoomConfError directly for a line that IS an assignment
+    but is malformed inside it: an unterminated quote, or text after the
+    closing quote that is not a properly spaced comment.
 
-    For quoted values: KEY="VALUE" where VALUE can contain # literally.
-    For bare values: KEY=VALUE where a # preceded by whitespace starts a comment.
+    A quoted value may contain '#' literally; in a bare value a '#'
+    preceded by whitespace starts a comment. Those are bash's rules, not a
+    config format invented here: room.conf is "shell-sourceable KEY=VALUE so
+    tools/check.sh can source the same file" (module docstring), so what
+    bash would do with a line is the specification this has to meet, whether
+    or not any shipped script sources it today.
     """
     match = re.match(r'^([A-Z][A-Z0-9_]*)=(.*)$', line)
     if not match:
@@ -334,11 +342,25 @@ def _parse_line(line: str) -> tuple[str, str] | None:
                 value = remainder[1:i]
                 after_quote = remainder[i+1:]
 
-                # After the closing quote, only whitespace and optional # comment are allowed.
-                # A # must be preceded by whitespace to start a comment; #nospace is trailing text.
-                # We reject input like "value"x or "value"#nospace because they cannot
-                # be faithfully represented in bash, and we use silence-equals-pass
-                # discipline to catch typos early rather than lose data silently.
+                # After the closing quote, only whitespace and an optional
+                # comment are allowed. The comment's '#' must be preceded by
+                # whitespace; "value"#nospace is trailing text, not a comment.
+                #
+                # RAISING IS THE POINT, AND THE ALTERNATIVE IS THE FAILURE THIS
+                # PROJECT IS BUILT AGAINST. "value"x and "value"#nospace are
+                # things bash would read differently from any reading we could
+                # choose here, so the only honest options are to reject the line
+                # or to keep a value the room will not actually be configured
+                # with. Silence must never equal a pass — qa/runner.py's module
+                # docstring records that exact silence having already hidden real
+                # defects for two phases of a previous build — so the line is
+                # rejected, by number, while the author is still editing it.
+                #
+                # (This comment previously said the opposite: that the rejection
+                # was there because "we use silence-equals-pass discipline to
+                # catch typos early". That named the project's discipline
+                # backwards, in the one place a reader is most likely to be
+                # learning the vocabulary from.)
                 trailing = after_quote.lstrip()
                 if trailing:
                     # There's non-whitespace content after the quote.
@@ -382,9 +404,6 @@ class RoomConf:
     def get_list(self, key: str) -> List[str]:
         return self.get(key).split()
 
-    def get_pattern(self, key: str) -> str:
-        return self.get(key)
-
     def get_relative_path(self, key: str) -> str:
         """Like get(), but for a key whose value must be a safe relative
         path. Applies the same non-empty / non-absolute / no-'..' / not-the-
@@ -401,6 +420,9 @@ def load_room_conf(path: Path) -> RoomConf:
     if not path.is_file():
         raise RoomConfError(f"no room.conf at {path}")
     values: Dict[str, str] = {}
+    # Where each key was FIRST set, so a repeat can name both lines rather
+    # than just the one it happened to be standing on.
+    set_at: Dict[str, int] = {}
     for line_num, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -417,7 +439,30 @@ def load_room_conf(path: Path) -> RoomConf:
             raise RoomConfError(f"{path}: line {line_num}: malformed: {raw}")
 
         key, value = result
+        # A key set twice used to take the last value, silently — the only
+        # malformation in this file that was not rejected by line number.
+        # Every other reader of room.conf is downstream of this dict, so the
+        # room would then be built and gated against a value the author can
+        # see in the file and did not intend, with nothing anywhere able to
+        # notice: silence standing in for a pass, in the loader for the file
+        # that decides what every gate is checking against.
+        #
+        # Rejected whether or not the two values agree. An identical repeat is
+        # not the harmless case it looks like — room.conf is a dozen
+        # hand-written lines, so a key appearing twice means the author edited
+        # one copy and left the other, and whether the values happen to match
+        # is luck about which copy was edited, not evidence of intent. Contrast
+        # namecheck._declared_candidates, which does let an identical repeat
+        # through: there the two sides carry the same meaning and there is
+        # nothing to arbitrate.
+        if key in values:
+            raise RoomConfError(
+                f"{path}: line {line_num}: {key} is set again here to {value!r}, "
+                f"having already been set to {values[key]!r} on line {set_at[key]} "
+                f"— the later value would silently win; remove one of the two lines"
+            )
         values[key] = value
+        set_at[key] = line_num
 
     missing = [k for k in REQUIRED_KEYS if k not in values]
     if missing:

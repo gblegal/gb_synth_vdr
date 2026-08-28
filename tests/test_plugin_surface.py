@@ -479,6 +479,38 @@ def test_scope_skill_blocks_on_unresolved_name_collisions():
     assert "collision" in body
 
 
+def test_scope_skill_and_namecheck_agree_on_the_verdict_vocabulary():
+    """Review item 04: `VERDICTS` omitted `unchecked` while /vdr-scope told the
+    author to write it, and the two could disagree indefinitely because nothing
+    read the constant and nothing compared the two. The renderer now REJECTS a
+    verdict outside `VERDICTS`, so a skill naming a value the code refuses would
+    hand an author an instruction that raises. Pins the sentence against the
+    tuple so they cannot drift apart again.
+    """
+    from synthvdr.namecheck import VERDICTS
+
+    body = _read(ROOT / "skills" / "vdr-scope" / "SKILL.md")
+    sentence = next(
+        (line for line in body.splitlines() if line.startswith("Record each result as")),
+        None,
+    )
+    assert sentence is not None, "the /vdr-scope sentence naming the verdicts has moved"
+    # The sentence wraps, so read to the end of its paragraph.
+    lines = body.splitlines()
+    start = lines.index(sentence)
+    paragraph = []
+    for line in lines[start:]:
+        if not line.strip():
+            break
+        paragraph.append(line)
+    named = set(re.findall(r"`([a-z]+)`", " ".join(paragraph)))
+    assert named >= set(VERDICTS), (
+        f"/vdr-scope names {sorted(named)}; VERDICTS is {sorted(VERDICTS)} — "
+        "a verdict the skill omits is one an author will never write, and one "
+        "the skill invents is one render_name_check_md now raises on"
+    )
+
+
 def test_findings_skill_states_the_hard_gate_before_authoring():
     body = _read(ROOT / "skills" / "vdr-findings" / "SKILL.md").lower()
     assert "gate b" in body
@@ -1683,7 +1715,14 @@ def test_check_sh_uses_the_interpreter_it_is_told_to(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _throwaway_repo(tmp_path):
+def _throwaway_repo(tmp_path, base_version="1.0.0"):
+    """A two-file repo at `base_version`, for driving version-check.sh.
+
+    `base_version=None` omits the manifest from the base commit entirely —
+    the case where the base ref predates .claude-plugin/, which is the only
+    way to exercise the script's own empty-base branch.
+    """
+
     def git(*args):
         subprocess.run(
             ["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True
@@ -1694,7 +1733,10 @@ def _throwaway_repo(tmp_path):
     git("config", "user.name", "Test")
     (tmp_path / ".claude-plugin").mkdir()
     (tmp_path / "skills").mkdir()
-    (tmp_path / ".claude-plugin" / "plugin.json").write_text('{"version": "1.0.0"}\n')
+    if base_version is not None:
+        (tmp_path / ".claude-plugin" / "plugin.json").write_text(
+            '{"version": "%s"}\n' % base_version
+        )
     (tmp_path / "skills" / "SKILL.md").write_text("original\n")
     (tmp_path / "README.md").write_text("original\n")
     git("add", "-A")
@@ -1738,6 +1780,102 @@ def test_version_check_passes_when_the_version_moves_with_the_surface(tmp_path):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "1.0.0 -> 1.1.0" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Review item 16: the script compared base and head for INEQUALITY only, so a
+# version moving BACKWARDS passed the gate whose entire premise is that
+# installs cache by version. And `version_at` died rather than returning
+# empty when the base ref had no manifest — see the last test below.
+
+
+def test_version_check_fails_when_the_version_moves_backwards(tmp_path):
+    if not shutil.which("bash"):
+        pytest.skip("bash not available in this environment")
+    git = _throwaway_repo(tmp_path)
+    (tmp_path / "skills" / "SKILL.md").write_text("changed\n")
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text('{"version": "0.9.9"}\n')
+    git("commit", "-qam", "change a skill and bump the wrong way")
+
+    result = _run_version_check(tmp_path, "HEAD~1")
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    combined = result.stdout + result.stderr
+    assert "does not move forwards" in combined
+    assert "1.0.0" in combined and "0.9.9" in combined, "name both numbers"
+
+
+def test_version_check_compares_components_numerically_not_lexically(tmp_path):
+    # 1.9.0 -> 1.10.0 is a legitimate bump that a STRING comparison rejects,
+    # because "1.10.0" sorts before "1.9.0". This is the case that decides
+    # whether the comparison is real or merely looks like one.
+    if not shutil.which("bash"):
+        pytest.skip("bash not available in this environment")
+    git = _throwaway_repo(tmp_path, base_version="1.9.0")
+    (tmp_path / "skills" / "SKILL.md").write_text("changed\n")
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text('{"version": "1.10.0"}\n')
+    git("commit", "-qam", "change a skill and bump the minor into double digits")
+
+    result = _run_version_check(tmp_path, "HEAD~1")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1.9.0 -> 1.10.0" in result.stdout
+
+
+def test_version_check_catches_a_backwards_move_a_string_compare_would_allow(tmp_path):
+    # The mirror image: 1.10.0 -> 1.9.0 IS backwards, and a string comparison
+    # would wave it through. Both directions are needed — either one alone
+    # passes with a comparison that is simply inverted.
+    if not shutil.which("bash"):
+        pytest.skip("bash not available in this environment")
+    git = _throwaway_repo(tmp_path, base_version="1.10.0")
+    (tmp_path / "skills" / "SKILL.md").write_text("changed\n")
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text('{"version": "1.9.0"}\n')
+    git("commit", "-qam", "change a skill and go backwards past a double digit")
+
+    result = _run_version_check(tmp_path, "HEAD~1")
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "does not move forwards" in result.stdout + result.stderr
+
+
+def test_version_check_does_not_order_a_version_it_cannot_parse(tmp_path):
+    # A pre-release suffix is outside what this comparison is competent to
+    # order. It must not fail the PR — and it must not pass in silence either.
+    if not shutil.which("bash"):
+        pytest.skip("bash not available in this environment")
+    git = _throwaway_repo(tmp_path)
+    (tmp_path / "skills" / "SKILL.md").write_text("changed\n")
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text('{"version": "1.0.1-rc1"}\n')
+    git("commit", "-qam", "change a skill and bump to a pre-release")
+
+    result = _run_version_check(tmp_path, "HEAD~1")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ordering not checked" in result.stdout
+
+
+def test_version_check_survives_a_base_ref_with_no_plugin_manifest(tmp_path):
+    """The script used to DIE here, silently, with exit 128 and no output.
+
+    `git show REF:missing-path` exits 128; under `set -euo pipefail` a failing
+    pipeline in a bare `BASE_VERSION=$(version_at ...)` assignment takes the
+    whole script with it. So the empty-base branch was unreachable, and a PR
+    whose base predates .claude-plugin/ got a blank CI failure naming nothing.
+    """
+    if not shutil.which("bash"):
+        pytest.skip("bash not available in this environment")
+    git = _throwaway_repo(tmp_path, base_version=None)
+    (tmp_path / "skills" / "SKILL.md").write_text("changed\n")
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text('{"version": "1.0.0"}\n')
+    git("add", "-A")
+    git("commit", "-qm", "add the manifest along with a skill change")
+
+    result = _run_version_check(tmp_path, "HEAD~1")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip(), "exit 0 with no output is the failure this closes"
+    assert "no manifest there" in result.stdout
 
 
 def test_version_check_ignores_a_change_outside_the_plugin_surface(tmp_path):

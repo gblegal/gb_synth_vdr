@@ -6,6 +6,7 @@ import pytest
 
 from synthvdr.namecheck import (
     KINDS,
+    VERDICTS,
     CandidateName,
     NameCheckError,
     Verdict,
@@ -289,6 +290,13 @@ def test_all_recognised_kinds_are_accepted_without_raising():
     assert set(KINDS) == {"entity", "brand", "product", "site", "domain", "person"}
 
 
+def test_the_verdict_vocabulary_is_closed_and_pinned():
+    # Same discipline as the KINDS pin above. `unchecked` was missing from
+    # this tuple for as long as the tuple went unreferenced by anything —
+    # nothing read it, so nothing could notice what it omitted.
+    assert set(VERDICTS) == {"clear", "collision", "ambiguous", "unchecked"}
+
+
 
 # ---------------------------------------------------------------------------
 # Fix round 2: duplicate declared rows with a genuine kind conflict, a Name
@@ -363,6 +371,58 @@ def test_render_raises_on_an_empty_name():
     # text as its own case.
     with pytest.raises(NameCheckError, match=r"''.*empty"):
         render_name_check_md(verdicts, "Project Testbed")
+
+
+# ---------------------------------------------------------------------------
+# Review item 04: VERDICTS was referenced nowhere AND omitted `unchecked`,
+# the value /vdr-scope tells the author to record when WebSearch is
+# unavailable. The vocabulary is enforced where the record is WRITTEN; the
+# loader stays permissive because gate 14 is built to WARN on a verdict it
+# does not recognise rather than crash on one.
+
+
+def test_unchecked_is_in_the_vocabulary_and_renders():
+    # /vdr-scope: "record every affected name's verdict as `unchecked` with a
+    # note explaining why". Rendering it must not raise.
+    assert "unchecked" in VERDICTS
+    verdicts = [
+        Verdict(
+            "Ashfell Holdings Limited",
+            "entity",
+            "unchecked",
+            "2026-08-24",
+            "WebSearch unavailable in this session",
+        )
+    ]
+    out = render_name_check_md(verdicts, "Project Testbed")
+    assert "| Ashfell Holdings Limited | entity | unchecked | 2026-08-24 |" in out
+
+
+def test_render_raises_on_a_verdict_outside_the_vocabulary():
+    # A typo caught while the record is being written costs a retype. The
+    # same typo reaching the file uncaught is read by gate 14 as a name that
+    # is not cleared, which is indistinguishable from a real finding.
+    verdicts = [Verdict("Ashfell Holdings Limited", "entity", "clera", "2026-08-24", "")]
+    with pytest.raises(NameCheckError, match=r"'clera'"):
+        render_name_check_md(verdicts, "Project Testbed")
+
+
+def test_load_name_check_still_returns_an_unrecognised_verdict(tmp_path):
+    # DELIBERATELY PERMISSIVE, and gate 14 depends on it: a hand-edited
+    # typo must reach gate_14_unchecked_names as a non-clear verdict it can
+    # WARN about, not as an exception out of the loader. Written by hand
+    # rather than through render_name_check_md, because the renderer is
+    # exactly what now refuses to produce this file.
+    path = tmp_path / "name-check.md"
+    path.write_text(
+        "| Name | Kind | Verdict | Checked | Note |\n"
+        "|---|---|---|---|---|\n"
+        "| Ashfell Holdings Limited | entity | clera | 2026-08-24 | typo |\n",
+        encoding="utf-8",
+    )
+    loaded = load_name_check(path)
+    assert [v.verdict for v in loaded] == ["clera"]
+    assert [v.text for v in unresolved(loaded)] == ["Ashfell Holdings Limited"]
 
 
 def test_render_sanitises_a_pipe_in_the_note_without_truncating(tmp_path):

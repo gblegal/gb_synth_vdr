@@ -37,8 +37,46 @@ if [ -z "$CHANGED" ]; then
 fi
 
 version_at() {
+    # `|| true` is not defensive noise. `git show REF:missing-path` exits 128,
+    # and under `set -euo pipefail` a failing pipeline in a bare `V=$(...)`
+    # assignment kills the script — exit 128, no output, an empty CI log and
+    # no clue which line did it. That is what happened for any base ref with
+    # no plugin.json, which is exactly the case the empty-version branch below
+    # was written to handle and could never reach.
     git show "$1:.claude-plugin/plugin.json" 2>/dev/null \
-        | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+        | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || true
+}
+
+# Plain X.Y.Z(.W...) only — no pre-release suffixes, no leading/trailing/double
+# dots, and nothing that would break the arithmetic below (a multi-line value
+# from a manifest carrying two "version" lines included).
+is_dotted_numeric() {
+    case "$1" in "" | *[!0-9.]* | .* | *. | *..*) return 1 ;; esac
+    return 0
+}
+
+# 0 if $1 is strictly newer than $2. Pure bash rather than `sort -V`: this is a
+# release gate, CI runs GNU coreutils and the development machine runs BSD, and
+# the two disagree about -V. Three details are deliberate:
+#   * `case`, not `[[ =~ ]]` — no bash 3.2 RHS-quoting trap on macOS.
+#   * `10#` — $((08)) is an octal error, 10#08 is 8.
+#   * explicit `if ... then return; fi`, not `[ ... ] && return 0` — the && form
+#     is a complete list whose status is 1 when the test fails, which `set -e`
+#     would act on in some callers.
+version_gt() {
+    local i x y
+    local -a A B
+    IFS=. read -r -a A <<<"$1"
+    IFS=. read -r -a B <<<"$2"
+    i=0
+    while [ "$i" -lt "${#A[@]}" ] || [ "$i" -lt "${#B[@]}" ]; do
+        x=$((10#${A[i]:-0}))
+        y=$((10#${B[i]:-0}))
+        if [ "$x" -gt "$y" ]; then return 0; fi
+        if [ "$x" -lt "$y" ]; then return 1; fi
+        i=$((i + 1))
+    done
+    return 1
 }
 
 BASE_VERSION=$(version_at "$BASE")
@@ -67,6 +105,36 @@ test_plugin_manifest_version_agrees_with_package_version checks they agree; this
 checks the number actually moved.
 MSG
     exit 1
+fi
+
+# The version moved. It must have moved FORWARDS: installs cache by version,
+# so a number going backwards re-serves a build that is already out there
+# under a name that says it is newer, which is the same staleness this whole
+# script exists to prevent, arrived at from the other side.
+if [ -z "$BASE_VERSION" ]; then
+    echo "version-check: surface changed; no version at $BASE (no manifest there) -> $HEAD_VERSION. OK."
+    exit 0
+fi
+
+if is_dotted_numeric "$BASE_VERSION" && is_dotted_numeric "$HEAD_VERSION"; then
+    if ! version_gt "$HEAD_VERSION" "$BASE_VERSION"; then
+        echo "version-check: the version does not move forwards: $BASE_VERSION -> $HEAD_VERSION." >&2
+        echo >&2
+        cat >&2 <<MSG
+Every install caches by version. A version that goes backwards, or sideways to
+something not greater than the base, means an install that already holds the
+higher number is never offered this build — and one that does not gets served
+it as though it were newer. Bump forwards from $BASE_VERSION in all four
+declarations.
+MSG
+        exit 1
+    fi
+else
+    # Said out loud rather than passed over. A permissive fallback that stays
+    # silent is the silence-equals-pass shape this project refuses; printing
+    # makes the gap visible without hard-failing a numbering scheme this
+    # comparison has no competence over.
+    echo "version-check: $BASE_VERSION -> $HEAD_VERSION is not a plain dotted-numeric pair; ordering not checked."
 fi
 
 echo "version-check: surface changed, version $BASE_VERSION -> $HEAD_VERSION. OK."

@@ -238,10 +238,17 @@ For each candidate, the test differs by Kind:
   check: every plausible surname exists somewhere, and treating an ordinary name as a hit
   would make the check impossible to pass.
 
-Record each result as `clear`, `collision`, or `ambiguous`. If a name comes back `collision`,
-invent a replacement and re-check the replacement — do not keep the colliding name. An
-`ambiguous` result is not something to resolve yourself: surface it to the user with whatever
-you found, and let them decide whether to accept it or ask for a different name.
+Record each result as `clear`, `collision`, or `ambiguous` — or, only in the
+WebSearch-unavailable case below, `unchecked`. Those four are exactly
+`synthvdr.namecheck.VERDICTS`, and `render_name_check_md` raises on anything else. Spell
+them correctly: gate 14 treats any verdict not spelled `clear` as unresolved, so a
+misspelt `collision` silently becomes a WARN the build can pass with rather than the hard
+block it is.
+
+If a name comes back `collision`, invent a replacement and re-check the replacement — do
+not keep the colliding name. An `ambiguous` result is not something to resolve yourself:
+surface it to the user with whatever you found, and let them decide whether to accept it
+or ask for a different name.
 
 If WebSearch is unavailable in this session, say so to the user in plain terms and record
 every affected name's verdict as `unchecked` with a note explaining why — never leave the
