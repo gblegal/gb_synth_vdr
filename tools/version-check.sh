@@ -30,7 +30,38 @@ SURFACE=(
     pyproject.toml
 )
 
-CHANGED=$(git diff --name-only "$BASE"...HEAD -- "${SURFACE[@]}")
+# `if ! CHANGED=$(...)` rather than a bare assignment. Under `set -e` a bare
+# assignment whose command substitution fails takes the whole script with it —
+# the same shape that made version_at() below exit 128 for a base ref with no
+# manifest. It is NOT the same severity here and the comment should not claim
+# it is: git's own "fatal: bad revision" is not suppressed on this line, so the
+# failure did reach the log. What it did not do is say which script failed,
+# which argument was bad, or what the run concluded — the raw git message alone,
+# in a check whose every other line speaks as `version-check:`.
+#
+# FAILING IS CORRECT AND MUST STAY THAT WAY. A base ref this cannot diff
+# against is a comparison that never ran, and a check that could not run must
+# never fall through to the "nothing to bump" pass below. That is the
+# silence-is-never-a-pass rule this repo is built on, so the error is turned
+# into a louder failure, never a warning.
+if ! CHANGED=$(git diff --name-only "$BASE"...HEAD -- "${SURFACE[@]}" 2>&1); then
+    echo "version-check: cannot compare against '$BASE'. git said:" >&2
+    printf '%s\n' "$CHANGED" | sed 's/^/  /' >&2
+    echo >&2
+    # Quoted delimiter: the text names $GITHUB_BASE_REF as a literal, and an
+    # unquoted heredoc would expand it — unbound under `set -u`, so the
+    # diagnostic would itself die halfway through printing.
+    cat >&2 <<'MSG'
+The surface comparison never ran, so this is a hard failure rather than a pass:
+a check that cannot see what changed must not report that nothing did.
+
+Check the ref exists and that history is deep enough to reach it. CI passes
+origin/$GITHUB_BASE_REF and needs actions/checkout with fetch-depth: 0 — a
+shallow clone is the usual way this ref becomes unreachable.
+MSG
+    exit 1
+fi
+
 if [ -z "$CHANGED" ]; then
     echo "version-check: no plugin surface changed against $BASE — nothing to bump."
     exit 0

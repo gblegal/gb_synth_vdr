@@ -6,7 +6,7 @@
     {
       "name": "synth-vdr",
       "source": "./",
-      "version": "0.6.1",
+      "version": "0.6.2",
       "description": "Generate synthetic M&A virtual data rooms with a verified ground-truth answer key, for evaluating document-review and due-diligence AI.",
       "category": "productivity"
     }
