@@ -102,7 +102,23 @@ from typing import Dict, Iterator, List
 
 from .names import entity_tokens
 
-VERDICTS = ("clear", "collision", "ambiguous")
+# The four values `_key/name-check.md` may record, and the only ones
+# `render_name_check_md` will write. Three of them are search OUTCOMES, which
+# is how /vdr-scope introduces them ("Record each result as `clear`,
+# `collision`, or `ambiguous`"); `unchecked` is not an outcome at all but the
+# record of a search that could not happen, written when WebSearch is
+# unavailable in the scoping session. It belongs here for the reason
+# /vdr-scope gives for demanding it — "never leave the record silent about a
+# name that was never actually checked" — and it was missing from this tuple
+# for as long as the tuple went unreferenced by anything.
+#
+# ENFORCED AT WRITE, NOT AT READ. `render_name_check_md` rejects a verdict
+# outside this tuple; `load_name_check` deliberately does not. Gate 14
+# (`qa.leakage.gate_14_unchecked_names`) treats anything not spelled `clear`
+# as a WARN precisely so a typo lands somewhere safe rather than being read
+# as a pass, and a validating loader would turn that designed WARN into a
+# crash on a hand-edited file. Reject what we write; warn about what we read.
+VERDICTS = ("clear", "collision", "ambiguous", "unchecked")
 
 
 class NameCheckError(ValueError):
@@ -407,6 +423,14 @@ def render_name_check_md(verdicts: List[Verdict], room_codename: str) -> str:
     written into this row and read back — see `_validate_name_for_render`,
     which performs that round trip. A '|' in `.note` is sanitised rather
     than rejected — see `_sanitise_note`.
+
+    Also raises if `.verdict` is not one of `VERDICTS`. This is the only
+    place the vocabulary is enforced, and deliberately so: see the comment
+    on `VERDICTS` for why the loader must stay permissive where this
+    function does not. A typo caught here is caught while the author is
+    still writing the record and can simply retype it; the same typo
+    reaching the file by hand-edit is gate 14's problem, and gate 14 is
+    built to WARN rather than crash on it.
     """
     lines = [
         f"# {room_codename} — name check",
@@ -425,6 +449,14 @@ def render_name_check_md(verdicts: List[Verdict], room_codename: str) -> str:
         "|---|---|---|---|---|",
     ]
     for v in verdicts:
+        if v.verdict not in VERDICTS:
+            raise NameCheckError(
+                f"{v.text!r} records verdict {v.verdict!r}, which is not one of "
+                f"{VERDICTS} — gate 14 reads this column and treats anything "
+                f"that is not 'clear' as unresolved, so a misspelling here is "
+                f"indistinguishable from a real finding; correct it before "
+                f"writing the name check"
+            )
         note = _sanitise_note(v.note)
         row = f"| {v.text} | {v.kind} | {v.verdict} | {v.checked} | {note} |"
         _validate_name_for_render(v.text, row)
