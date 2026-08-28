@@ -1,6 +1,23 @@
 """Parsing for room.conf — the single source of room constants.
 
-Shell-sourceable KEY="VALUE" so tools/check.sh can source the same file.
+Deliberately a flat, shell-sourceable KEY="VALUE" file: a room is handed to
+people who will write their own shell around it, and the format is what lets
+them read the room's constants without a Python dependency. `_parse_line`
+implements bash's quoting and comment rules rather than something simpler
+for that reason alone.
+
+NOTHING IN THIS REPOSITORY SOURCES IT, and this line said otherwise until
+0.6.1 — it claimed `tools/check.sh` sources the same file. It never has, in
+any version: check.sh takes the room directory as an argument and execs
+`python3 -m synthvdr.qa --room "$ROOM"`, reading no config at all. The format
+is a guarantee kept for whoever owns the room, not a requirement any shipped
+script imposes.
+
+That distinction is load-bearing rather than pedantic. `load_room_conf`
+rejects a key set twice instead of silently taking the last value, and the
+obvious objection is "bash takes the last value, so this diverges from the
+other reader". There is no other reader. The stale claim was the whole
+premise of that objection.
 """
 
 from __future__ import annotations
@@ -322,10 +339,10 @@ def _parse_line(line: str) -> tuple[str, str] | None:
 
     A quoted value may contain '#' literally; in a bare value a '#'
     preceded by whitespace starts a comment. Those are bash's rules, not a
-    config format invented here: room.conf is "shell-sourceable KEY=VALUE so
-    tools/check.sh can source the same file" (module docstring), so what
-    bash would do with a line is the specification this has to meet, whether
-    or not any shipped script sources it today.
+    config format invented here: room.conf is shell-sourceable by design (see
+    the module docstring), so what bash would do with a line is the
+    specification this has to meet — even though, as that docstring now also
+    records, nothing in this repository actually sources it.
     """
     match = re.match(r'^([A-Z][A-Z0-9_]*)=(.*)$', line)
     if not match:

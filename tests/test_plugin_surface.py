@@ -1663,6 +1663,35 @@ def test_findings_skill_quotes_the_severity_split_its_own_function_returns():
 # ---------------------------------------------------------------------------
 
 
+def test_check_sh_reads_no_configuration_file():
+    """`tools/check.sh` does not source `room.conf`, and never has.
+
+    Three places said it did — roomconf.py's module docstring and
+    ARCHITECTURE.md twice — from before 0.6.1. The claim was never true in any
+    version of the script: check.sh takes the room directory as an argument
+    and execs `python3 -m synthvdr.qa --room "$ROOM"`, reading no config.
+
+    Worth pinning because the stale claim was not merely untidy. It was the
+    whole premise of the obvious objection to load_room_conf rejecting a key
+    set twice — "room.conf is shell-sourceable and bash takes the last value,
+    so rejecting diverges from the other reader". There is no other reader.
+    Anyone who makes check.sh read room.conf has changed that, and owes those
+    three sites an edit; this test is where they find out.
+    """
+    body = _read(ROOT / "tools" / "check.sh")
+    assert "room.conf" not in body, (
+        "check.sh now references room.conf — if it genuinely reads the file, "
+        "update synthvdr/roomconf.py's module docstring and both ARCHITECTURE.md "
+        "mentions, which now state that nothing sources it"
+    )
+    sourcing = [
+        line
+        for line in body.splitlines()
+        if re.match(r"\s*(\.|source)\s+\S", line) and not line.lstrip().startswith("#")
+    ]
+    assert not sourcing, f"check.sh sources a file: {sourcing}"
+
+
 def _run_check_sh(env_python, tmp_path):
     return subprocess.run(
         ["bash", str(ROOT / "tools" / "check.sh"), str(tmp_path)],
