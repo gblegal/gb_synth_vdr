@@ -1,6 +1,6 @@
 [project]
 name = "synthvdr"
-version = "0.6.2"
+version = "0.6.3"
 description = "Synthetic M&A data room generator with a verified ground-truth answer key"
 requires-python = ">=3.9"
 dependencies = ["PyYAML>=6.0"]
@@ -13,7 +13,7 @@ build-backend = "setuptools.build_meta"
 
 [project.optional-dependencies]
 docx = ["python-docx>=1.1"]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "ruff>=0.16,<0.17"]
 
 # Without this, setuptools' flat-layout auto-discovery sees agents/, skills/,
 # domain/, schemas/ and fixtures/ alongside synthvdr/ and refuses to build at
@@ -28,3 +28,25 @@ include = ["synthvdr*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# The rule set is named rather than inherited, and that is the whole point of
+# the gate. ruff's default selection is not stable across releases: the version
+# that established this baseline reported 4 findings on this tree, and 0.16
+# reports 275 on the same commit. An inherited default would make the verdict a
+# function of whichever ruff CI happened to resolve, so the gate would go red on
+# a day nobody touched the code — and the only cheap way out of that is to stop
+# believing it, which is how a check becomes decoration.
+#
+# E4, E7, E9 and F are the classic defaults, and they are chosen because they are
+# what the "10 -> 4" baseline recorded across PRs #10, #11 and #13 was measured
+# with. Pinning them means the number in those PR bodies still means today what
+# it meant when it was written.
+#
+# This is deliberately a narrow set: it is import hygiene, undefined names and
+# syntax errors, not style. The 271 further findings 0.16 raises under its own
+# default are a separate judgement (170 are PEP 585 generics, safe here only
+# because 25 modules already carry `from __future__ import annotations`) and
+# adopting them is a decision to take on its own, not a side effect of turning
+# the linter on.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

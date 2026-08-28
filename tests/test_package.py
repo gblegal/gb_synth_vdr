@@ -19,11 +19,24 @@ def test_no_module_imports_below_its_first_definition():
     batch of gates was appended, and the reason the file read as two files
     joined end to end. They were the only E402s in the package.
 
-    There is no linter in CI (see .github/workflows/ci.yml: pytest and
-    version-check.sh, nothing else), so the guard against the seam reopening
-    has to be a test. Asserted over every module rather than over that one
-    file: the pattern is what recurs, and it recurs wherever the next batch
-    of anything gets appended.
+    This docstring used to say "there is no linter in CI ... so the guard
+    against the seam reopening has to be a test". That was true when written
+    and is not now: CI runs `ruff check .`, pyproject selects E4, and E402
+    covers the same ground. The old wording is named rather than quietly
+    replaced, because it was this test's entire justification and a reader who
+    learned it here should get the chance to unlearn it.
+
+    What justifies the test now is narrower and worth stating plainly, so that
+    nobody has to guess whether it is leftovers. It does not depend on the lint
+    selection: `select` in pyproject is a list someone can shorten, and E4
+    leaving it would take E402 with it silently, whereas this failing is loud.
+    It also fires for anyone who runs the suite without running the linter, and
+    it names every offender in the package in one message with the remedy
+    attached rather than one line at a time.
+
+    Asserted over every module rather than over that one file: the pattern is
+    what recurs, and it recurs wherever the next batch of anything gets
+    appended.
 
     If a genuinely deferred import is ever needed, put it inside the function
     that needs it — render/docx.py already imports `docx` that way, and a
