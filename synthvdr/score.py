@@ -385,7 +385,27 @@ class ToolOutputError(Exception):
     """
 
 
-_MD_FINDING = re.compile(r"^#{2,4}\s*(.+)$", re.MULTILINE)
+# One reported finding per level 2-4 heading. `(?!#)` bounds the hash run at
+# the top as well as the bottom, and is load-bearing: `^#{2,4}` alone is
+# anchored only at the start, so on a level-5 heading it matched the first
+# four hashes and handed the fifth back inside the capture —
+# "##### Root cause" became a finding titled "# Root cause". A level-5
+# heading is sub-structure INSIDE a finding's write-up, not another finding,
+# and counting it as one inflates the precision denominator (precision is
+# matched / len(output.findings)), so a tool lost precision for nothing but
+# its own choice of heading depth. With the lookahead, `#{2,4}` cannot settle
+# on a shorter run to dodge it — 4 hashes, then 3, then 2 all fail against a
+# following '#' — so a 5-or-deeper heading matches nothing at all, which is
+# what it should be. Level 1 was already excluded: that is the report title.
+#
+# The separator stays `\s*`, deliberately NOT the `[ \t]+` that
+# synthvdr.render.docx._ATX_HEADING requires. That constant parses THIS
+# project's own generated markdown, where CommonMark conformance is the whole
+# point; this one parses a report written by an arbitrary third-party tool
+# under test, where refusing to read "##Finding 1" would be scoring a tool
+# down for its markdown style rather than its findings. Different inputs,
+# different contracts — do not reconcile them.
+_MD_FINDING = re.compile(r"^#{2,4}(?!#)\s*(.+)$", re.MULTILINE)
 _MD_PATH = re.compile(r"`([\w./-]+\.(?:md|csv|pdf|docx))`")
 _MD_SEVERITY = re.compile(r"\b(critical|high|medium|low)\b", re.IGNORECASE)
 
