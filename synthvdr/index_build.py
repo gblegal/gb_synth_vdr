@@ -126,7 +126,6 @@ def _titleise(text: str) -> str:
 
         word_lower = word.lower()
 
-        # Check if word is an acronym or acronym + 's'
         if word_lower in ACRONYMS:
             result.append(word_lower.upper())
         elif (
@@ -134,13 +133,21 @@ def _titleise(text: str) -> str:
             and len(word_lower) - 1 >= _MIN_ACRONYM_LEN_FOR_PLURAL
             and word_lower[:-1] in ACRONYMS
         ):
-            # Handle plural acronyms: 'ndas' -> 'NDAs'
+            # 'ndas' -> 'NDAs', not 'NDAS': the plural 's' is not part of
+            # the acronym, so it is appended in lowercase after the uppercasing
+            # rather than swept up by it. The length floor above is what stops
+            # this branch swallowing an ordinary word whose stem happens to be
+            # a short acronym — see the docstring's 'its' example.
             result.append(word_lower[:-1].upper() + "s")
         elif i == 0:
-            # First word: capitalize only the first letter (sentence case)
+            # Sentence case, not title case, and the whole reason this
+            # function is not `str.title()`: index.md titles are prose
+            # headings, and title-casing them would also destroy the acronym
+            # handling above ('VAT' -> 'Vat').
             result.append(word_lower.capitalize())
         else:
-            # Other non-acronym words: keep as-is (lowercase)
+            # Lowercased rather than passed through: the input is a slug, so
+            # incidental capitals in it are noise, not intent.
             result.append(word_lower)
 
     return " ".join(result)
