@@ -59,8 +59,10 @@ raise eagerly rather than collecting into a report, because `/vdr-scope` calls
 sheet should stop the skill immediately, the same ruling already applied to
 gate 13's self-contradictory fact sheet elsewhere in this project.
 
-FOUR MORE GUARDS, ONE PRINCIPLE: KEYS ARE EXACT-OR-REJECT, COMMENTARY IS
-SANITISED. A name declared twice in `## Invented names` with two different
+FIVE MORE GUARDS, ONE PRINCIPLE: KEYS ARE EXACT-OR-REJECT, COMMENTARY IS
+SANITISED. (The fifth, the closed verdict vocabulary, is neither a key nor
+commentary but a third category — see `VERDICTS` — and it obeys the same
+principle: the renderer rejects rather than guesses.) A name declared twice in `## Invented names` with two different
 kinds is the same contradiction as the declared-vs-cast case above, just
 between two rows of the same table instead of two tables — "declared table
 wins" cannot arbitrate it either, because both sides ARE the declared table,
@@ -450,12 +452,13 @@ def render_name_check_md(verdicts: List[Verdict], room_codename: str) -> str:
     ]
     for v in verdicts:
         if v.verdict not in VERDICTS:
+            valid = ", ".join(VERDICTS)
             raise NameCheckError(
                 f"{v.text!r} records verdict {v.verdict!r}, which is not one of "
-                f"{VERDICTS} — gate 14 reads this column and treats anything "
-                f"that is not 'clear' as unresolved, so a misspelling here is "
-                f"indistinguishable from a real finding; correct it before "
-                f"writing the name check"
+                f"{valid} — gate 14 reads this column and treats anything not "
+                f"spelled 'clear' as unresolved, so a misspelled 'collision' "
+                f"quietly becomes a WARN the build can pass with; correct it "
+                f"before writing the name check"
             )
         note = _sanitise_note(v.note)
         row = f"| {v.text} | {v.kind} | {v.verdict} | {v.checked} | {note} |"

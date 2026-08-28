@@ -290,6 +290,13 @@ def test_all_recognised_kinds_are_accepted_without_raising():
     assert set(KINDS) == {"entity", "brand", "product", "site", "domain", "person"}
 
 
+def test_the_verdict_vocabulary_is_closed_and_pinned():
+    # Same discipline as the KINDS pin above. `unchecked` was missing from
+    # this tuple for as long as the tuple went unreferenced by anything —
+    # nothing read it, so nothing could notice what it omitted.
+    assert set(VERDICTS) == {"clear", "collision", "ambiguous", "unchecked"}
+
+
 
 # ---------------------------------------------------------------------------
 # Fix round 2: duplicate declared rows with a genuine kind conflict, a Name

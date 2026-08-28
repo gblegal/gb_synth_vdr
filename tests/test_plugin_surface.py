@@ -479,6 +479,38 @@ def test_scope_skill_blocks_on_unresolved_name_collisions():
     assert "collision" in body
 
 
+def test_scope_skill_and_namecheck_agree_on_the_verdict_vocabulary():
+    """Review item 04: `VERDICTS` omitted `unchecked` while /vdr-scope told the
+    author to write it, and the two could disagree indefinitely because nothing
+    read the constant and nothing compared the two. The renderer now REJECTS a
+    verdict outside `VERDICTS`, so a skill naming a value the code refuses would
+    hand an author an instruction that raises. Pins the sentence against the
+    tuple so they cannot drift apart again.
+    """
+    from synthvdr.namecheck import VERDICTS
+
+    body = _read(ROOT / "skills" / "vdr-scope" / "SKILL.md")
+    sentence = next(
+        (line for line in body.splitlines() if line.startswith("Record each result as")),
+        None,
+    )
+    assert sentence is not None, "the /vdr-scope sentence naming the verdicts has moved"
+    # The sentence wraps, so read to the end of its paragraph.
+    lines = body.splitlines()
+    start = lines.index(sentence)
+    paragraph = []
+    for line in lines[start:]:
+        if not line.strip():
+            break
+        paragraph.append(line)
+    named = set(re.findall(r"`([a-z]+)`", " ".join(paragraph)))
+    assert named >= set(VERDICTS), (
+        f"/vdr-scope names {sorted(named)}; VERDICTS is {sorted(VERDICTS)} — "
+        "a verdict the skill omits is one an author will never write, and one "
+        "the skill invents is one render_name_check_md now raises on"
+    )
+
+
 def test_findings_skill_states_the_hard_gate_before_authoring():
     body = _read(ROOT / "skills" / "vdr-findings" / "SKILL.md").lower()
     assert "gate b" in body
