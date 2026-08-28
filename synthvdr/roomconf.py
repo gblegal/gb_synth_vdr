@@ -420,6 +420,9 @@ def load_room_conf(path: Path) -> RoomConf:
     if not path.is_file():
         raise RoomConfError(f"no room.conf at {path}")
     values: Dict[str, str] = {}
+    # Where each key was FIRST set, so a repeat can name both lines rather
+    # than just the one it happened to be standing on.
+    set_at: Dict[str, int] = {}
     for line_num, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -436,7 +439,30 @@ def load_room_conf(path: Path) -> RoomConf:
             raise RoomConfError(f"{path}: line {line_num}: malformed: {raw}")
 
         key, value = result
+        # A key set twice used to take the last value, silently — the only
+        # malformation in this file that was not rejected by line number.
+        # Every other reader of room.conf is downstream of this dict, so the
+        # room would then be built and gated against a value the author can
+        # see in the file and did not intend, with nothing anywhere able to
+        # notice: silence standing in for a pass, in the loader for the file
+        # that decides what every gate is checking against.
+        #
+        # Rejected whether or not the two values agree. An identical repeat is
+        # not the harmless case it looks like — room.conf is a dozen
+        # hand-written lines, so a key appearing twice means the author edited
+        # one copy and left the other, and whether the values happen to match
+        # is luck about which copy was edited, not evidence of intent. Contrast
+        # namecheck._declared_candidates, which does let an identical repeat
+        # through: there the two sides carry the same meaning and there is
+        # nothing to arbitrate.
+        if key in values:
+            raise RoomConfError(
+                f"{path}: line {line_num}: {key} is set again here to {value!r}, "
+                f"having already been set to {values[key]!r} on line {set_at[key]} "
+                f"— the later value would silently win; remove one of the two lines"
+            )
         values[key] = value
+        set_at[key] = line_num
 
     missing = [k for k in REQUIRED_KEYS if k not in values]
     if missing:

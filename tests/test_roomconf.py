@@ -1,4 +1,5 @@
 import itertools
+import re
 import unicodedata
 
 import pytest
@@ -75,6 +76,31 @@ def test_get_absent_non_required_key_raises(tmp_path):
     conf = load_room_conf(write(tmp_path))
     with pytest.raises(RoomConfError, match="missing key"):
         conf.get("NONEXISTENT_KEY")
+
+
+# ---------------------------------------------------------------------------
+# Review item 16: a key set twice was the one malformation in room.conf that
+# was NOT rejected by line number — it silently took the last value, and every
+# gate downstream then checked the room against a number the author can see in
+# the file and did not intend.
+
+
+def test_a_key_set_twice_is_rejected_naming_both_lines(tmp_path):
+    with pytest.raises(RoomConfError) as excinfo:
+        load_room_conf(write(tmp_path, SAMPLE + "INDEX_TOTAL=99\n"))
+    message = str(excinfo.value)
+    assert "INDEX_TOTAL is set again" in message
+    # Both values and both line numbers, so the author can see which line to
+    # delete without opening the file to work out where the other one is.
+    assert "'99'" in message and "'20'" in message
+    assert re.search(r"line \d+:", message) and re.search(r"on line \d+", message)
+
+
+def test_a_key_repeated_with_the_same_value_is_rejected_too(tmp_path):
+    # Deliberate, not an oversight: a repeat means one of two copies was
+    # edited, and the values matching is luck about which one.
+    with pytest.raises(RoomConfError, match="INDEX_TOTAL is set again"):
+        load_room_conf(write(tmp_path, SAMPLE + "INDEX_TOTAL=20\n"))
 
 
 def test_trailing_comment_on_bare_value(tmp_path):
