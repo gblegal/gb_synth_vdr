@@ -48,25 +48,44 @@ class DomainPack:
     is_subset: bool = False
 
     def __post_init__(self) -> None:
-        """A tier-A anchor must never be held to a lower depth standard than
-        tier-F filler.
+        """Two invariants a DomainPack must satisfy however it was built.
 
-        A tier-A anchor carries planted evidence; tier-F filler carries
-        none. If any archetype's floor sits below the flat tier-F floor, a
-        correctly tagged anchor is held to a LOWER floor than generic
-        filler — backwards for the property this domain pack exists to
-        encode.
+        FIRST: `default_archetype` must name an archetype this pack actually
+        has. `qa.depth.classify_archetype` falls back to it for any filename
+        no pattern matches, and `floor_for` then subscripts
+        `pack.archetypes[...]` — so a pack whose default names nothing loads
+        perfectly, passes every check here, and detonates on the first
+        unclassifiable document as a bare `KeyError`. The runner turns that
+        into `FAIL ? — gate_10_depth: gate raised KeyError: 'standrd'`, which
+        names the typo but not the file it is in, and reads like a defect in
+        the gate rather than in `archetypes.yaml`. One typo, arbitrarily far
+        from its cause.
 
-        Enforced on the TYPE rather than in `load_domain`, because the
-        invariant belongs to what a DomainPack is, not to one way of
-        building one. Checked only at load time it bound YAML on disk and
-        nothing else, while DomainPack is also constructed directly — by
-        the tests covering archetype classification, and by anything later
-        that assembles a pack in memory. That is precisely where a pack
-        encoding the backwards rule would be built by hand and quietly
-        believed. `load_domain` re-raises with the pack root, so a failure
-        loading from disk still says which pack.
+        SECOND: a tier-A anchor must never be held to a lower depth standard
+        than tier-F filler. A tier-A anchor carries planted evidence; tier-F
+        filler carries none. If any archetype's floor sits below the flat
+        tier-F floor, a correctly tagged anchor is held to a LOWER floor than
+        generic filler — backwards for the property this domain pack exists
+        to encode.
+
+        Both are enforced on the TYPE rather than in `load_domain`, because
+        they belong to what a DomainPack is, not to one way of building one.
+        Checked only at load time they would bind YAML on disk and nothing
+        else, while DomainPack is also constructed directly — by the tests
+        covering archetype classification, and by anything later that
+        assembles a pack in memory. That is precisely where a pack encoding a
+        broken rule would be built by hand and quietly believed.
+        `load_domain` re-raises with the pack root, so a failure loading from
+        disk still says which pack.
         """
+        if self.default_archetype not in self.archetypes:
+            raise DomainError(
+                f"default_archetype {self.default_archetype!r} is not one of this pack's "
+                f"archetypes ({sorted(self.archetypes)}) — every filename no pattern "
+                "matches falls back to it, so a pack that ships this way fails gate 10 "
+                "with a bare KeyError on the first unclassifiable document"
+            )
+
         under_floor = sorted(
             name for name, a in self.archetypes.items() if a.floor < self.tier_f_floor
         )
