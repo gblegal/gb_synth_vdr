@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import re
+
+import yaml
+
 from ..index_build import count_slots, render_index
-from .runner import fail, ok, skip, truncated
+from ..roomconf import RoomConfError
+from ..twin import is_valid_twin, split_twin
+from .runner import fail, ok, skip, truncated, warn
 
 
 def gate_01_index(ctx):
@@ -40,14 +46,6 @@ def gate_02_counts(ctx):
         return fail("2", "tree counts", f"flagged tree holds {len(flagged)}, expected {expected_flagged}")
     return ok("2", "tree counts", f"blind {len(blind)}, flagged {len(flagged)}")
 
-
-import re
-
-import yaml
-
-from ..roomconf import RoomConfError
-from ..twin import is_valid_twin, split_twin
-from .runner import warn
 
 SLOT_REF = re.compile(r"\b(\d{1,2}\.\d{1,2}\.\d{1,3})\b")
 
