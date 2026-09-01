@@ -1,8 +1,11 @@
-"""CLI: python3 -m synthvdr {score|score-classification|answerkey} ...
+"""CLI: python3 -m synthvdr {score|score-classification|answerkey|corrupt} ...
 
 `score <tool-output> --room PATH [--baseline FILE]` scores a findings report;
-`score-classification <output> --room PATH` scores a classification run against
-`_key/answer-key.jsonl`; `answerkey` builds that key from `_key/labels.yaml`.
+`score-classification <output> --room PATH [--key FILE]` scores a
+classification run against `_key/answer-key.jsonl` (or the key named by
+--key — e.g. the corrupted twin's); `answerkey` builds that key from
+`_key/labels.yaml`; `corrupt` writes the deliberately dirtied twin under
+`corrupted/` so eval runs are not scored against a suspiciously clean room.
 
 This is the package-level entry point (`python3 -m synthvdr ...`), distinct
 from `synthvdr/qa/__main__.py` (`python3 -m synthvdr.qa`, the room QA gate
@@ -169,7 +172,7 @@ def _run_score_classification(args) -> int:
         return 2
 
     try:
-        key = load_classification_key(args.room, conf)
+        key = load_classification_key(args.room, conf, key_path=args.key)
         card = score_classification(output, key)
     except ClassificationScoreError as exc:
         print(f"synthvdr score-classification: {exc}".replace("\n", " "), file=sys.stderr)
@@ -179,6 +182,40 @@ def _run_score_classification(args) -> int:
         return 2
 
     print(render_classification_scorecard(card, output, provenance=provenance))
+    return 0
+
+
+def _run_corrupt(args) -> int:
+    """`corrupt --room . [--seed N] [--profile light|heavy]` — write the
+    corrupted twin. The profile name is validated here rather than via
+    argparse choices so an unknown name returns 2 through the same
+    plain-stderr path as every other could-not-even-run failure, instead
+    of argparse's SystemExit."""
+    from .corrupt import PROFILES, CorruptError, corrupt_room
+
+    if args.profile not in PROFILES:
+        print(
+            f"synthvdr corrupt: unknown profile {args.profile!r} — the "
+            f"profiles are: {', '.join(sorted(PROFILES))}",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        conf = load_room_conf(args.room / "room.conf")
+        report = corrupt_room(
+            args.room, conf, seed=args.seed, profile=PROFILES[args.profile]
+        )
+    except (RoomConfError, CorruptError) as exc:
+        print(f"synthvdr corrupt: {exc}".replace("\n", " "), file=sys.stderr)
+        return 2
+    print(
+        f"{conf.get('ROOM_CODENAME')} — corrupted twin written to "
+        f"{report.out} (seed {args.seed}, profile {args.profile}): "
+        f"{report.documents} documents — {report.renamed} renamed, "
+        f"{report.misfiled} misfiled, {report.noised} noised, "
+        f"{report.truncated} truncated. The answer key follows the mess; "
+        "the truth does not."
+    )
     return 0
 
 
@@ -244,6 +281,28 @@ def main(argv=None) -> int:
     )
     classify_parser.add_argument("tool_output", type=Path)
     classify_parser.add_argument("--room", type=Path, default=Path("."))
+    classify_parser.add_argument(
+        "--key",
+        type=Path,
+        default=None,
+        help="Score against this answer key instead of the room's own — "
+        "e.g. corrupted/answer-key.jsonl for a run over the corrupted twin.",
+    )
+
+    corrupt_parser = subparsers.add_parser(
+        "corrupt",
+        help="Write corrupted/ — a deliberately dirtied twin of the blind "
+        "tree with a rewritten answer key, for eval runs that should not "
+        "be scored against a suspiciously clean room.",
+    )
+    corrupt_parser.add_argument("--room", type=Path, default=Path("."))
+    corrupt_parser.add_argument("--seed", type=int, default=1)
+    corrupt_parser.add_argument(
+        "--profile",
+        default="light",
+        help="Corruption intensity: 'light' (a well-run modern deal) or "
+        "'heavy' (the messy carve-out room).",
+    )
 
     args = parser.parse_args(argv)
 
@@ -253,6 +312,8 @@ def main(argv=None) -> int:
         return _run_score(args)
     if args.command == "score-classification":
         return _run_score_classification(args)
+    if args.command == "corrupt":
+        return _run_corrupt(args)
     parser.error(f"unknown command {args.command!r}")  # pragma: no cover - argparse exits first
     return 2  # pragma: no cover
 
