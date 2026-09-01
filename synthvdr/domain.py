@@ -27,6 +27,18 @@ class Section:
     # omits one. Defaulted so a sections.yaml row without the key still splats
     # into Section(**row), which is how load_domain builds these.
     core: bool = False
+    # Which workstream the downstream classifier (gb-docclass) files this
+    # section's documents under — that project's fixed internal IDs
+    # ('corporate', 'ip-it', 'environmental-hs'), NOT this pack's own
+    # `workstream` tokens; the two vocabularies are different sizes and must
+    # never be conflated. Twenty sections fold onto fourteen IDs (financial
+    # and financing-banking are both 'finance'; IP, IT and data-protection
+    # are all 'ip-it'). Defaulted for the same splatting reason as `core` —
+    # and because a custom pack without it should load fine right up until
+    # someone asks synthvdr.answer_key to build a key from it, which is the
+    # point at which the omission stops being harmless and is refused by
+    # section name.
+    classifier_workstream: str = ""
 
 
 @dataclass(frozen=True)

@@ -57,6 +57,8 @@ annotation block") a meaningful check rather than a tautology.
     ├── gaps.yaml              deliberately unresolvable cross-references, allowlisted
     ├── name-check.md          the web-search verdict for every invented name
     ├── anchors.csv            the slot manifest: every document slot and its tier
+    ├── labels.yaml            each blind document's type, in the downstream classifier's vocabulary
+    ├── answer-key.jsonl       GENERATED from labels.yaml + sections.yaml (python3 -m synthvdr answerkey)
     ├── index-src/             the source index.md is regenerated from
     │   └── .synthvdr-index-src    ownership marker
     ├── incoming/              subagent hand-back: refinements and new findings, per wave
