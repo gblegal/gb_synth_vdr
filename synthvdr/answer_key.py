@@ -145,15 +145,23 @@ def consolidate_wave_labels(labels_doc: dict, incoming_docs: Dict[str, dict]) ->
     }
 
 
-def build_answer_key(
+def answer_key_records(
     room: Path, conf: RoomConf, pack: DomainPack, vocabulary=None
-) -> Path:
-    """Write _key/answer-key.jsonl covering every blind document.
+) -> list:
+    """The key's records, in file order, without touching the output file.
+
+    This is the whole derivation — `build_answer_key` writes exactly what
+    this returns, and gate 19 rebuilds through this same function to test
+    the file on disk for staleness. One implementation, two callers: a
+    second derivation would drift from the first, and the gate would then
+    certify agreement with itself rather than with the room.
 
     `vocabulary`, when given, is the classifier's own set of document-type
     names; a label outside it is refused by name. Authors free-type the
     labels, and a drifted name ('NDA' for 'Non-disclosure agreement')
     would otherwise ride into the key and score as a classifier miss.
+    Refusals only — it never alters a record — so a rebuild without the
+    vocabulary still reproduces a key that was written with one.
     """
     blind_root = room / conf.get_relative_path("BLIND_TREE")
     key_root = room / conf.get_relative_path("KEY_ROOT")
@@ -208,8 +216,15 @@ def build_answer_key(
                 "secondary_workstreams": [],
             }
         )
+    return records
 
-    out = key_root / ANSWER_KEY_NAME
+
+def build_answer_key(
+    room: Path, conf: RoomConf, pack: DomainPack, vocabulary=None
+) -> Path:
+    """Write _key/answer-key.jsonl covering every blind document."""
+    records = answer_key_records(room, conf, pack, vocabulary=vocabulary)
+    out = room / conf.get_relative_path("KEY_ROOT") / ANSWER_KEY_NAME
     out.write_text(
         "".join(json.dumps(record) + "\n" for record in records),
         encoding="utf-8",

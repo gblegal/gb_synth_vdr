@@ -1,6 +1,6 @@
 ---
 name: vdr-qa
-description: Run the eighteen room QA gates — index regeneration, leakage sweeps, twin invariants, carrier census, cross-references, depth lint, subset, fact-sheet and answer-key reconciliation, unchecked-name sweep, discoverability, render parity and the room's exemplar/eval role declaration. Use --strict before any release.
+description: Run the nineteen room QA gates — index regeneration, leakage sweeps, twin invariants, carrier census, cross-references, depth lint, subset, fact-sheet and answer-key reconciliation, unchecked-name sweep, discoverability, render parity, the room's exemplar/eval role declaration and the eval room's classification answer key. Use --strict before any release.
 ---
 
 # Run the QA gates
@@ -12,7 +12,7 @@ python3 -m synthvdr.qa --room . --strict   # release mode
 
 `tools/check.sh` is a thin wrapper around the same command (`bash tools/check.sh .` and
 `bash tools/check.sh . --strict`) — use whichever is at hand, they run the identical
-eighteen gates.
+nineteen gates.
 
 If either form reports that it cannot import `synthvdr`, the room's `python3` is not the
 interpreter the package was installed into — which is the normal case, since a room is a
@@ -44,7 +44,7 @@ could not even be loaded (missing or malformed `room.conf`, or a malformed answe
 distinct from `1` so you can tell "the checks found a problem" apart from "the checks
 never ran."
 
-## The eighteen gates, briefly
+## The nineteen gates, briefly
 
 | # | Gate | Checks |
 |---|---|---|
@@ -66,6 +66,7 @@ never ran."
 | 16 | Render parity | DOCX/PDF renders, if built, mirror the blind tree's document set by filename, in both directions (never checks rendered content) |
 | 17 | Answer-key validation | `_key/findings.yaml`/`_key/distractors.yaml` pass `synthvdr.schema.validate()`'s own internal-consistency checks |
 | 18 | Room role declared | `room.conf` says whether this is an `exemplar` room (may teach the downstream classifier) or an `eval` room (only ever scores it) — the train/test split, enforced |
+| 19 | Eval answer key | An `eval` room carries `_key/answer-key.jsonl`, and the file matches a fresh rebuild from `_key/labels.yaml` — an eval room without a complete, current classification key cannot score the classifier, which is the one thing it exists to do. Exemplar rooms pass: the key does not apply to them |
 
 ## Common failures and what they mean
 
@@ -110,6 +111,10 @@ never ran."
   problem `synthvdr.schema.validate()` returned; fix `_key/findings.yaml` or
   `_key/distractors.yaml` directly.
 
+- **Gate 19** — an eval room is missing its classification answer key, or the key no
+  longer matches the room. Run `python3 -m synthvdr answerkey --room .` (see
+  `/vdr-package` Step 5); if the rebuild itself refuses, the message names the
+  unlabelled document or the label that points at nothing.
 ## Before release
 
 Run `python3 -m synthvdr.qa --room . --strict` yourself before handing a room to

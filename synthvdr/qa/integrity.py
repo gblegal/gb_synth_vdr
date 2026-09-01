@@ -1,12 +1,16 @@
 """Integrity gates: subset reconciliation, fact-sheet reconciliation, discoverability,
-answer-key validation."""
+answer-key validation, and the eval room's classification key."""
 
 from __future__ import annotations
 
+import json
 import unicodedata
 from dataclasses import dataclass, field
 from typing import List
 
+from ..answer_key import ANSWER_KEY_NAME, AnswerKeyError, answer_key_records
+from ..domain import DEFAULT_DOMAIN_ROOT, DomainError, load_domain
+from ..roomconf import RoomConfError
 from ..schema import validate as validate_answer_key
 from ..subset import check_subset
 from .runner import fail, ok, skip, truncated
@@ -339,4 +343,139 @@ def gate_17_answer_key_validation(ctx):
         "17",
         "answer-key validation",
         f"{len(ctx.findings.findings)} finding(s), {len(ctx.distractors)} distractor(s) internally consistent",
+    )
+
+
+def gate_19_eval_answer_key(ctx):
+    """An eval room does not freeze without a complete, current
+    classification answer key.
+
+    `python3 -m synthvdr answerkey` refuses to WRITE a partial key, but
+    until this gate nothing required an eval room to HAVE one: a room
+    could declare ROOM_ROLE="eval", pass every other gate and
+    `/vdr-package --strict`, and ship unusable for the one thing an eval
+    room exists to do — score the classifier. And a key written early
+    could go quietly stale as later waves added or relabelled documents,
+    because the file records what the room looked like when the command
+    last ran, not what it looks like now.
+
+    So for an eval room this gate rebuilds the key in memory through
+    `answer_key_records` — the same derivation the CLI writes, one
+    implementation with two callers, so the gate certifies agreement with
+    the room rather than with a second derivation that could drift — and
+    compares it row by row with the file on disk. A missing file, a
+    malformed line, a document the key does not cover, a key line whose
+    document is gone, or a row that no longer matches the labels all FAIL
+    by name, and every failure names the re-run that fixes it.
+
+    An exemplar room PASSes with a detail saying why: it teaches the
+    classifier and is never scored against, so the key is an artefact it
+    is right not to have. Not SKIP — under --strict a skip is a hard
+    failure, and every exemplar room ever packaged would fail a gate
+    about an artefact that does not apply to it. A room with no
+    ROOM_ROLE at all SKIPs, deferring to gate 18's FAIL: until the room
+    says which side of the split it is on, whether a key is required
+    cannot be decided — and --strict still refuses the room.
+    """
+    try:
+        role = ctx.conf.get("ROOM_ROLE")
+    except RoomConfError:
+        return skip(
+            "19",
+            "eval answer key",
+            "room.conf has no ROOM_ROLE — gate 18 fails that first; until "
+            "the room declares its side of the exemplar/eval split, "
+            "whether a classification key is required cannot be decided",
+        )
+    if role != "eval":
+        return ok(
+            "19",
+            "eval answer key",
+            "exemplar room — it teaches the classifier and is never scored "
+            "against, so no classification key is required",
+        )
+
+    key_path = ctx.key_root / ANSWER_KEY_NAME
+    if not key_path.is_file():
+        return fail(
+            "19",
+            "eval answer key",
+            f"an eval room exists to score the classifier, and this one "
+            f"has no {ANSWER_KEY_NAME} under {ctx.conf.get('KEY_ROOT')} — "
+            "run python3 -m synthvdr answerkey (with --vocabulary) before "
+            "packaging",
+        )
+
+    try:
+        expected = answer_key_records(
+            ctx.room, ctx.conf, load_domain(DEFAULT_DOMAIN_ROOT)
+        )
+    except (AnswerKeyError, DomainError) as exc:
+        return fail(
+            "19",
+            "eval answer key",
+            f"the key on disk cannot be checked against a fresh rebuild: "
+            f"{exc}",
+        )
+
+    actual = []
+    for n, line in enumerate(
+        key_path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        if not line.strip():
+            continue
+        try:
+            actual.append(json.loads(line))
+        except json.JSONDecodeError:
+            return fail(
+                "19",
+                "eval answer key",
+                f"{ANSWER_KEY_NAME} line {n} is not valid JSON — rewrite "
+                "the key with python3 -m synthvdr answerkey",
+            )
+
+    if actual != expected:
+        expected_by_path = {r["source_path"]: r for r in expected}
+        actual_by_path = {r.get("source_path"): r for r in actual}
+        missing = sorted(set(expected_by_path) - set(actual_by_path))
+        extra = sorted(set(actual_by_path) - set(expected_by_path))
+        changed = sorted(
+            p
+            for p in set(expected_by_path) & set(actual_by_path)
+            if expected_by_path[p] != actual_by_path[p]
+        )
+        parts = []
+        if missing:
+            parts.append(
+                f"{len(missing)} document(s) the key does not cover: "
+                + truncated(missing)
+            )
+        if extra:
+            parts.append(
+                f"{len(extra)} key line(s) with no blind document: "
+                + truncated(extra)
+            )
+        if changed:
+            parts.append(
+                f"{len(changed)} row(s) that no longer match the labels: "
+                + truncated(changed)
+            )
+        if not parts:
+            # Same rows both sides, different order — the deterministic
+            # sort is broken, which no per-path diff can name.
+            parts.append(
+                "the rows are out of order against the deterministic rebuild"
+            )
+        return fail(
+            "19",
+            "eval answer key",
+            "the key on disk is stale (" + "; ".join(parts) + ") — re-run "
+            "python3 -m synthvdr answerkey",
+        )
+
+    return ok(
+        "19",
+        "eval answer key",
+        f"{len(expected)} document(s) keyed; the file matches a fresh "
+        "rebuild",
     )

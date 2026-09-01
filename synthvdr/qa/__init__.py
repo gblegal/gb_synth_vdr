@@ -6,6 +6,7 @@ from .integrity import (
     gate_13_fact_sheet,
     gate_15_discoverability,
     gate_17_answer_key_validation,
+    gate_19_eval_answer_key,
 )
 from .leakage import (
     gate_03_flag_leakage,
@@ -44,6 +45,7 @@ ALL_GATES = [
     gate_16_render_parity,
     gate_17_answer_key_validation,
     gate_18_room_role,
+    gate_19_eval_answer_key,
 ]
 
 __all__ = ["ALL_GATES"]

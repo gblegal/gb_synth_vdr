@@ -1592,6 +1592,8 @@ def test_build_skill_excepts_every_gate_that_cannot_pass_before_the_audit():
     sets that until vdr-auditor runs — which /vdr-build dispatches only after the last wave.
     So every earlier wave necessarily fails it, and the skill must say so; it used to name
     only gates 2, 7 and 8 and then assert that a FAIL on anything else was a real defect.
+    Gate 19 joined the list for the same reason in an eval room: nothing writes
+    `_key/answer-key.jsonl` until `/vdr-package` runs `answerkey` at package time.
     """
     from synthvdr.schema import Finding
 
@@ -1606,7 +1608,11 @@ def test_build_skill_excepts_every_gate_that_cannot_pass_before_the_audit():
     body = _read(ROOT / "skills" / "vdr-build" / "SKILL.md")
     excepted = body[body.index("### 7. Run the gates") : body.index("### 8.")]
     assert "Gate 15" in excepted, "gate 15 is not in the named mid-build exception list"
-    assert "three of the eighteen gates" in excepted, (
+    assert "Gate 19" in excepted, (
+        "gate 19 is not in the named mid-build exception list — an eval room's key is "
+        "written at package time, so every build wave necessarily fails it"
+    )
+    assert "four of the nineteen gates" in excepted, (
         "the exception list says how many gates it names; that count has drifted"
     )
 

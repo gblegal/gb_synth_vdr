@@ -119,12 +119,12 @@ the section entirely rather than leaving it with no rows.
 
 "Anchors" is written **once**, the wave Step 1 first has to reach past the load-bearing block
 (see Step 1) — never rewritten afterwards. Absent before that point (a fresh build, or one still mid-anchor). This
-is the fact Steps 6–8 read to know whether gates 2/7/8/15's mid-build exceptions still apply.
+is the fact Steps 6–8 read to know whether gates 2/7/8/15's (and, in an eval room, 19's) mid-build exceptions still apply.
 
 "Gate result" in "Waves completed" records **PASS once every gate outside Step 7's named
-mid-build exceptions is clean** — not "every one of the eighteen gates," which (see Step 7)
+mid-build exceptions is clean** — not "every one of the nineteen gates," which (see Step 7)
 no wave before the last one can ever produce. Wave 1 and wave 2 above both legitimately show
-PASS with gates 2 and 15 excepted throughout, and gates 7/8 additionally excepted before
+PASS with gates 2 and 15 excepted throughout (and gate 19 too, in an eval room), and gates 7/8 additionally excepted before
 "Anchors" is recorded; that is not a weaker PASS, it is what "clean" is defined to mean before the room
 reaches its final size.
 
@@ -501,8 +501,8 @@ caught here, at build time, or by gate 8's carrier census afterwards.
 `bash tools/check.sh .`
 
 **Multi-wave is the normal case** (`M` = 200 documents, `L` = 800, `XL` = 2,000+): most builds
-take several waves, and three of the eighteen gates check something that genuinely does not
-exist yet before the room is finished. Naming all three exactly, rather than leaving "do not
+take several waves, and four of the nineteen gates check something that genuinely does not
+exist yet before the room is finished. Naming all four exactly, rather than leaving "do not
 proceed on any failure" as a rule the room's own size makes impossible to satisfy:
 
 - **Gate 2 (tree counts)** compares the blind/flagged tree's actual document count against
@@ -523,8 +523,14 @@ proceed on any failure" as a rule the room's own size makes impossible to satisf
   exists, and gate 8 is a real, un-excepted check: a FAIL from that point on is a genuine
   corpus defect (a wrongly authored evidence path, a stripped block), never an artefact of
   build order.
+- **Gate 19 (eval answer key)** — eval rooms only — requires `_key/answer-key.jsonl` to exist
+  and match a fresh rebuild from `_key/labels.yaml`, and nothing writes that file until
+  `/vdr-package` runs `python3 -m synthvdr answerkey` at package time. So in an eval room it
+  is **expected to FAIL on every wave**, exactly like gate 2, and clearing at package time is
+  what tells you the room carries the key it exists to carry. In an exemplar room it passes
+  throughout and is never excepted.
 
-**Every gate other than these three is a real check on every wave, including the first**, and
+**Every gate other than these four is a real check on every wave, including the first**, and
 a FAIL on any of them is always a real defect — never wave the whole gate run through because
 "gate 2 usually fails mid-build" without checking which gate actually failed.
 
@@ -541,7 +547,7 @@ recorded, write it now.
 **Do not start the next wave while any gate is failing OUTSIDE Step 7's named exceptions.** A
 wave whose gate run failed on anything else is not recorded in "Waves completed" at all; it
 stays the resume target until it passes. A wave that fails ONLY on the excepted gates (gates
-2 and 15 always; gates 7/8 before Anchors) is recorded as PASS — see the "Gate result" note above the
+2 and 15 always, and 19 in an eval room; gates 7/8 before Anchors) is recorded as PASS — see the "Gate result" note above the
 literal example for what PASS means at that point in a build.
 
 ## After the last wave
