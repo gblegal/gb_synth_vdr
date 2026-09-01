@@ -118,9 +118,32 @@ def _run_score(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_answerkey(args) -> int:
+    from .answer_key import AnswerKeyError, build_answer_key
+    from .domain import DEFAULT_DOMAIN_ROOT, DomainError, load_domain
+
+    try:
+        conf = load_room_conf(args.room / "room.conf")
+        pack = load_domain(DEFAULT_DOMAIN_ROOT)
+        out = build_answer_key(args.room, conf, pack)
+    except (RoomConfError, DomainError, AnswerKeyError) as exc:
+        print(f"synthvdr answerkey: {exc}".replace("\n", " "), file=sys.stderr)
+        return 2
+    lines = out.read_text(encoding="utf-8").count("\n")
+    print(f"{conf.get('ROOM_CODENAME')} — answer key written to {out}: {lines} documents.")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="synthvdr", description="synth-vdr tools.")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    answerkey_parser = subparsers.add_parser(
+        "answerkey",
+        help="Write _key/answer-key.jsonl from _key/labels.yaml and the "
+        "domain pack's classifier vocabulary.",
+    )
+    answerkey_parser.add_argument("--room", type=Path, default=Path("."))
 
     score_parser = subparsers.add_parser(
         "score", help="Score a tool's output against the room's answer key."
@@ -131,6 +154,8 @@ def main(argv=None) -> int:
 
     args = parser.parse_args(argv)
 
+    if args.command == "answerkey":
+        return _run_answerkey(args)
     if args.command == "score":
         return _run_score(args)
     parser.error(f"unknown command {args.command!r}")  # pragma: no cover - argparse exits first
