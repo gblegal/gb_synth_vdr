@@ -206,7 +206,7 @@ python3 -m synthvdr.qa --room . --strict
 ```
 
 **This is the one point in this skill where `--strict` must show a clean result, and the only
-check that actually licenses Step 6.** Every input the seventeen gates check now exists —
+check that actually licenses Step 6.** Every input the eighteen gates check now exists —
 the subset (Step 2), a render tree or an explicit decision not to build one (Step 3), and the
 manifest (Step 4, itself a file under `_key/`, so gate 12 must confirm it has not leaked into
 the blind tree same as every other answer-key artefact) — so `--strict` is now answerable, not

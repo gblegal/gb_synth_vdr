@@ -1,6 +1,6 @@
 ---
 name: vdr-qa
-description: Run the seventeen room QA gates — index regeneration, leakage sweeps, twin invariants, carrier census, cross-references, depth lint, subset, fact-sheet and answer-key reconciliation, unchecked-name sweep, discoverability and render parity. Use --strict before any release.
+description: Run the eighteen room QA gates — index regeneration, leakage sweeps, twin invariants, carrier census, cross-references, depth lint, subset, fact-sheet and answer-key reconciliation, unchecked-name sweep, discoverability, render parity and the room's exemplar/eval role declaration. Use --strict before any release.
 ---
 
 # Run the QA gates
@@ -12,7 +12,7 @@ python3 -m synthvdr.qa --room . --strict   # release mode
 
 `tools/check.sh` is a thin wrapper around the same command (`bash tools/check.sh .` and
 `bash tools/check.sh . --strict`) — use whichever is at hand, they run the identical
-seventeen gates.
+eighteen gates.
 
 If either form reports that it cannot import `synthvdr`, the room's `python3` is not the
 interpreter the package was installed into — which is the normal case, since a room is a
@@ -44,7 +44,7 @@ could not even be loaded (missing or malformed `room.conf`, or a malformed answe
 distinct from `1` so you can tell "the checks found a problem" apart from "the checks
 never ran."
 
-## The seventeen gates, briefly
+## The eighteen gates, briefly
 
 | # | Gate | Checks |
 |---|---|---|
@@ -65,6 +65,7 @@ never ran."
 | 15 | Discoverability audit | Every registered finding has a recorded `discoverable_from_blind` verdict |
 | 16 | Render parity | DOCX/PDF renders, if built, mirror the blind tree's document set by filename, in both directions (never checks rendered content) |
 | 17 | Answer-key validation | `_key/findings.yaml`/`_key/distractors.yaml` pass `synthvdr.schema.validate()`'s own internal-consistency checks |
+| 18 | Room role declared | `room.conf` says whether this is an `exemplar` room (may teach the downstream classifier) or an `eval` room (only ever scores it) — the train/test split, enforced |
 
 ## Common failures and what they mean
 

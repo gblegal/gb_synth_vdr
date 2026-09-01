@@ -122,7 +122,7 @@ the section entirely rather than leaving it with no rows.
 is the fact Steps 6–8 read to know whether gates 2/7/8/15's mid-build exceptions still apply.
 
 "Gate result" in "Waves completed" records **PASS once every gate outside Step 7's named
-mid-build exceptions is clean** — not "every one of the seventeen gates," which (see Step 7)
+mid-build exceptions is clean** — not "every one of the eighteen gates," which (see Step 7)
 no wave before the last one can ever produce. Wave 1 and wave 2 above both legitimately show
 PASS with gates 2 and 15 excepted throughout, and gates 7/8 additionally excepted before
 "Anchors" is recorded; that is not a weaker PASS, it is what "clean" is defined to mean before the room
@@ -475,7 +475,7 @@ caught here, at build time, or by gate 8's carrier census afterwards.
 `bash tools/check.sh .`
 
 **Multi-wave is the normal case** (`M` = 200 documents, `L` = 800, `XL` = 2,000+): most builds
-take several waves, and three of the seventeen gates check something that genuinely does not
+take several waves, and three of the eighteen gates check something that genuinely does not
 exist yet before the room is finished. Naming all three exactly, rather than leaving "do not
 proceed on any failure" as a rule the room's own size makes impossible to satisfy:
 

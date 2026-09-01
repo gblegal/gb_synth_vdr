@@ -420,3 +420,28 @@ def gate_09_xrefs(ctx):
             "could own them: " + truncated(sorted(set(out_of_range))),
         )
     return ok("9", "cross-reference resolution", f"{len(known)} slots, {len(allowed)} allowlisted gaps")
+
+
+def gate_18_room_role(ctx):
+    """The room declares whether it is an exemplar room or an eval room.
+
+    The downstream classifier ingests exemplar rooms as teaching material
+    and scores itself against eval rooms; a room used for both produces
+    recall numbers that are fiction. The split only holds if every room
+    says which side it is on, so an undeclared room FAILs here — not
+    SKIPs, which a lenient run would wave through — rather than sliding
+    into whichever use finds it first. A declared value is already known
+    to be legitimate: load_room_conf rejects anything outside ROOM_ROLES
+    before any gate runs.
+    """
+    try:
+        role = ctx.conf.get("ROOM_ROLE")
+    except RoomConfError:
+        return fail(
+            "18",
+            "room role declared",
+            'room.conf has no ROOM_ROLE — add ROOM_ROLE="exemplar" or '
+            'ROOM_ROLE="eval": an exemplar room may teach the classifier, '
+            "an eval room only ever scores it, and no room may do both",
+        )
+    return ok("18", "room role declared", role)
