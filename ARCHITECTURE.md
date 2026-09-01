@@ -101,7 +101,7 @@ flowchart TB
     TW --> G["gate run → _key/build-status.md"]
     G -->|"anchors then filler remain"| W
     G -->|"authoring complete"| AU["vdr-auditor<br/>discoverability verdicts"]
-    AU --> Q["/vdr-qa<br/>the eighteen gates"]
+    AU --> Q["/vdr-qa<br/>the nineteen gates"]
     Q --> P["/vdr-package<br/>gates in --strict"]
     P --> SUB["subset/ · optional DOCX + PDF<br/>_key/manifest.json content hash"]
     SUB --> R(["frozen room"])
@@ -180,7 +180,7 @@ judgement-shaped work. Anything that must be identical across runs lives here.
 | `namecheck` | Extracts candidate invented names from three declared sources and keeps the durable `name-check.md` record. The searching itself happens in `/vdr-scope`, because only the agent has WebSearch. |
 | `schema` | The answer-key model — findings and distractors — plus `validate()`'s internal-consistency checks. YAML is canonical; `findings.md` is generated from it. |
 | `score` | Deterministic scoring: provenance check, evidence-path prematching, recall/precision/partial trails, adjudication reconciliation, scorecard rendering and baseline diff. |
-| `qa/` | The eighteen gates (`structural`, `leakage`, `depth`, `integrity`, `renders`) and the runner that enforces how they report. |
+| `qa/` | The nineteen gates (`structural`, `leakage`, `depth`, `integrity`, `renders`) and the runner that enforces how they report. |
 | `render/` | The optional DOCX (`docx.py`) and PDF (`pdf.mjs`, a separate Node process) renders. Never imported at core-build time. |
 
 Two separate CLIs, sharing no conventions beyond their general shape: `python3 -m
@@ -201,7 +201,7 @@ structurally, with no stoplist and no bound.
 
 ---
 
-## 6. The eighteen gates
+## 6. The nineteen gates
 
 `python3 -m synthvdr.qa --room <dir>` runs every gate in `synthvdr/qa/__init__.py`'s
 `ALL_GATES`. This is the same suite `/vdr-qa` runs after every build wave and
@@ -227,6 +227,7 @@ structurally, with no stoplist and no bound.
 | 16 | Render parity | DOCX/PDF renders, if built, mirror the blind tree's document set by filename, in both directions |
 | 17 | Answer-key validation | `_key/findings.yaml` / `_key/distractors.yaml` pass `synthvdr.schema.validate()`'s internal-consistency checks |
 | 18 | Room role declared | `room.conf` says whether this is an `exemplar` room (may teach the downstream classifier) or an `eval` room (only ever scores it) — the train/test split, enforced |
+| 19 | Eval answer key | An `eval` room carries `_key/answer-key.jsonl` and the file matches a fresh rebuild from `_key/labels.yaml`; exemplar rooms pass — the key does not apply to them |
 
 **The runner enforces three disciplines, once, rather than leaving them to each gate.**
 

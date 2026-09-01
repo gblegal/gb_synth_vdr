@@ -12,7 +12,7 @@ individual gates:
     up: not one gate skipping quietly, but zero gates ever having run.
   - Every gate's `detail` prints as exactly one line, regardless of what it
     contains. Embedded newlines are collapsed to spaces here so the
-    one-line-per-gate invariant holds no matter what any of the eighteen
+    one-line-per-gate invariant holds no matter what any of the nineteen
     gates puts in `detail` — a leak sweep naming several offending paths at
     once should not be able to break the transcript just by joining them
     with newlines.

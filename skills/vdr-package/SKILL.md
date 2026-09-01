@@ -24,7 +24,7 @@ already know you have not built yet, not something new, and there is no way to s
 before Step 3 has even run. Fix anything this pass genuinely FAILs on before going further — a
 real gate failure is never improved by building the subset or the renders on top of it. Once
 this shows `0 failed` (whatever the skip count), move on to Step 2; the strict, no-skips check
-that actually gates the freeze is Step 5, once every input exists for it to check.
+that actually gates the freeze is Step 6, once every input exists for it to check.
 
 ## 2. Build the subset
 
@@ -56,7 +56,7 @@ if report.total == blind_total:
 The subset reproduces **every** finding with its full evidence chain, plus deterministic
 filler up to `subset_total` above. The run is deterministic — re-running it over an unchanged
 room produces a byte-identical subset. This is what turns gate 11's SKIP into a real check —
-confirm it with Step 1's non-strict command again if you want to see it before Step 5's final
+confirm it with Step 1's non-strict command again if you want to see it before Step 6's final
 strict run.
 
 ## 3. Render (optional, but strict mode holds you to whichever you choose)
@@ -109,7 +109,7 @@ key believes it is a scan.
 Both are optional in the sense that you choose which toolchain(s) to use — DOCX needs only the
 `docx` extra (`pip install -e ".[docx]"`), PDF needs Node, puppeteer and a local Chrome. But
 **skipping both is not a real option at release**: gate 16 (render parity) prints `SKIP` when
-no render tree exists at all, and Step 5's `--strict` run treats that skip as a failure, same
+no render tree exists at all, and Step 6's `--strict` run treats that skip as a failure, same
 as any other. If a toolchain is genuinely unavailable in your environment, say so to the user
 and stop here rather than force one — do not weaken `--strict` to work around it; a room
 frozen without a passing render-parity check has not actually had that check run.
@@ -117,7 +117,7 @@ frozen without a passing render-parity check has not actually had that check run
 The render is non-destructive by design: it creates directories and writes/overwrites the
 files it renders, but never deletes a stale render left behind by a since-renamed or
 since-deleted source. If you rename or remove a source document after rendering, re-render
-before Step 5's final gate run — gate 16 will catch the mismatch either way, in both
+before Step 6's final gate run — gate 16 will catch the mismatch either way, in both
 directions (a source missing its render, and a render missing its source), but it is your job
 to fix it, not the renderer's to guess which side is right.
 
@@ -199,22 +199,40 @@ against this room.** It belongs in that output's own `room_hash` field
 the whole scorecard `UNVERIFIED` rather than silently assuming the output came from this
 room.
 
-## 5. Verify in strict mode — the actual release gate
+## 5. Build the classification answer key — eval rooms only
+
+An exemplar room skips this step: it teaches the classifier and is never scored against,
+and gate 19 passes it on exactly that basis. For an eval room (`ROOM_ROLE="eval"`), write
+the key the room exists to carry:
+
+```bash
+python3 -m synthvdr answerkey --room .
+```
+
+Pass `--vocabulary <file>` when the classifier's own document list is to hand (one type
+name per line): a label outside it is refused as author drift now, rather than scoring as
+a phantom classifier miss later. The command refuses a key that covers anything less than
+the whole blind tree, and gate 19 in Step 6 rebuilds the same derivation in memory and
+compares it with the file on disk — so a key that went stale after a late edit fails the
+strict run rather than freezing into the release. An eval room that reaches Step 6 without
+this step fails gate 19 by design; there is no waiver.
+
+## 6. Verify in strict mode — the actual release gate
 
 ```bash
 python3 -m synthvdr.qa --room . --strict
 ```
 
 **This is the one point in this skill where `--strict` must show a clean result, and the only
-check that actually licenses Step 6.** Every input the eighteen gates check now exists —
+check that actually licenses Step 7.** Every input the nineteen gates check now exists —
 the subset (Step 2), a render tree or an explicit decision not to build one (Step 3), and the
 manifest (Step 4, itself a file under `_key/`, so gate 12 must confirm it has not leaked into
 the blind tree same as every other answer-key artefact) — so `--strict` is now answerable, not
 circular the way running it in Step 1 would have been. **Do not package a room with any
 failure or any skip.** If anything fails or skips here, fix it or build the missing input (see
-`/vdr-qa`'s "Common failures" section) and re-run this step until it is clean before Step 6.
+`/vdr-qa`'s "Common failures" section) and re-run this step until it is clean before Step 7.
 
-## 6. Freeze
+## 7. Freeze
 
 Commit and tag. Tell the user, in one line each: what to hand a tool under test
 (`data-room/` — or `subset/` for a bounded run — plus `data-room-docx/`/`data-room-pdf/` if
