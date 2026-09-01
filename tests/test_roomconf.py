@@ -544,3 +544,37 @@ def test_finding_prefixes_accepts_a_single_token(tmp_path):
     conf_text = SAMPLE.replace('FINDING_PREFIXES="CORP|ENV|FIN"', 'FINDING_PREFIXES="CORP"')
     conf = load_room_conf(write(tmp_path, conf_text))
     assert conf.get("FINDING_PREFIXES") == "CORP"
+
+
+# ---------------------------------------------------------------------------
+# ROOM_ROLE — the exemplar/eval declaration the classifier work depends on.
+# Optional at load (rooms predate it, and the loader runs on part-built
+# rooms all day), never silently wrong when present, and made mandatory at
+# QA time by gate 18 rather than here.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("role", ["exemplar", "eval"])
+def test_room_role_accepts_the_two_legitimate_values(tmp_path, role):
+    conf = load_room_conf(write(tmp_path, SAMPLE + f'ROOM_ROLE="{role}"\n'))
+    assert conf.get("ROOM_ROLE") == role
+
+
+def test_room_role_rejects_anything_else(tmp_path):
+    with pytest.raises(RoomConfError, match="ROOM_ROLE") as excinfo:
+        load_room_conf(write(tmp_path, SAMPLE + 'ROOM_ROLE="evaluation"\n'))
+    message = str(excinfo.value)
+    assert "evaluation" in message, "the rejected value must be named"
+    assert "exemplar" in message and "eval" in message, (
+        "the message must list the two legitimate roles, or the author is "
+        "left guessing at the vocabulary"
+    )
+
+
+def test_room_role_is_not_required_at_load_time(tmp_path):
+    # Deliberate: gate 18 is where a missing declaration blocks, at the
+    # point a room is judged fit to leave — not in the loader that every
+    # mid-build tool calls. SAMPLE has no ROOM_ROLE line, so this loading
+    # cleanly IS the test.
+    conf = load_room_conf(write(tmp_path))
+    assert "ROOM_ROLE" not in conf.values

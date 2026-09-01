@@ -1606,7 +1606,7 @@ def test_build_skill_excepts_every_gate_that_cannot_pass_before_the_audit():
     body = _read(ROOT / "skills" / "vdr-build" / "SKILL.md")
     excepted = body[body.index("### 7. Run the gates") : body.index("### 8.")]
     assert "Gate 15" in excepted, "gate 15 is not in the named mid-build exception list"
-    assert "three of the seventeen gates" in excepted, (
+    assert "three of the eighteen gates" in excepted, (
         "the exception list says how many gates it names; that count has drifted"
     )
 

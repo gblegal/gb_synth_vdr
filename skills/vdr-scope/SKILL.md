@@ -341,6 +341,11 @@ values step 2 just printed, plus:
   `pack.workstreams()` to work out which prefix a mid-authoring discovery gets. Get the token
   count right but the order wrong — or shrink the list to match a subset — and every
   discovered finding is silently numbered under the wrong workstream's prefix.
+- `ROOM_ROLE` — `"exemplar"` or `"eval"`. An exemplar room may be ingested by the
+  downstream classifier as teaching material; an eval room only ever scores it, and no
+  room may do both — that is the train/test split, and gate 18 refuses a room that has
+  not declared its side. Ask the user which this room is for; when in doubt say
+  `"eval"`, the side that can never contaminate a measurement.
 - `EXPECTED_KDP_CARRIERS=0` — no findings exist yet; `/vdr-findings` sets the real number.
 - `INDEX_TOTAL`, `BLIND_TOTAL`, `FLAGGED_TOTAL` — all equal to `len(slots)` from step 2.
 - `SECTION_DIRS` — the space-separated `room_pack.section_dirs()` string from step 2. This one

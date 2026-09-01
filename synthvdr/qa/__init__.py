@@ -22,6 +22,7 @@ from .structural import (
     gate_07_twin_diff,
     gate_08_carrier_census,
     gate_09_xrefs,
+    gate_18_room_role,
 )
 
 ALL_GATES = [
@@ -42,6 +43,7 @@ ALL_GATES = [
     gate_15_discoverability,
     gate_16_render_parity,
     gate_17_answer_key_validation,
+    gate_18_room_role,
 ]
 
 __all__ = ["ALL_GATES"]

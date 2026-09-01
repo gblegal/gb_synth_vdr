@@ -45,6 +45,17 @@ REQUIRED_KEYS = (
     "EXPECTED_KDP_CARRIERS",
 )
 
+# The two legitimate values of ROOM_ROLE. An exemplar room may be ingested
+# by the downstream classifier as teaching material; an eval room only ever
+# scores it. A room used for both produces recall numbers that are fiction —
+# the standard train/test discipline, stated as room metadata. ROOM_ROLE is
+# deliberately NOT in REQUIRED_KEYS: the loader runs on part-built rooms
+# all day and on rooms that predate the key entirely, so the place a
+# missing declaration must block is gate 18, where a room is judged fit to
+# leave — not here. A value that IS present and is neither of these is
+# rejected at load, by name, while the author is still editing the file.
+ROOM_ROLES = ("exemplar", "eval")
+
 # Keys whose values are relative filesystem paths under the room root. Tools
 # that turn these into real paths (e.g. synthvdr.twin.build_flagged_tree)
 # call shutil.rmtree on the result, so a bad value here is a destructive-path
@@ -486,6 +497,13 @@ def load_room_conf(path: Path) -> RoomConf:
         raise RoomConfError(f"{path}: missing required keys: {', '.join(missing)}")
 
     _check_finding_prefixes(path, "FINDING_PREFIXES", values["FINDING_PREFIXES"])
+
+    if "ROOM_ROLE" in values and values["ROOM_ROLE"] not in ROOM_ROLES:
+        raise RoomConfError(
+            f"{path}: ROOM_ROLE is {values['ROOM_ROLE']!r} — it must be one of "
+            f"{', '.join(ROOM_ROLES)}. An exemplar room may teach the "
+            "classifier; an eval room only ever scores it."
+        )
 
     # Property 1 + Property 2 over every path-valued key at once. The room
     # root is path.parent — room.conf sits at the top of the room it
