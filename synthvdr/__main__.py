@@ -1,4 +1,8 @@
-"""CLI: python3 -m synthvdr score <tool-output> --room PATH [--baseline FILE]
+"""CLI: python3 -m synthvdr {score|score-classification|answerkey} ...
+
+`score <tool-output> --room PATH [--baseline FILE]` scores a findings report;
+`score-classification <output> --room PATH` scores a classification run against
+`_key/answer-key.jsonl`; `answerkey` builds that key from `_key/labels.yaml`.
 
 This is the package-level entry point (`python3 -m synthvdr ...`), distinct
 from `synthvdr/qa/__main__.py` (`python3 -m synthvdr.qa`, the room QA gate
@@ -118,6 +122,66 @@ def _run_score(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_score_classification(args) -> int:
+    """`score-classification <output> --room .` — the classification twin of
+    `score`, graded against `_key/answer-key.jsonl` rather than
+    findings.yaml. Same provenance discipline (a proven room_hash mismatch
+    aborts before any scorecard prints; a missing hash scores UNVERIFIED),
+    same exit-code convention: 2 groups every could-not-even-run failure —
+    an unloadable room.conf or key, an unparseable output, and a coverage
+    mismatch between output and key, because a score over a different
+    document set than the key's is not a partial result, it is a wrong one.
+    """
+    from .classify_score import (
+        ClassificationOutputError,
+        ClassificationScoreError,
+        load_classification_key,
+        load_classification_output,
+        render_classification_scorecard,
+        score_classification,
+    )
+
+    try:
+        conf = load_room_conf(args.room / "room.conf")
+    except RoomConfError as exc:
+        print(f"synthvdr score-classification: {exc}".replace("\n", " "), file=sys.stderr)
+        return 2
+
+    try:
+        output = load_classification_output(args.tool_output)
+    except OSError as exc:
+        print(
+            f"synthvdr score-classification: could not read {args.tool_output}: {exc}".replace("\n", " "),
+            file=sys.stderr,
+        )
+        return 2
+    except (ValueError, ClassificationOutputError) as exc:
+        print(
+            f"synthvdr score-classification: could not parse {args.tool_output}: {exc}".replace("\n", " "),
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        provenance = check_provenance(args.room, output)
+    except ProvenanceError as exc:
+        print(f"synthvdr score-classification: {exc}".replace("\n", " "), file=sys.stderr)
+        return 2
+
+    try:
+        key = load_classification_key(args.room, conf)
+        card = score_classification(output, key)
+    except ClassificationScoreError as exc:
+        print(f"synthvdr score-classification: {exc}".replace("\n", " "), file=sys.stderr)
+        return 2
+    except ClassificationOutputError as exc:
+        print(f"synthvdr score-classification: {exc}".replace("\n", " "), file=sys.stderr)
+        return 2
+
+    print(render_classification_scorecard(card, output, provenance=provenance))
+    return 0
+
+
 def _run_answerkey(args) -> int:
     from .answer_key import AnswerKeyError, build_answer_key
     from .domain import DEFAULT_DOMAIN_ROOT, DomainError, load_domain
@@ -172,12 +236,23 @@ def main(argv=None) -> int:
     score_parser.add_argument("--room", type=Path, default=Path("."))
     score_parser.add_argument("--baseline", type=Path, default=None)
 
+    classify_parser = subparsers.add_parser(
+        "score-classification",
+        help="Score a tool's classification output against "
+        "_key/answer-key.jsonl — document type, primary pile, the "
+        "not-sure count and a confusion table.",
+    )
+    classify_parser.add_argument("tool_output", type=Path)
+    classify_parser.add_argument("--room", type=Path, default=Path("."))
+
     args = parser.parse_args(argv)
 
     if args.command == "answerkey":
         return _run_answerkey(args)
     if args.command == "score":
         return _run_score(args)
+    if args.command == "score-classification":
+        return _run_score_classification(args)
     parser.error(f"unknown command {args.command!r}")  # pragma: no cover - argparse exits first
     return 2  # pragma: no cover
 

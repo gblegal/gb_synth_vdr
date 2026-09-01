@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://synthvdr/schemas/classification-output.schema.json",
+  "title": "synth-vdr classification output",
+  "description": "The shape a classification tool's output is read in as, for scoring against a room's _key/answer-key.jsonl via `python3 -m synthvdr score-classification`. A separate schema from tool-output.schema.json on purpose: that one is closed (additionalProperties: false) and describes findings, and reopening it to carry classifications would break every consumer that relies on its closedness. room_hash serves the same provenance discipline as the findings scorer's — a proven mismatch refuses to score. The scorer also accepts bare JSONL (one classification object per line, extra fields ignored), which is exactly the downstream classifier's native manifest; that path carries no tool name or room_hash, so it scores as UNVERIFIED.",
+  "type": "object",
+  "required": ["tool", "classifications"],
+  "properties": {
+    "tool": {
+      "type": "string",
+      "description": "Name and version of the classification tool under test, e.g. \"gb-docclass/0.2.0\"."
+    },
+    "room_hash": {
+      "type": "string",
+      "description": "The room's `_key/manifest.json` content_hash at the time this output was produced, if known. Empty or omitted means provenance cannot be verified — the scorecard reports UNVERIFIED rather than silently assuming a match."
+    },
+    "classifications": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/classification" },
+      "description": "One record per document. Coverage must match the room's answer key exactly, in both directions — a skipped document would be graded against silence, so a tool that cannot classify a document says so with an unsure record rather than omitting it."
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "classification": {
+      "type": "object",
+      "required": ["source_path"],
+      "properties": {
+        "source_path": {
+          "type": "string",
+          "description": "The document's path relative to the room's blind tree — the same spelling the answer key uses."
+        },
+        "document_type": {
+          "type": ["string", "null"],
+          "description": "The type the tool assigned, in the answer key's vocabulary. Null for an unsure record."
+        },
+        "primary_workstream": {
+          "type": ["string", "null"],
+          "description": "The one pile the tool filed the document in. Null for an unsure record."
+        },
+        "secondary_workstreams": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Who else the tool copied. Carried for completeness but never scored here: the key's secondaries are empty by design — who else should see a document is the downstream project's routing policy, not a fact about the room."
+        },
+        "sent_to_all_workstreams": {
+          "type": "boolean",
+          "description": "The tool fanned this document out to every pile. Delivery, not filing — it does not make a wrong primary right."
+        },
+        "unsure": {
+          "type": "boolean",
+          "description": "The tool declined to classify this document. Counted as its own destination in the confusion table, never as a pile."
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

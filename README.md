@@ -62,7 +62,9 @@ Six commands, run in order. Each stops when its own job is done; nothing runs ah
    any check failing — or even skipped.
 6. **`/vdr-score`** — marks a tool's output: how many planted problems it found, how many
    of its reports were right, how many red herrings it fell for, and whether it has
-   improved on the last run.
+   improved on the last run. It also marks a classification tool's filing against the
+   room's classification answer key — right type, right pile, and where the misfiled
+   documents went.
 
 ## What this is not
 
