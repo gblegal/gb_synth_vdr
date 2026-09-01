@@ -64,7 +64,10 @@ Six commands, run in order. Each stops when its own job is done; nothing runs ah
    of its reports were right, how many red herrings it fell for, and whether it has
    improved on the last run. It also marks a classification tool's filing against the
    room's classification answer key — right type, right pile, and where the misfiled
-   documents went.
+   documents went — and `python3 -m synthvdr corrupt` writes a deliberately dirtied twin
+   of the room (messy filenames, misfiled documents, OCR-style noise, truncation) with a
+   key that follows the mess, so a tool is never scored only against a suspiciously
+   clean room.
 
 ## What this is not
 

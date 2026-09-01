@@ -191,9 +191,18 @@ def load_classification_output(path: Path) -> ClassificationOutput:
     )
 
 
-def load_classification_key(room: Path, conf) -> List[ClassificationRecord]:
-    """The room's classification answer key, or a refusal naming the fix."""
-    key_path = room / conf.get_relative_path("KEY_ROOT") / ANSWER_KEY_NAME
+def load_classification_key(
+    room: Path, conf, key_path: Optional[Path] = None
+) -> List[ClassificationRecord]:
+    """The room's classification answer key, or a refusal naming the fix.
+
+    `key_path` overrides the default `_key/answer-key.jsonl` — the one
+    caller that needs this is a run scored against the corrupted twin,
+    whose key lives at `corrupted/answer-key.jsonl` with the corrupted
+    paths (see `corrupt.py`).
+    """
+    if key_path is None:
+        key_path = room / conf.get_relative_path("KEY_ROOT") / ANSWER_KEY_NAME
     if not key_path.is_file():
         raise ClassificationScoreError(
             f"no {ANSWER_KEY_NAME} at {key_path} — run "

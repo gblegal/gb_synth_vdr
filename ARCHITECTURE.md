@@ -285,6 +285,13 @@ another. This is an interlock against misconfiguration, not a security control; 
 
 **A scorecard is tied to the room that produced it.** `_key/manifest.json` carries a
 `content_hash` over the blind tree, and `/vdr-score` compares a tool output's `room_hash`
-against it — the classification scorer (`score-classification`) runs the identical check. Without that check, scoring one room's output against another room's key
+against it — the classification scorer (`score-classification`) runs the identical check.
+
+**A room can be scored dirty as well as clean.** `python3 -m synthvdr corrupt` writes a
+derived `corrupted/` view — the blind tree with renamed, misfiled, noised and truncated
+documents, plus an answer key rewritten to the corrupted paths and a log mapping clean to
+dirty. Deterministic by (seed, profile), owned by its own marker like `subset/`, and never
+walked by any gate: the canonical room stays the QA-checked object, the corrupted twin is
+regenerable eval material for the "too clean" risk. Without that check, scoring one room's output against another room's key
 produces a confident, precise, entirely meaningless number that nothing in the pipeline
 could catch.
