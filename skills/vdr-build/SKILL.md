@@ -287,10 +287,13 @@ things, handled two different ways:
 
 The shape each `vdr-author` writes to `_key/incoming/<label>.yaml` (`<label>` is that
 subagent's wave-and-batch identifier, e.g. `wave1-batch-a.yaml`) — copy and adapt, do not
-reconstruct it from memory. The two keys have deliberately different shapes: a `findings:`
+reconstruct it from memory. The three keys have deliberately different shapes: a `findings:`
 row carries **`id`, `location` and `substance` only**, because that is all the author owns;
 a `new_findings:` row carries the full `findings.yaml` shape, because nothing about it exists
-in the registry yet, just with a provisional ID in place of a real one.
+in the registry yet, just with a provisional ID in place of a real one; and a `labels:` row
+carries **every document the batch wrote**, finding-carrier or benign filler alike — the raw
+material of the classification answer key, so a batch that labels only its interesting
+documents has done half the job.
 
 A `new_findings:` row's `source` and `corroboration` are relative to the blind tree root,
 never prefixed with `BLIND_TREE`'s own name — see `/vdr-findings`' fuller note on this. An author who has just
@@ -327,6 +330,16 @@ new_findings:
       A permit variation notice tightens a discharge limit the room's other environmental
       documents never mention meeting or missing — a genuinely new issue, not a restatement
       of an existing finding.
+# One row per document the batch wrote — every document, not just the interesting ones.
+# document_type speaks the DOWNSTREAM CLASSIFIER'S vocabulary (gb-docclass's document
+# list): the plain English name of what was written, as a UK lawyer would title the
+# type — "Articles of association", "Lease", "Non-disclosure agreement" — never this
+# pack's own workstream tokens, an abbreviation, or a filename slug.
+labels:
+  - path: 11_environmental-hs/11.1_permits/11.1.2_permits-02.md
+    document_type: "Environmental permit"
+  - path: 11_environmental-hs/11.1_permits/11.1.1_permits-01.md
+    document_type: "Environmental permit"
 ```
 
 Merging and allocating is `synthvdr.schema.consolidate_wave_incoming` — a single, pure,
@@ -359,6 +372,7 @@ on that are also shared functions, never reimplemented inline:
 ```python
 import yaml
 from pathlib import Path
+from synthvdr.answer_key import consolidate_wave_labels
 from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
 from synthvdr.roomconf import load_room_conf
 from synthvdr.schema import (
@@ -390,6 +404,15 @@ incoming_docs = {
 result = consolidate_wave_incoming(findings_doc, incoming_docs, already_mapped, prefix_for_workstream)
 Path("_key/findings.yaml").write_text(yaml.safe_dump(result.findings_doc, sort_keys=False))
 
+# The same pass consolidates the wave's document labels into _key/labels.yaml — the raw
+# material of the classification answer key (`python3 -m synthvdr answerkey` builds it at
+# package time). Same function discipline as findings: synthvdr.answer_key's
+# consolidate_wave_labels, pure and already-tested, never re-derived here by hand.
+labels_path = Path("_key/labels.yaml")
+labels_doc = (yaml.safe_load(labels_path.read_text()) or {"labels": []}) if labels_path.is_file() else {"labels": []}
+labels_doc = consolidate_wave_labels(labels_doc, incoming_docs)
+labels_path.write_text(yaml.safe_dump(labels_doc, sort_keys=False))
+
 # Note the glob takes EVERY incoming file, including every prior wave's. That is deliberate,
 # not an oversight: consumed intake is never moved or deleted, so wave n re-reads waves 1..n-1
 # as well. It is safe for two distinct reasons, and both are load-bearing —
@@ -397,6 +420,9 @@ Path("_key/findings.yaml").write_text(yaml.safe_dump(result.findings_doc, sort_k
 #     re-applying an already-applied refinement is a no-op; and
 #   * a `new_findings:` row is guarded by `already_mapped`, read from the build-status ledger
 #     above, so a discovery allocated in an earlier wave is skipped rather than re-allocated.
+#   * a `labels:` row is an idempotent same-value upsert — re-applying it is a no-op, and a
+#     row that CONTRADICTS an earlier wave's label for the same path raises rather than
+#     letting the later value silently win.
 # Deleting either guard turns this line into duplicate findings on every wave. The cost is
 # O(waves^2) reads — noticeable on an XL room at twenty-odd waves, and the reason to archive
 # consumed files under `_key/incoming/consumed/` if that ever matters. Correctness does not

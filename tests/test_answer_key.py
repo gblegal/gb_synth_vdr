@@ -164,3 +164,115 @@ def test_cli_refuses_plainly_without_labels(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "labels.yaml" in err
     assert "\n" not in err.strip(), "errors print as one readable line"
+
+
+# ---------------------------------------------------------------------------
+# consolidate_wave_labels — the wave hand-back half. Same guarantees as
+# consolidate_wave_incoming: pure, safe to re-run over untouched intake,
+# and a conflict raises rather than letting the later value silently win.
+# ---------------------------------------------------------------------------
+
+
+def test_wave_labels_merge_sorted_by_path():
+    from synthvdr.answer_key import consolidate_wave_labels
+
+    merged = consolidate_wave_labels(
+        {"labels": []},
+        {
+            "wave1-batch-b": {"labels": [
+                {"path": "02_financial/2.1.1_accounts-01.md",
+                 "document_type": "Statutory accounts"}]},
+            "wave1-batch-a": {"labels": [
+                {"path": "01_corporate/1.1.1_constitutional-01.md",
+                 "document_type": "Articles of association"}]},
+        },
+    )
+    assert [row["path"] for row in merged["labels"]] == [
+        "01_corporate/1.1.1_constitutional-01.md",
+        "02_financial/2.1.1_accounts-01.md",
+    ], "labels.yaml is canonical and sorted, so reruns produce the same bytes"
+
+
+def test_wave_labels_rerun_over_untouched_intake_is_a_no_op():
+    from synthvdr.answer_key import consolidate_wave_labels
+
+    incoming = {
+        "wave1-batch-a": {"labels": [
+            {"path": "01_corporate/1.1.1_constitutional-01.md",
+             "document_type": "Articles of association"}]},
+    }
+    once = consolidate_wave_labels({"labels": []}, incoming)
+    twice = consolidate_wave_labels(once, incoming)
+    assert twice == once, (
+        "wave n re-reads every prior wave's intake; an already-applied "
+        "label must be a no-op, or every wave doubles the file"
+    )
+
+
+def test_wave_labels_conflict_raises_rather_than_last_wins():
+    from synthvdr.answer_key import consolidate_wave_labels
+
+    existing = {"labels": [
+        {"path": "01_corporate/1.1.1_constitutional-01.md",
+         "document_type": "Articles of association"}]}
+    with pytest.raises(AnswerKeyError, match="1.1.1_constitutional-01") as excinfo:
+        consolidate_wave_labels(
+            existing,
+            {"wave2-batch-a": {"labels": [
+                {"path": "01_corporate/1.1.1_constitutional-01.md",
+                 "document_type": "Lease"}]}},
+        )
+    message = str(excinfo.value)
+    assert "Articles of association" in message and "Lease" in message, (
+        "both claimed types must be named — the author needs to see what "
+        "they are contradicting"
+    )
+
+
+def test_wave_labels_malformed_row_names_the_file_and_index():
+    from synthvdr.answer_key import consolidate_wave_labels
+
+    with pytest.raises(AnswerKeyError, match=r"wave1-batch-a.*labels\[1\]"):
+        consolidate_wave_labels(
+            {"labels": []},
+            {"wave1-batch-a": {"labels": [
+                {"path": "a.md", "document_type": "Lease"},
+                {"path": "b.md"},
+            ]}},
+        )
+
+
+# ---------------------------------------------------------------------------
+# The optional vocabulary check — authors free-type document_type, and a
+# drifted name ("NDA" for "Non-disclosure agreement") would score as a
+# classifier miss. The classifier's own list, handed in as a file, catches
+# the drift at key-build time.
+# ---------------------------------------------------------------------------
+
+
+def test_vocabulary_refuses_a_name_outside_the_list(tmp_path):
+    room, conf = _room(tmp_path)
+    with pytest.raises(AnswerKeyError, match="Articles of association"):
+        build_answer_key(
+            room, conf, load_domain(DEFAULT_DOMAIN_ROOT), vocabulary={"Lease"}
+        )
+
+
+def test_vocabulary_accepts_a_listed_name(tmp_path):
+    room, conf = _room(tmp_path)
+    out = build_answer_key(
+        room, conf, load_domain(DEFAULT_DOMAIN_ROOT),
+        vocabulary={"Articles of association"},
+    )
+    assert out.is_file()
+
+
+def test_cli_vocabulary_flag(tmp_path, capsys):
+    from synthvdr.__main__ import main
+
+    _room(tmp_path)
+    vocab = tmp_path / "types.txt"
+    vocab.write_text("# the classifier's document list\nLease\n")
+    assert main(["answerkey", "--room", str(tmp_path),
+                 "--vocabulary", str(vocab)]) == 2
+    assert "Articles of association" in capsys.readouterr().err
