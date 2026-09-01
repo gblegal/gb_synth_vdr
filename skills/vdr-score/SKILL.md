@@ -1,6 +1,6 @@
 ---
 name: vdr-score
-description: Score a document-review tool's output against the room's answer key — recall by severity, precision, false alarms against the distractors, partial credit on multi-document trails, provenance verification, and a baseline diff between two tool runs.
+description: Score a document-review tool's output against the room's answer key — recall by severity, precision, false alarms against the distractors, partial credit on multi-document trails, provenance verification, and a baseline diff between two tool runs. Also scores a classification tool's output against the room's classification answer key via score-classification.
 ---
 
 # Score a tool against the answer key
@@ -121,3 +121,36 @@ baseline, since they are recorded per `tool_index` position in one specific tool
 baseline is ordinarily a different run entirely. The diff reports the change in recall and
 precision, plus which findings were newly found and newly missed — the view that actually
 matters when tracking a tool over time.
+
+## Scoring classification
+
+```bash
+python3 -m synthvdr score-classification "<classification-output>" --room .
+```
+
+The classification twin of `score`, graded against `_key/answer-key.jsonl` (built by
+`python3 -m synthvdr answerkey`; gate 19 guarantees a packaged eval room carries it) rather
+than findings.yaml. Two input shapes:
+
+- a `.json` object pinned by `schemas/classification-output.schema.json` — `tool`,
+  optional `room_hash`, and one record per document under `classifications`;
+- anything else is read as JSONL, one record per line — which is exactly the downstream
+  classifier's native manifest, so that file scores as-is. Extra per-record fields are
+  ignored; with no `room_hash` the scorecard reads `UNVERIFIED`, same as the findings side.
+
+Provenance follows the same discipline as `score`: a `room_hash` that provably names a
+different room refuses to score and exits `2`; a missing hash or manifest scores with an
+`UNVERIFIED` line. Coverage must match the key exactly, in both directions — a skipped
+document would be graded against silence, and a path the key does not know is a typo or a
+stale key — so a mismatch refuses with names rather than quietly scoring the intersection.
+A tool that cannot classify a document says so with an `unsure` record, never by omission.
+
+The scorecard reports document-type accuracy, primary-pile accuracy, the not-sure count,
+recall and precision per workstream on the primary pile, and a confusion table of where
+misfiled documents went (not-sure is its own destination, never a pile). **Secondary
+deliveries are deliberately not scored**: the key's `secondary_workstreams` is empty by
+design — who else should see a document is the downstream project's routing policy, not a
+fact about the room — and the scorecard says so in its own text rather than leaving the
+absent column to be guessed at. For the same reason `sent_to_all_workstreams` never makes
+a wrong primary right. The classifier's own eval (which owns the routing table) is where
+delivery breadth is scored.

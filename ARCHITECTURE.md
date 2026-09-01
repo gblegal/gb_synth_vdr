@@ -285,6 +285,6 @@ another. This is an interlock against misconfiguration, not a security control; 
 
 **A scorecard is tied to the room that produced it.** `_key/manifest.json` carries a
 `content_hash` over the blind tree, and `/vdr-score` compares a tool output's `room_hash`
-against it. Without that check, scoring one room's output against another room's key
+against it — the classification scorer (`score-classification`) runs the identical check. Without that check, scoring one room's output against another room's key
 produces a confident, precise, entirely meaningless number that nothing in the pipeline
 could catch.

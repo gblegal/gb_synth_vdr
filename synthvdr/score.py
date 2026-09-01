@@ -153,8 +153,13 @@ class ProvenanceStatus:
 _MANIFEST_RELATIVE_PATH = Path("_key") / "manifest.json"
 
 
-def check_provenance(room: Path, output: ToolOutput) -> ProvenanceStatus:
+def check_provenance(room: Path, output) -> ProvenanceStatus:
     """Compare `output.room_hash` against `_key/manifest.json`'s content_hash.
+
+    `output` is any tool output carrying a `room_hash` attribute — the
+    findings ToolOutput above, or classify_score.ClassificationOutput. The
+    annotation is deliberately loose: naming both types here would import
+    classify_score into this module for a type hint alone.
 
     - Manifest present, both hashes non-empty, and they differ: raises
       ProvenanceError. This is the one case that must never silently produce
