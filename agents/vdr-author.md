@@ -23,6 +23,19 @@ Every slot is exactly one of:
 3. **Distractor** — carries a trap that looks alarming and is fine. No annotation. The
    resolving evidence lives in another document as ordinary, unannotated content.
 
+## Label every document you write
+
+Whatever its class, every document in your batch gets one `labels:` row in
+`_key/incoming/<your-label>.yaml` (see the shape in `skills/vdr-build/SKILL.md`): its path
+relative to the blind tree root, and its `document_type` — the plain English name of what
+you actually wrote, as a UK lawyer would title the type. "Articles of association",
+"Lease", "Non-disclosure agreement" — never an abbreviation ("NDA"), a filename slug, or a
+workstream name. This is the raw material of the classification answer key, recorded now
+because you are the one who knows what the document is; a label derived later by reading
+the finished room would be a second classifier's opinion, not the truth. Benign filler is
+not exempt — a room's answer key that skips the filler grades a classifier against
+silence, and real rooms are mostly filler.
+
 ## If you discover a genuine finding that was not in the Gate-B registry
 
 This happens: writing the real document sometimes surfaces an issue nobody drafted at Gate B.
@@ -108,7 +121,8 @@ the registry to match your own view of it.
 
 A manifest listing: each slot authored and its class (benign / finding / distractor), any new
 canonical facts your documents required, the answer-key refinements you wrote to
-`_key/incoming/<your-label>.yaml`, any newly discovered finding — its provisional ID and the
+`_key/incoming/<your-label>.yaml`, confirmation that every document in the batch carries a
+`labels:` row there, any newly discovered finding — its provisional ID and the
 one-line reason it is a distinct issue, not a restatement of one already registered — and any
 fixed registry field your document convinced you is wrong, one line each.
 

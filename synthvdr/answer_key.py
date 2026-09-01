@@ -96,11 +96,77 @@ def load_labels(path: Path) -> Dict[str, str]:
     return labels
 
 
-def build_answer_key(room: Path, conf: RoomConf, pack: DomainPack) -> Path:
-    """Write _key/answer-key.jsonl covering every blind document."""
+def consolidate_wave_labels(labels_doc: dict, incoming_docs: Dict[str, dict]) -> dict:
+    """Merge a wave's `_key/incoming/*.yaml` label rows into `_key/labels.yaml`'s
+    parsed document, and return the merged document.
+
+    Pure and file-I/O-free, with the same two guarantees as
+    `schema.consolidate_wave_incoming`, because /vdr-build re-reads every
+    prior wave's untouched intake on every wave: an already-applied label
+    (same path, same type) is a no-op, and a conflicting one (same path,
+    different type) raises naming the file, the path and both claimed
+    types — the later value must never silently win, for the same reason
+    room.conf refuses a key set twice. Output is sorted by path so the
+    canonical file's bytes do not depend on wave order.
+    """
+    merged: Dict[str, str] = {}
+    claimed_by: Dict[str, str] = {}
+    for i, row in enumerate(labels_doc.get("labels") or [], start=1):
+        rel = (row or {}).get("path")
+        doc_type = (row or {}).get("document_type")
+        if not rel or not doc_type:
+            raise AnswerKeyError(
+                f"labels.yaml: entry {i} needs both 'path' and 'document_type'"
+            )
+        merged[rel] = doc_type
+        claimed_by[rel] = "labels.yaml"
+    for label, incoming in sorted(incoming_docs.items()):
+        for index, row in enumerate((incoming or {}).get("labels") or []):
+            rel = (row or {}).get("path")
+            doc_type = (row or {}).get("document_type")
+            if not rel or not doc_type:
+                raise AnswerKeyError(
+                    f"{label}: labels[{index}] needs both 'path' and "
+                    "'document_type'"
+                )
+            if rel in merged and merged[rel] != doc_type:
+                raise AnswerKeyError(
+                    f"{label}: {rel} is already labelled "
+                    f"{merged[rel]!r} (by {claimed_by[rel]}) and this row "
+                    f"says {doc_type!r} — the later value must not silently "
+                    "win; decide which is right and fix the losing file"
+                )
+            merged[rel] = doc_type
+            claimed_by.setdefault(rel, label)
+    return {
+        "labels": [
+            {"path": rel, "document_type": merged[rel]} for rel in sorted(merged)
+        ]
+    }
+
+
+def build_answer_key(
+    room: Path, conf: RoomConf, pack: DomainPack, vocabulary=None
+) -> Path:
+    """Write _key/answer-key.jsonl covering every blind document.
+
+    `vocabulary`, when given, is the classifier's own set of document-type
+    names; a label outside it is refused by name. Authors free-type the
+    labels, and a drifted name ('NDA' for 'Non-disclosure agreement')
+    would otherwise ride into the key and score as a classifier miss.
+    """
     blind_root = room / conf.get_relative_path("BLIND_TREE")
     key_root = room / conf.get_relative_path("KEY_ROOT")
     labels = load_labels(key_root / LABELS_NAME)
+
+    if vocabulary is not None:
+        unknown = sorted({t for t in labels.values() if t not in vocabulary})
+        if unknown:
+            raise AnswerKeyError(
+                f"{len(unknown)} label(s) use a name outside the "
+                "classifier's document list — likely author drift; fix the "
+                "label or extend the list: " + _named(unknown)
+            )
 
     docs = sorted(
         p.relative_to(blind_root).as_posix()

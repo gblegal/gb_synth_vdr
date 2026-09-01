@@ -122,10 +122,23 @@ def _run_answerkey(args) -> int:
     from .answer_key import AnswerKeyError, build_answer_key
     from .domain import DEFAULT_DOMAIN_ROOT, DomainError, load_domain
 
+    vocabulary = None
+    if args.vocabulary is not None:
+        if not args.vocabulary.is_file():
+            print(
+                f"synthvdr answerkey: no vocabulary file at {args.vocabulary}",
+                file=sys.stderr,
+            )
+            return 2
+        vocabulary = {
+            line.strip()
+            for line in args.vocabulary.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
     try:
         conf = load_room_conf(args.room / "room.conf")
         pack = load_domain(DEFAULT_DOMAIN_ROOT)
-        out = build_answer_key(args.room, conf, pack)
+        out = build_answer_key(args.room, conf, pack, vocabulary=vocabulary)
     except (RoomConfError, DomainError, AnswerKeyError) as exc:
         print(f"synthvdr answerkey: {exc}".replace("\n", " "), file=sys.stderr)
         return 2
@@ -144,6 +157,13 @@ def main(argv=None) -> int:
         "domain pack's classifier vocabulary.",
     )
     answerkey_parser.add_argument("--room", type=Path, default=Path("."))
+    answerkey_parser.add_argument(
+        "--vocabulary",
+        type=Path,
+        default=None,
+        help="Optional file of legitimate document-type names, one per "
+        "line — the classifier's own list; labels outside it are refused.",
+    )
 
     score_parser = subparsers.add_parser(
         "score", help="Score a tool's output against the room's answer key."
