@@ -124,64 +124,25 @@ to fix it, not the renderer's to guess which side is right.
 ## 4. Write the manifest
 
 `_key/manifest.json` is what makes the room's provenance checkable. `content_hash` is
-`sha256` over the sorted `rel_path + "\0" + sha256(bytes)` of every file in the blind tree —
-**this exact form**, because `/vdr-score`'s `check_provenance` reads `content_hash` out of
-this file and compares it, as a plain string, against a tool output's `room_hash`. Writing a
-different key, a different shape, or nothing at all makes that check permanently inert: a
-user could then score a tool's output from one room against a completely different room's
-answer key and get a confident, precise, meaningless number, with nothing in the pipeline
-able to catch it.
+`sha256` over the sorted `rel_path + "\0" + sha256(bytes)` of every file in the blind tree,
+and `/vdr-score`'s `check_provenance` compares it, as a plain string, against a tool
+output's `room_hash`.
 
-Run this exactly — copy and adapt only the total/paths, never the hash construction itself:
-
-```python
-import hashlib
-import json
-from datetime import date
-from pathlib import Path
-
-from synthvdr.roomconf import load_room_conf
-from synthvdr.schema import load_findings
-
-
-def compute_content_hash(blind_root: Path):
-    """sha256 over the sorted `rel_path + "\\0" + sha256(bytes)` of every
-    file in the blind tree. Sorting the per-file entries themselves (not
-    the Path objects) before the final hash means the result depends only
-    on file content and relative path, never on directory-walk order or
-    PYTHONHASHSEED.
-    """
-    entries = []
-    for path in blind_root.rglob("*"):
-        if not path.is_file():
-            continue
-        rel_path = path.relative_to(blind_root).as_posix()
-        file_digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        entries.append(f"{rel_path}\0{file_digest}")
-    entries.sort()
-    digest = hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()
-    return digest, len(entries)
-
-
-conf = load_room_conf(Path("room.conf"))
-blind_root = Path(".") / conf.get("BLIND_TREE")
-findings = load_findings(Path("_key/findings.yaml"))
-
-content_hash, document_count = compute_content_hash(blind_root)
-manifest = {
-    "room": conf.get("ROOM_CODENAME"),
-    "content_hash": content_hash,
-    "documents": document_count,
-    "findings": len(findings.findings),
-    "built": date.today().isoformat(),
-}
-Path("_key/manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-print(manifest)
+```bash
+python3 -m synthvdr manifest --room .
 ```
 
-The literal shape this writes — copy and adapt, do not reconstruct it from memory, since
-`content_hash` and `documents`/`findings`/`built` are exactly the fields `/vdr-score`'s
-`check_provenance` and the tool-output schema (`schemas/tool-output.schema.json`) expect:
+**Run the command; do not reconstruct the hash.** This step used to carry the construction
+as a code block to copy, which made it an algorithm kept in prose — and a hash built even
+slightly differently does not fail loudly. It reports that a correct tool output came from a
+different room, so a user could hand over a hash that can never verify, or (worse) score one
+room's output against a completely different room's answer key and get a confident, precise,
+meaningless number with nothing in the pipeline able to catch it. The construction now lives
+in `synthvdr.manifest`, pinned by `tests/test_manifest.py`.
+
+The command prints the hash and writes this shape — `content_hash` and
+`documents`/`findings`/`built` are exactly the fields `check_provenance` and the tool-output
+schema (`schemas/tool-output.schema.json`) expect:
 
 ```json
 {
@@ -193,11 +154,20 @@ The literal shape this writes — copy and adapt, do not reconstruct it from mem
 }
 ```
 
+Pass `--built YYYY-MM-DD` if the manifest needs to be reproducible; it defaults to today.
+
 **Hand `content_hash` to whoever is going to produce the tool output that gets scored
 against this room.** It belongs in that output's own `room_hash` field
 (`schemas/tool-output.schema.json`). Without it, `/vdr-score` still scores the run, but marks
 the whole scorecard `UNVERIFIED` rather than silently assuming the output came from this
 room.
+
+**A corrupted twin needs no step of its own.** `python3 -m synthvdr corrupt` writes the
+twin's `manifest.json` as it builds the twin — its own hash over its own tree, since its
+documents are renamed and misfiled and so its hash could never match this one. Hand *that*
+hash to anyone running against `corrupted-heavy/`, and score with
+`--key corrupted-heavy/answer-key.jsonl`; the scorer checks provenance against the manifest
+beside the key it was given.
 
 ## 5. Build the classification answer key — eval rooms only
 

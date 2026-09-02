@@ -40,6 +40,15 @@ ran against. Alongside the tree it writes:
   - `corrupted/log.jsonl` — one row per document: original path,
     corrupted path, and which corruptions were applied. The audit trail
     that lets a surprising eval number be traced to what corruption did.
+  - `corrupted/manifest.json` — the twin's own content hash, over the
+    twin's own tree, with the seed and the clean room's hash it derives
+    from. A twin is a room in its own right: it is what the tool under
+    test actually reads, so its `room_hash` can only ever mismatch the
+    clean room's `content_hash`, and before it had a manifest of its own
+    a `--key corrupted-heavy/answer-key.jsonl` run was permanently
+    UNVERIFIED — the one provenance state that cannot be checked. The
+    scorer now reads the manifest sitting beside the key it was pointed
+    at. No build date: a clock would break the byte-identity above.
 
 On the build plan's fixed tooling (Augraphy + nlpaug): Augraphy degrades
 document *images*, and this pipeline is markdown-first — its render
@@ -62,6 +71,13 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from .answer_key import ANSWER_KEY_NAME
+from .manifest import (
+    MANIFEST_NAME,
+    build_twin_manifest,
+    compute_content_hash,
+    read_content_hash,
+    write_manifest,
+)
 from .ownership import (
     NotOwnedError,
     UnsafeOutDirError,
@@ -333,6 +349,23 @@ def corrupt_room(
     log_rows.sort(key=lambda row: row["original"])
     (target / LOG_NAME).write_text(
         "".join(json.dumps(row) + "\n" for row in log_rows), encoding="utf-8"
+    )
+
+    # Written last, over the finished tree — and only the tree, since the
+    # key, log and marker sit beside it at the twin root rather than in it,
+    # so the hash covers exactly the documents a tool under test is handed.
+    content_hash, document_count = compute_content_hash(out_root)
+    write_manifest(
+        target / MANIFEST_NAME,
+        build_twin_manifest(
+            room_codename=conf.get("ROOM_CODENAME"),
+            content_hash=content_hash,
+            documents=document_count,
+            seed=seed,
+            derived_from=read_content_hash(
+                room / conf.get_relative_path("KEY_ROOT") / MANIFEST_NAME
+            ),
+        ),
     )
 
     return CorruptReport(

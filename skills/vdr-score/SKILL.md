@@ -143,7 +143,12 @@ than findings.yaml. Two input shapes:
 
 Provenance follows the same discipline as `score`: a `room_hash` that provably names a
 different room refuses to score and exits `2`; a missing hash or manifest scores with an
-`UNVERIFIED` line. Coverage must match the key exactly, in both directions — a skipped
+`UNVERIFIED` line. With `--key`, the manifest checked is the one **beside that key** —
+`corrupted-heavy/manifest.json` for a `--key corrupted-heavy/answer-key.jsonl` run — because
+the twin is a room in its own right, with renamed and misfiled documents and therefore its
+own hash. `corrupt` writes that manifest as it builds the twin, so hand a twin run the
+twin's hash, not the clean room's; the clean room's now fails the check rather than scoring
+as an unverifiable guess. Coverage must match the key exactly, in both directions — a skipped
 document would be graded against silence, and a path the key does not know is a typo or a
 stale key — so a mismatch refuses with names rather than quietly scoring the intersection.
 A tool that cannot classify a document says so with an `unsure` record, never by omission.

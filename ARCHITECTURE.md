@@ -179,6 +179,7 @@ judgement-shaped work. Anything that must be identical across runs lives here.
 | `names` | Cast-name masking and corporate-suffix scanning — the primitives behind the unchecked-name sweep. |
 | `namecheck` | Extracts candidate invented names from three declared sources and keeps the durable `name-check.md` record. The searching itself happens in `/vdr-scope`, because only the agent has WebSearch. |
 | `schema` | The answer-key model — findings and distractors — plus `validate()`'s internal-consistency checks. YAML is canonical; `findings.md` is generated from it. |
+| `manifest` | The room's `content_hash` — sha256 over the sorted `rel_path + "\0" + sha256(bytes)` of the blind tree — and the two manifests that carry it (the packaged room's and the corrupted twin's). Takes `built` as a value and never reads the clock. |
 | `score` | Deterministic scoring: provenance check, evidence-path prematching, recall/precision/partial trails, adjudication reconciliation, scorecard rendering and baseline diff. |
 | `qa/` | The nineteen gates (`structural`, `leakage`, `depth`, `integrity`, `renders`) and the runner that enforces how they report. |
 | `render/` | The optional DOCX (`docx.py`) and PDF (`pdf.mjs`, a separate Node process) renders. Never imported at core-build time. |
@@ -300,6 +301,10 @@ another. This is an interlock against misconfiguration, not a security control; 
 **A scorecard is tied to the room that produced it.** `_key/manifest.json` carries a
 `content_hash` over the blind tree, and `/vdr-score` compares a tool output's `room_hash`
 against it — the classification scorer (`score-classification`) runs the identical check.
+The hash is computed by `synthvdr.manifest` and written by `python3 -m synthvdr manifest`;
+it is deliberately not an algorithm the packaging skill retypes, because
+`check_provenance` compares the result as a plain string and a hash built differently does
+not fail loudly — it reports that a correct output came from a different room.
 
 **A room can be scored dirty as well as clean.** `python3 -m synthvdr corrupt` writes a
 derived `corrupted/` view (or `--out`, one directory per profile when a room needs both
@@ -308,6 +313,12 @@ answer key rewritten to the corrupted paths and a log mapping clean to dirty. De
 by (seed, profile), owned by its own marker like `subset/`, guarded by the same out_dir
 safety rule as `subset/` (`synthvdr.ownership.assert_safe_out_dir`), and never
 walked by any gate: the canonical room stays the QA-checked object, the corrupted twin is
-regenerable eval material for the "too clean" risk. Without that check, scoring one room's output against another room's key
+regenerable eval material for the "too clean" risk. **The twin is a room in its own
+right**, so it carries its own `manifest.json` — its own hash over its own tree, plus the
+seed and the clean room's `content_hash` it derives from. Its documents are renamed and
+misfiled, so its hash could only ever mismatch the clean room's; before it had a manifest
+a `--key corrupted-heavy/answer-key.jsonl` run was permanently UNVERIFIED, which is the one
+provenance state that cannot be checked. The scorer reads the manifest sitting beside the
+key it was pointed at. Without that check, scoring one room's output against another room's key
 produces a confident, precise, entirely meaningless number that nothing in the pipeline
 could catch.

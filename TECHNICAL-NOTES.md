@@ -89,6 +89,25 @@ unlike the gate runner, the scorer has no "ran fine, found problems" state — a
 reporting poor recall is a successful run, so the only two outcomes are a trustworthy
 scorecard and none at all.
 
+### `python3 -m synthvdr manifest` — the room's content hash
+
+```bash
+python3 -m synthvdr manifest --room <room-dir> [--built YYYY-MM-DD]
+```
+
+Writes `_key/manifest.json` and prints the `content_hash` to hand to whoever produces the
+tool output scored against the room. This is `/vdr-package` step 4, and it is a command
+rather than a code block inside that skill because `check_provenance` compares the hash as a
+plain string: a hash constructed even slightly differently does not fail loudly, it reports
+that a correct output came from a different room. Exit **2** if `room.conf` cannot be
+loaded, if the blind tree is missing (a manifest there would certify an empty room), or if
+`findings.yaml` exists but is malformed.
+
+`--built` exists because the clock is read at this boundary and nowhere deeper:
+`synthvdr.manifest` takes the date as a value, so nothing inside the package reads a clock.
+The corrupted twin's manifest, written by `corrupt`, carries no date at all — it must stay
+byte-identical for a given room, seed and profile.
+
 ---
 
 ## 3. File formats
@@ -114,6 +133,23 @@ zero-finding run, because the two are not distinguishable from the file alone.
 
 YAML is canonical for the answer key; `_key/findings.md` is generated from it and must never
 be hand-edited.
+
+### `_key/manifest.json`, and the twin's own
+
+Two manifests, one hash construction (`synthvdr.manifest.compute_content_hash`). The
+packaged room's carries `room`, `content_hash`, `documents`, `findings` and `built`. The
+corrupted twin's — written at the twin's root by `corrupt`, beside its rewritten answer key
+— carries `room`, `content_hash` (over the twin's own tree), `documents`, `seed` and
+`derived_from` (the clean room's `content_hash`, where the room has been packaged). It
+carries **no `built` date**, deliberately: the twin is byte-identical for a given room, seed
+and profile, and a clock would break that.
+
+The twin needs a hash of its own because it *is* a different room — its documents are
+renamed, misfiled, noised and truncated, so a run against it can never carry the clean
+room's `content_hash`. `score-classification --key corrupted-heavy/answer-key.jsonl` checks
+provenance against `corrupted-heavy/manifest.json`, the manifest beside the key it was
+given. Before the twin had one, every twin run scored `UNVERIFIED` — the one provenance
+state that cannot be checked, and so the state a mismatched run hides in.
 
 ### `_key/adjudications.yaml`
 
