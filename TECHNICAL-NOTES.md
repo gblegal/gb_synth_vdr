@@ -356,15 +356,22 @@ Note the direction — only a candidate no **longer** than the cast entry is exc
 rejected walk that let a cast "Holdings Limited" cover a different "Ashfell Trading Holdings
 Limited" stays rejected.
 
-**A suffix can still be read out of an ordinary English word in the other direction, and is
-not fixed.** `Incorporated` is matched case-insensitively, so a capitalised phrase followed
-by the ordinary participle — "Ashfell Advanced Materials Limited incorporated in 2004" —
-reads the participle as the suffix and returns one over-long token. The `SpA` remedy (match
-the canonical case only) does not transfer: it would lose `INCORPORATED` in an execution
-block, and a per-suffix table of following words is a third mechanism this has not yet
-earned. In the corpus sweep it is harmless — masking removes the registered name first — so
-it surfaces only in `/vdr-scope`'s fact-sheet extraction, as a candidate with a trailing
-"incorporated" that an author can see and correct.
+**A suffix read out of an ordinary English word in the other direction: `Incorporated`.**
+The participle is one of the commonest words in a data room, and while the suffix was
+matched case-insensitively a capitalised phrase running into it — "Ashfell Advanced
+Materials Limited incorporated in 2004" — returned one over-long token. That is worse than a
+spurious candidate: it is a *corrupted* one, the real name plus a trailing word, which then
+gets searched, recorded in the name check and reported by gate 14 under a name that appears
+nowhere in the document. The remedy is one register milder than `SpA`'s: the initial letter
+must be capitalised and the rest is still matched in any case, so `Incorporated` and the
+all-caps `INCORPORATED` of an execution block both still read, and only the all-lower-case
+participle does not. Sentence-initial "Incorporated in 2004, the company ..." has no
+capitalised word in front of it and could never have matched. **What it gives up** is a
+genuine name whose suffix is written all in lower case — a typo shape rather than a document
+shape, and the safe direction. It is also why the rule sits in the pattern rather than in a
+filter over the matches: with `incorporated` no longer a suffix the regex backs off to the
+shorter match and returns the correct name, where discarding the over-long token would have
+turned a false positive into a miss.
 
 **Coverage of invented names depends on the fact sheet declaring them.** The automatic scan
 only catches a capitalised phrase ending in a corporate suffix, and the `## Cast` table only

@@ -85,11 +85,51 @@ ENTITY_SUFFIXES = (
 # written — keeps real detections ("Kessler Werke SpA") while dropping the
 # false ones, without touching case-insensitivity for any other suffix.
 _CASE_SENSITIVE_SUFFIXES = ("SpA",)
-_CASE_INSENSITIVE_SUFFIXES = tuple(s for s in ENTITY_SUFFIXES if s not in _CASE_SENSITIVE_SUFFIXES)
+
+# "Incorporated" is the same problem one register milder, and takes a milder
+# remedy. Its all-lower-case form is not a word in its own right the way "spa"
+# is — it is the ordinary past participle, and one of the commonest words in a
+# data room: "a private limited company incorporated in England on 17 April
+# 1998". Because `_ENTITY` requires capitalised words immediately in front of
+# the suffix, that read as a company name wherever a capitalised run met the
+# participle, and what came back was not a spurious extra candidate but a
+# CORRUPTED one — the real name plus a trailing word ("Ashfell Advanced
+# Materials Limited incorporated"), which then gets searched, recorded in the
+# name check and reported by gate 14 under a name that appears nowhere in the
+# document.
+#
+# So: the initial letter must be capitalised, the rest is matched in any case.
+# A legal name's suffix is capitalised; the participle in prose is not, and
+# the one place it is — sentence-initial "Incorporated in 2004, the company
+# ..." — has no capitalised word in front of it and could never match anyway.
+# This keeps both "Kessler Werke Incorporated" and the all-caps "KESSLER WERKE
+# INCORPORATED" a deed's execution block uses, where the SpA remedy (canonical
+# case only) would have lost the second. It gives up a genuine name whose
+# suffix is written all in lower case, which is a typo shape rather than a
+# document shape, and is the safe direction: the alternative is reading
+# ordinary prose as a company name on every room. "Inc" needs none of this —
+# it is not an English word — and stays case-insensitive.
+#
+# Note this must BACK OFF rather than reject: with "incorporated" no longer a
+# suffix the regex backtracks to the shorter match and returns the correct
+# name. A filter applied to the matches after the fact would have dropped the
+# over-long token and lost the name with it, turning a false positive into a
+# miss.
+_CAPITALISED_SUFFIXES = ("Incorporated",)
+
+_CASE_INSENSITIVE_SUFFIXES = tuple(
+    s for s in ENTITY_SUFFIXES
+    if s not in _CASE_SENSITIVE_SUFFIXES and s not in _CAPITALISED_SUFFIXES
+)
 
 _SUFFIX_ALTERNATION = (
     "(?:(?i:" + "|".join(re.escape(s) for s in _CASE_INSENSITIVE_SUFFIXES) + ")"
-    "|" + "|".join(re.escape(s) for s in _CASE_SENSITIVE_SUFFIXES) + ")"
+    + "".join(
+        "|" + re.escape(s[0]) + "(?i:" + re.escape(s[1:]) + ")"
+        for s in _CAPITALISED_SUFFIXES
+    )
+    + "".join("|" + re.escape(s) for s in _CASE_SENSITIVE_SUFFIXES)
+    + ")"
 )
 _SUFFIXES_LOWER = frozenset(s.lower() for s in ENTITY_SUFFIXES)
 
@@ -162,11 +202,13 @@ def entity_tokens(text: str) -> Set[str]:
     the names they already know with `mask_cast_names` BEFORE calling this,
     rather than asking this function to guess; it stays a plain,
     context-free matcher. The suffix is matched case-insensitively
-    (Limited/limited, GmbH/GMBH all count) EXCEPT "SpA", which is matched
-    only in its exact canonical case — see the module-level comment above
-    `_CASE_SENSITIVE_SUFFIXES` for why: unlike every other suffix here, its
-    lower- and upper-case forms ("spa", "SPA") are ordinary English/business
-    words in their own right.
+    (Limited/limited, GmbH/GMBH all count) with two exceptions, both for
+    suffixes whose own casings collide with ordinary words: "SpA" is
+    matched only in its exact canonical case, and "Incorporated" only with
+    a capital I (so "INCORPORATED" still counts, "incorporated" — the
+    participle — does not). See the module-level comments above
+    `_CASE_SENSITIVE_SUFFIXES` and `_CAPITALISED_SUFFIXES` for why each
+    line is drawn where it is.
 
     A match may span a line break, because markdown prose wraps; the token
     that comes back never does. Whitespace inside it is normalised to

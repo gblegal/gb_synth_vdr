@@ -839,3 +839,86 @@ def test_gate_14_still_flags_an_abbreviation_of_nothing_on_the_cast_list(room):
     result = gate_14_unchecked_names(ctx_for(room))
     assert result.status == "FAIL"
     assert "Trading Ltd" in result.detail
+
+
+# ---------------------------------------------------------------------------
+# The fourth instance of the same class, and the last suffix on the list whose
+# own casing collides with an ordinary English word. "Incorporated" was
+# matched case-insensitively like every other suffix, and "incorporated" is
+# one of the commonest words in a data room ("a private limited company
+# incorporated in England on 17 April 1998"). Because `entity_tokens` needs
+# capitalised words immediately before the suffix, the participle was read as
+# a suffix wherever a capitalised run ran into it — and the damage is not a
+# spurious extra candidate but a CORRUPTED one: the real name plus a trailing
+# word, which is then searched, recorded and reported under a name that
+# appears nowhere in the document.
+#
+# Fix, one register narrower than the SpA remedy: the initial letter must be
+# capitalised, the rest is still matched in any case. A legal name's suffix is
+# capitalised; the ordinary participle is not, and the one place it is —
+# sentence-initial "Incorporated in 2004, the company ..." — has no
+# capitalised word in front of it and so could never match anyway. Unlike a
+# post-filter over the matches, this makes the regex BACK OFF to the shorter
+# match and return the correct name rather than dropping it, which would turn
+# a false positive into a miss.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # The name is recovered, not merely the false positive dropped.
+        (
+            "Ashfell Advanced Materials Limited incorporated in 2004.",
+            {"Ashfell Advanced Materials Limited"},
+        ),
+        (
+            "Helmswick Imaging Limited incorporated on 17 April 1998.",
+            {"Helmswick Imaging Limited"},
+        ),
+        (
+            "A Private Company incorporated under the Companies Act 2006.",
+            set(),
+        ),
+        # ...and the suffix itself still reads, in a capitalised name and in
+        # the all-caps rendering a deed's execution block uses.
+        ("Kessler Werke Incorporated supplies the group.", {"Kessler Werke Incorporated"}),
+        ("EXECUTED as a deed by KESSLER WERKE INCORPORATED", {"KESSLER WERKE INCORPORATED"}),
+        # The short form is untouched: "inc" is not an English word.
+        ("Kessler Werke inc supplies the group.", {"Kessler Werke inc"}),
+    ],
+)
+def test_entity_tokens_reads_incorporated_only_with_a_capital(text, expected):
+    assert entity_tokens(text) == expected
+
+
+def test_entity_tokens_gives_up_the_all_lowercase_incorporated():
+    # The accepted cost, pinned so it is a decision rather than a surprise. A
+    # genuine name whose suffix is written all in lower case is missed. That
+    # is a typo shape, not a document shape — and it is the safe direction,
+    # since the alternative is reading ordinary prose as a company name on
+    # every room. `Ltd`, `limited` and the rest keep their case-insensitivity
+    # (see test_entity_tokens_matches_suffixes_case_insensitively).
+    assert entity_tokens("Ashfell Trading incorporated") == set()
+    assert entity_tokens("Ashfell Trading limited") == {"Ashfell Trading limited"}
+
+
+def test_gate_14_does_not_fire_on_the_participle(room):
+    blind_doc(room).write_text(
+        "# Articles\n\nAshfell Holdings Limited was incorporated in England on "
+        "17 April 1998 and Kessler Werke GmbH incorporated in 2004.\n"
+    )
+    assert gate_14_unchecked_names(ctx_for(room)).status == "PASS"
+
+
+def test_gate_14_names_an_unchecked_entity_the_way_the_document_spells_it(room):
+    # The other half of the damage: a genuine hit used to be reported as
+    # "Unlisted Trading Limited incorporated", sending an author to look for
+    # a name the document does not contain.
+    blind_doc(room).write_text(
+        "# Articles\n\nUnlisted Trading Limited incorporated in Jersey in 2019.\n"
+    )
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "Unlisted Trading Limited" in result.detail
+    assert "incorporated" not in result.detail

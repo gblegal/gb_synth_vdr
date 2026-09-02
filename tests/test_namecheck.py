@@ -597,3 +597,19 @@ def test_a_name_wrapped_across_a_line_break_in_prose_is_one_candidate():
         "will record it — no line break, and no leading determiner that "
         "would make it a different name from the one the author declares"
     )
+
+
+def test_the_participle_does_not_ride_along_on_a_fact_sheet_name():
+    # Where this defect actually landed: `extract_candidates` runs the
+    # suffix net over fact-sheet prose UNMASKED, so /vdr-scope recorded
+    # "... Limited incorporated" as a name to go and search.
+    fact_sheet = textwrap.dedent(
+        """
+        # Fact sheet
+
+        The target is Ashfell Advanced Materials Limited incorporated in
+        England on 4 June 2004.
+        """
+    ).strip()
+    names = {c.text for c in extract_candidates(fact_sheet) if c.kind == "entity"}
+    assert names == {"Ashfell Advanced Materials Limited"}
