@@ -3,7 +3,10 @@
 The downstream classifier (gb-docclass) scores itself against rooms whose
 generator recorded what every document is, in the classifier's own
 vocabulary — its taxonomy's document-type names and its fixed workstream
-IDs. Two sources feed the key:
+IDs. That taxonomy is derived in part from the SALI LMSS (MIT, Copyright
+(c) 2022 SALI Alliance); the README's licence section says what that means
+for this repository and where the full provenance is recorded. Two sources
+feed the key:
 
   - `_key/labels.yaml` — one entry per blind document, written by the
     authoring flow at the moment the document is written (never derived
