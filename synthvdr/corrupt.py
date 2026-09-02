@@ -24,7 +24,10 @@ stays exact:
 
 The output mirrors the `subset/` conventions: written at the room root
 as a derived, regenerable view (never part of the blind tree, so no gate
-walks it), carrying its own ownership marker so a rebuild may delete it
+walks it) — `corrupted/` by default, or wherever `--out` points, so two
+profiles of one room can stand side by side (`corrupted-light/`,
+`corrupted-heavy/`) instead of the second replacing the first —
+carrying its own ownership marker so a rebuild may delete it
 and nothing else, and deterministic — every per-file decision comes from
 a sha256 over (seed, path, purpose), and the per-character stream from a
 `random.Random` seeded the same way, so the same (room, seed, profile)
@@ -56,10 +59,16 @@ import random
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .answer_key import ANSWER_KEY_NAME
-from .ownership import NotOwnedError, assert_target_is_ours, write_marker
+from .ownership import (
+    NotOwnedError,
+    UnsafeOutDirError,
+    assert_safe_out_dir,
+    assert_target_is_ours,
+    write_marker,
+)
 from .roomconf import RoomConf
 
 CORRUPTED_DIR = "corrupted"
@@ -200,9 +209,22 @@ def _load_key_rows(room: Path, conf: RoomConf) -> List[dict]:
 
 
 def corrupt_room(
-    room: Path, conf: RoomConf, seed: int, profile: Dict[str, float]
+    room: Path,
+    conf: RoomConf,
+    seed: int,
+    profile: Dict[str, float],
+    out_dir: Optional[Path] = None,
 ) -> CorruptReport:
-    """Write `corrupted/` — tree, rewritten answer key, and log."""
+    """Write the corrupted twin — tree, rewritten answer key, and log.
+
+    `out_dir` defaults to `corrupted/` at the room root. Pass one per
+    profile (`corrupted-light/`, `corrupted-heavy/`) to keep two twins of
+    the same room: the default is a fixed name, so a second run replaces
+    the first. Whatever the target, it is deleted and rebuilt, so it must
+    be a directory this tool created and must not be, contain or sit
+    inside any configured tree or the room root — the same rule as
+    subset's out_dir, shared from synthvdr.ownership.
+    """
     blind_root = room / conf.get_relative_path("BLIND_TREE")
     if not blind_root.is_dir():
         raise CorruptError(f"no blind tree at {blind_root} — nothing to corrupt")
@@ -226,10 +248,11 @@ def corrupt_room(
             "re-run python3 -m synthvdr answerkey first"
         )
 
-    target = room / CORRUPTED_DIR
+    target = out_dir if out_dir is not None else room / CORRUPTED_DIR
     try:
+        assert_safe_out_dir(target, room, conf, "the corrupted twin directory")
         assert_target_is_ours(target, CORRUPT_MARKER_NAME)
-    except NotOwnedError as exc:
+    except (UnsafeOutDirError, NotOwnedError) as exc:
         raise CorruptError(str(exc)) from exc
     if target.exists():
         shutil.rmtree(target)

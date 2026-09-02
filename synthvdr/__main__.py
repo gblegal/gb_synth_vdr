@@ -5,7 +5,8 @@
 classification run against `_key/answer-key.jsonl` (or the key named by
 --key — e.g. the corrupted twin's); `answerkey` builds that key from
 `_key/labels.yaml`; `corrupt` writes the deliberately dirtied twin under
-`corrupted/` so eval runs are not scored against a suspiciously clean room.
+`corrupted/` (or `--out`) so eval runs are not scored against a suspiciously
+clean room.
 
 This is the package-level entry point (`python3 -m synthvdr ...`), distinct
 from `synthvdr/qa/__main__.py` (`python3 -m synthvdr.qa`, the room QA gate
@@ -186,8 +187,8 @@ def _run_score_classification(args) -> int:
 
 
 def _run_corrupt(args) -> int:
-    """`corrupt --room . [--seed N] [--profile light|heavy]` — write the
-    corrupted twin. The profile name is validated here rather than via
+    """`corrupt --room . [--seed N] [--profile light|heavy] [--out DIR]` —
+    write the corrupted twin. The profile name is validated here rather than via
     argparse choices so an unknown name returns 2 through the same
     plain-stderr path as every other could-not-even-run failure, instead
     of argparse's SystemExit."""
@@ -203,7 +204,11 @@ def _run_corrupt(args) -> int:
     try:
         conf = load_room_conf(args.room / "room.conf")
         report = corrupt_room(
-            args.room, conf, seed=args.seed, profile=PROFILES[args.profile]
+            args.room,
+            conf,
+            seed=args.seed,
+            profile=PROFILES[args.profile],
+            out_dir=args.out,
         )
     except (RoomConfError, CorruptError) as exc:
         print(f"synthvdr corrupt: {exc}".replace("\n", " "), file=sys.stderr)
@@ -302,6 +307,16 @@ def main(argv=None) -> int:
         default="light",
         help="Corruption intensity: 'light' (a well-run modern deal) or "
         "'heavy' (the messy carve-out room).",
+    )
+    corrupt_parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Where to write the twin (default: corrupted/ at the room root). "
+        "The default is one fixed name, so pass one directory per profile — "
+        "corrupted-light/, corrupted-heavy/ — to keep both twins of a room. "
+        "Deleted and rebuilt on every run; refused if it is or touches a "
+        "configured tree or the room root.",
     )
 
     args = parser.parse_args(argv)

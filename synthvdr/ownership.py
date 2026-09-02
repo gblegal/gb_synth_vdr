@@ -57,6 +57,83 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .roomconf import (
+    PATH_KEYS,
+    ROOM_ROOT_LABEL,
+    RoomConf,
+    RoomConfError,
+    _is_inside,
+    _same_file,
+    resolve_tree_map,
+)
+
+
+class UnsafeOutDirError(Exception):
+    """A caller-supplied delete-and-rebuild directory is, contains, or sits
+    inside a configured tree, or is or contains the room root.
+
+    Like NotOwnedError, callers re-raise this as their own module's
+    exception type so their callers see one type per module.
+    """
+
+
+def assert_safe_out_dir(out_dir: Path, room: Path, conf: RoomConf, purpose: str) -> None:
+    """Refuse an out_dir that a delete-and-rebuild would turn against the room.
+
+    out_dir is a PARAMETER, not a room.conf key, so load_room_conf's
+    PATH_KEYS validation never runs over it — and every writer that takes
+    one deletes-and-rebuilds it with shutil.rmtree. Task 7 found four
+    separate ways an equivalently unguarded destructive path could be
+    pointed somewhere it shouldn't; this closes the same class of gap for
+    every writer that takes an out_dir (subset's subset directory, the
+    corruption stage's twin), in one place, for the same reason
+    assert_target_is_ours is shared: two independently written copies of
+    a safety rule diverge, and the divergence is where the bypass lives.
+
+    Re-resolves BLIND_TREE, FLAGGED_TREE, KEY_ROOT and the room root
+    exactly as roomconf.check_tree_identity does before a destructive
+    write (this also re-catches a symlink planted after load_room_conf
+    returned, same as that check), then refuses out_dir if it equals,
+    contains, or sits inside any configured tree, or is the same directory
+    on disk (by inode, see _same_file) as one. Both containment directions
+    matter for a configured tree: out_dir UNDER it corrupts that tree on
+    write, and it UNDER out_dir is destroyed outright when out_dir is
+    rmtree'd on the next build.
+
+    The room root gets only the "contains" half of that: out_dir living
+    INSIDE the room (`room / "subset"`, `room / "corrupted"`, the normal
+    case) is fine and expected. What must be refused is out_dir BEING the
+    room root, or an ancestor of it: rmtree(out_dir) would then take the
+    whole room, or more than the room, out with it.
+
+    Runs first, before anything is written, so a bad out_dir fails loudly
+    instead of deleting the caller's data and only then raising. `purpose`
+    names the directory in the caller's own words ("the subset output
+    directory") so the refusal reads as that tool's.
+    """
+    try:
+        resolved = resolve_tree_map(room, conf.values, PATH_KEYS, conf.path)
+    except RoomConfError as exc:
+        raise UnsafeOutDirError(str(exc)) from exc
+
+    out_resolved = out_dir.resolve()
+    for label, other in resolved.items():
+        if label == ROOM_ROOT_LABEL:
+            unsafe = _same_file(out_resolved, other) or _is_inside(other, out_resolved)
+        else:
+            unsafe = (
+                _same_file(out_resolved, other)
+                or _is_inside(out_resolved, other)
+                or _is_inside(other, out_resolved)
+            )
+        if unsafe:
+            raise UnsafeOutDirError(
+                f"refusing to use {out_dir} as {purpose}: it is, contains, or sits "
+                f"inside {label} ({other}). This directory is deleted and rebuilt "
+                "on every run, so it must be distinct from every configured tree, "
+                "and must not be or contain the room root."
+            )
+
 
 class NotOwnedError(Exception):
     """A delete-and-rebuild target is not safe to delete: it is not a

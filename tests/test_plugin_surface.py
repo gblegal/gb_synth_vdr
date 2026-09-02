@@ -2167,3 +2167,38 @@ def test_the_shipped_fixture_name_check_covers_every_name_its_fact_sheet_declare
     recorded = {v.text for v in load_name_check(key / "name-check.md")}
     assert declared <= recorded, sorted(declared - recorded)
     assert declared, "the fixture declares no names at all — the check is vacuous"
+
+
+def test_author_agent_keeps_cast_members_in_their_own_roles():
+    """ll_vdr_05 (1 Sep 2026): in both authoring waves, authors reached for whatever
+    declared name was handy as a counterparty signatory — the bank relationship director
+    signing for a retailer, the auditor as a customer's commercial director, the Scheme
+    Actuary as a subsidiary's managing director. All caught by ties passes, at the cost of
+    a pass. The cause is structural: gate 14 forbids inventing a person, so a document that
+    needs a role nobody on the list holds tempts the author to borrow one. The rule names
+    the two legitimate exits — sign by role with the name unscanned, or ask for a new cast
+    member through the manifest — and this pins the load-bearing sentence verbatim.
+    """
+    body = _normalise_whitespace(_read(ROOT / "agents" / "vdr-author.md"))
+    assert (
+        "Use each cast member only in the role the fact sheet's `## Cast` table gives them."
+        in body
+    )
+    assert "[signature page not scanned]" in body
+    assert "new cast member" in body, (
+        "the rule must name the escalation route, or authors are left with a prohibition "
+        "and no way out"
+    )
+
+
+def test_build_skill_hands_authors_the_cast_with_roles_not_bare_names():
+    """The companion to the author rule above. `cast_list(..., kind=None)` returns names
+    only, and the invariants paragraph used to paste exactly that — so an author told to
+    keep people in their roles had never been told the roles. The orchestrator must hand
+    over the `## Cast` table itself.
+    """
+    body = _normalise_whitespace(_read(ROOT / "skills" / "vdr-build" / "SKILL.md"))
+    assert (
+        "Paste the fact sheet's `## Cast` table itself, name and role, alongside the name "
+        "list" in body
+    )

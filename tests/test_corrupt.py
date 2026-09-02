@@ -266,3 +266,69 @@ def test_the_corrupted_twin_scores_through_the_key_override(tmp_path, capsys):
         "perfectly against it — anything less means the twin and its key "
         "disagree"
     )
+
+
+# --- --out: where the twin goes. The default `corrupted/` is fixed, so a
+# second profile silently replaced the first twin (ll_vdr_05 renamed the
+# directory between runs by hand). A caller-supplied out_dir is a
+# delete-and-rebuild target that room.conf never validated, so it gets
+# the same safety rule as subset's out_dir: never a configured tree, never
+# the room root, never an ancestor of either.
+
+
+def test_out_dir_places_the_twin_where_asked(tmp_path):
+    room, conf = _room(tmp_path)
+    out = room / "corrupted-light"
+    report = corrupt_room(room, conf, seed=1, profile=PROFILES["light"], out_dir=out)
+    assert report.out == out
+    assert (out / "answer-key.jsonl").is_file()
+    assert (out / "log.jsonl").is_file()
+    assert not (room / CORRUPTED_DIR).exists(), (
+        "asking for --out must not also write the default directory"
+    )
+
+
+def test_two_profiles_coexist_under_distinct_out_dirs(tmp_path):
+    room, conf = _room(tmp_path)
+    light = room / "corrupted-light"
+    heavy = room / "corrupted-heavy"
+    corrupt_room(room, conf, seed=1, profile=PROFILES["light"], out_dir=light)
+    corrupt_room(room, conf, seed=1, profile=PROFILES["heavy"], out_dir=heavy)
+    assert (light / "answer-key.jsonl").is_file() and (heavy / "answer-key.jsonl").is_file(), (
+        "the whole point of --out: a second profile must not clobber the first twin"
+    )
+    assert _tree_digest(light) != _tree_digest(heavy)
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        lambda room: room,                          # the room root itself
+        lambda room: room.parent,                   # an ancestor of the room
+        lambda room: room / "data-room",            # the blind tree
+        lambda room: room / "data-room" / "dirty",  # inside the blind tree
+        lambda room: room / "_key" / "corrupted",   # inside the key root
+    ],
+)
+def test_out_dir_refuses_every_configured_tree_and_the_room_root(tmp_path, unsafe):
+    room, conf = _room(tmp_path)
+    with pytest.raises(CorruptError, match="refusing"):
+        corrupt_room(room, conf, seed=1, profile=PROFILES["light"], out_dir=unsafe(room))
+    assert (room / "data-room" / "01_corporate" / "1.1.1_articles.md").is_file(), (
+        "a refused out_dir must be refused BEFORE anything is deleted"
+    )
+
+
+def test_cli_out_flag_names_the_directory_it_wrote(tmp_path, capsys):
+    from synthvdr.__main__ import main
+
+    room, conf = _room(tmp_path)
+    out = room / "corrupted-heavy"
+    code = main([
+        "corrupt", "--room", str(room), "--profile", "heavy", "--out", str(out),
+    ])
+    printed = capsys.readouterr().out
+    assert code == 0, printed
+    assert str(out) in printed
+    assert (out / "answer-key.jsonl").is_file()
+    assert not (room / CORRUPTED_DIR).exists()

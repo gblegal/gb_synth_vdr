@@ -206,6 +206,16 @@ print(f'''Room invariants, all four of which a gate checks:
 an author needs the whole closed list, people included, because it must not invent a person
 either.
 
+**Paste the fact sheet's `## Cast` table itself, name and role, alongside the name list.**
+`cast_list` returns names only, and a name without its role is an invitation: given a flat
+list and a counterparty signature block to fill, authors reach for whichever declared person
+is handy — the bank's relationship director signing for a retailer, the auditor as a
+customer's commercial director. `agents/vdr-author.md` forbids that and names the two exits
+(sign by role with the name unscanned, or ask for a new cast member through the manifest),
+but the author can only keep people in their roles if it has been told the roles. When a
+manifest asks for a new cast member, invent one, name-check it, add it to `## Cast`, and
+regenerate `_key/name-check.md` through `render_name_check_md` before the next wave.
+
 ### 3. Measure the batch against its depth floors
 
 **Before consolidating anything**, run gate 10's own check over just the slots this wave
