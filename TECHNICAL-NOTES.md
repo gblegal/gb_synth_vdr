@@ -300,6 +300,36 @@ still carries a small, closed list of corporate-suffix tokens, and any future ad
 should be checked against the same question before being matched case-insensitively. Treat a
 clean check as lowered risk, never as a guarantee.
 
+**Two narrowings of that pattern, and what each gives up.** `Limited` is the one suffix on
+the list that is also an ordinary English adjective, and it was reading ordinary prose as
+company names — "a Private Limited Company", "Independent Limited Assurance Report", and
+Companies House's own "Private Company Limited by Shares". It is now declined in front of a
+**closed list** of the words the adjective qualifies (`synthvdr.names._ADJECTIVAL_CONTINUATIONS`).
+The list can only ever be one word behind the next ordinary phrase, which leaves a false
+positive — deliberately, because the broader rule that would need no list ("any capitalised
+word after the suffix ends the name") also swallows `<Unchecked Name> Limited Retirement
+Benefits Scheme`, and a counterparty named only in that shape would pass in silence.
+Separately, `abbreviates_a_cast_name` drops a candidate that is a trailing sub-phrase of a
+name already on the cast list, reading `Ltd`/`Limited` and `Inc`/`Incorporated` as one
+suffix — an org chart's box too narrow for "Helmswick Imaging Limited" holds "Imaging Ltd",
+and masking cannot help because the full name is not in the text to remove. What that gives
+up is a genuinely unchecked entity whose *whole* name is a tail of a checked one; the tail
+is by construction the generic end of an invented name, and a one-word or bare-suffix cast
+row, which would make the rule dangerous, is already rejected by `malformed_cast_entries`.
+Note the direction — only a candidate no **longer** than the cast entry is excused, so the
+rejected walk that let a cast "Holdings Limited" cover a different "Ashfell Trading Holdings
+Limited" stays rejected.
+
+**A suffix can still be read out of an ordinary English word in the other direction, and is
+not fixed.** `Incorporated` is matched case-insensitively, so a capitalised phrase followed
+by the ordinary participle — "Ashfell Advanced Materials Limited incorporated in 2004" —
+reads the participle as the suffix and returns one over-long token. The `SpA` remedy (match
+the canonical case only) does not transfer: it would lose `INCORPORATED` in an execution
+block, and a per-suffix table of following words is a third mechanism this has not yet
+earned. In the corpus sweep it is harmless — masking removes the registered name first — so
+it surfaces only in `/vdr-scope`'s fact-sheet extraction, as a candidate with a trailing
+"incorporated" that an author can see and correct.
+
 **Coverage of invented names depends on the fact sheet declaring them.** The automatic scan
 only catches a capitalised phrase ending in a corporate suffix, and the `## Cast` table only
 covers people. A brand, product line, site or domain name reaches the check *only* through

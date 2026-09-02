@@ -701,3 +701,141 @@ def test_gate_14_passes_when_every_verdict_is_clear(room):
     _record(room, ("Ashfell Holdings Limited", "clear", "No collision found."))
     blind_doc(room).write_text("# Articles\n\nA deed with Ashfell Holdings Limited.\n")
     assert gate_14_unchecked_names(ctx_for(room)).status == "PASS"
+
+
+# ---------------------------------------------------------------------------
+# Defect 2 (found in the ll_vdr_06 findings session) — `entity_tokens` could
+# not span a line break, so an entity name wrapped across two lines of
+# fact-sheet prose was missed entirely; and it took a leading "The" into the
+# token, so "The Helmswick Group Limited" was checked as a different name from
+# "Helmswick Group Limited". `mask_cast_names` had already learned the first
+# half of this lesson — markdown prose wraps, so a long name arrives split
+# mid-phrase as a matter of course — and the two halves of one mechanism must
+# agree about what a name looks like. The workaround until now was keeping
+# entity names on one line in fact-sheet prose: a constraint on the author
+# that the tool should be absorbing.
+# ---------------------------------------------------------------------------
+
+
+def test_entity_tokens_spans_a_single_line_break():
+    text = "The parties include Unlisted\nTrading Limited and others.\n"
+    assert entity_tokens(text) == {"Unlisted Trading Limited"}
+
+
+def test_entity_tokens_normalises_the_whitespace_it_spans():
+    # The token is a key: it is compared against the cast list and written
+    # into the name check, both of which spell a name with single spaces.
+    text = "Executed by Unlisted\n    Trading   Limited on the date shown.\n"
+    assert entity_tokens(text) == {"Unlisted Trading Limited"}
+
+
+def test_entity_tokens_drops_a_leading_the():
+    assert entity_tokens("The Unlisted Trading Limited signed.") == {
+        "Unlisted Trading Limited"
+    }
+    assert entity_tokens("THE UNLISTED TRADING LIMITED signed.") == {
+        "UNLISTED TRADING LIMITED"
+    }
+
+
+def test_entity_tokens_keeps_the_when_dropping_it_would_leave_a_bare_suffix():
+    # "The Limited" is not a name with a leading determiner; stripping it
+    # would leave a bare corporate suffix, which is not a candidate at all.
+    assert entity_tokens("A reference to The Limited here.") == {"The Limited"}
+
+
+def test_gate_14_passes_on_a_cast_name_wrapped_across_a_line_break(room):
+    blind_doc(room).write_text("# Articles\n\nThe parties include Ashfell\nHoldings Limited.\n")
+    assert gate_14_unchecked_names(ctx_for(room)).status == "PASS"
+
+
+def test_gate_14_still_flags_an_unchecked_name_wrapped_across_a_line_break(room):
+    blind_doc(room).write_text("# Articles\n\nA deed with Unlisted\nTrading Limited.\n")
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "Unlisted Trading Limited" in result.detail, (
+        "the reported name must be spelled the way the cast list spells it, "
+        "not carrying the line break it was found across"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Defect 3 (found during the ll_vdr_06 build; cost several remediation edits)
+# — the gate fired wherever a capitalised word preceded a corporate suffix,
+# including in ordinary English where no company was being named. Two shapes,
+# two different fixes, and the bias stays where it was: a real uncoined
+# counterparty slipping through is much worse than a false positive.
+#
+#   (a) "Limited" is the one suffix on the list that is also an ordinary
+#       English adjective. Read as a suffix it ends a legal name; read as an
+#       adjective it qualifies the noun after it — "a Private Limited
+#       Company", "Independent Limited Assurance Report", "Private Company
+#       Limited by Shares" (which is Companies House's own boilerplate). The
+#       exclusion is a CLOSED list of the words that follow the adjective, not
+#       a rule about capitalisation after the suffix: an incomplete list
+#       leaves a false positive, which is the safe direction, whereas
+#       "anything capitalised after Limited" would have silently swallowed
+#       "<Unchecked Name> Limited Retirement Benefits Scheme".
+#
+#   (b) An org chart abbreviates: a box too narrow for "Helmswick Imaging
+#       Limited" holds "Imaging Ltd". A candidate that is a trailing
+#       sub-phrase of a name already on the cast list (with Ltd and Limited
+#       read as the same suffix) is that name abbreviated. Note the direction
+#       — this is the OPPOSITE containment to the trailing-sub-phrase walk
+#       synthvdr/names.py's docstring records as rejected: there, a SHORT cast
+#       entry excused a LONGER unchecked name; here, only a candidate SHORTER
+#       than the cast entry is excused, and a longer one still fails.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "prose",
+    [
+        "The Company is a Private Limited Company under the Companies Act 2006.",
+        "Independent Limited Assurance Report of the auditors.",
+        "Certificate of incorporation of a Private Company Limited by Shares.",
+        "Registered as a Private Limited Company on 1 April 1998.",
+    ],
+)
+def test_gate_14_does_not_fire_on_limited_used_as_an_adjective(room, prose):
+    blind_doc(room).write_text(f"# Articles\n\n{prose}\n")
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "PASS", result.detail
+
+
+def test_entity_tokens_still_reads_limited_before_an_ordinary_capitalised_word():
+    # The exclusion is a closed list of what follows the ADJECTIVE, not a
+    # rule about capitalisation: a genuine name followed by a capitalised
+    # word must still be found, or a counterparty named only inside a scheme
+    # or document title would slip through.
+    text = "The Unlisted Trading Limited Retirement Benefits Scheme was closed."
+    assert entity_tokens(text) == {"Unlisted Trading Limited"}
+
+
+def test_gate_14_accepts_an_org_chart_abbreviation_of_a_cast_name(room):
+    # The room's cast holds "Ashfell Holdings Limited"; the structure chart's
+    # boxes are too narrow for it.
+    blind_doc(room).write_text(
+        "# Group structure\n\n"
+        "```\n"
+        "│ Ashfell Holdings Limited │\n"
+        "│ Holdings Ltd │ │ Holdings Limited │\n"
+        "```\n"
+    )
+    assert gate_14_unchecked_names(ctx_for(room)).status == "PASS"
+
+
+def test_gate_14_still_flags_a_longer_name_ending_in_a_cast_name(room):
+    # The rejected direction, pinned: a cast entry must never excuse a
+    # DIFFERENT, longer name that merely ends with it.
+    blind_doc(room).write_text("# Articles\n\nA deed with Ashfell Trading Holdings Limited.\n")
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "Ashfell Trading Holdings Limited" in result.detail
+
+
+def test_gate_14_still_flags_an_abbreviation_of_nothing_on_the_cast_list(room):
+    blind_doc(room).write_text("# Group structure\n\n│ Trading Ltd │\n")
+    result = gate_14_unchecked_names(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "Trading Ltd" in result.detail

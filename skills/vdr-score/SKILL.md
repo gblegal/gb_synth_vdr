@@ -136,7 +136,10 @@ than findings.yaml. Two input shapes:
   optional `room_hash`, and one record per document under `classifications`;
 - anything else is read as JSONL, one record per line — which is exactly the downstream
   classifier's native manifest, so that file scores as-is. Extra per-record fields are
-  ignored; with no `room_hash` the scorecard reads `UNVERIFIED`, same as the findings side.
+  ignored, and `room_hash` is read **off the records**, which is where a manifest stamps
+  it. Records carrying no hash say nothing, so a partly-stamped manifest still verifies;
+  two *different* hashes in one file is a spliced run over more than one room and refuses;
+  with no hash anywhere the scorecard reads `UNVERIFIED`, same as the findings side.
 
 Provenance follows the same discipline as `score`: a `room_hash` that provably names a
 different room refuses to score and exits `2`; a missing hash or manifest scores with an

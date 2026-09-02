@@ -199,6 +199,20 @@ candidate, and whatever the regex still finds carries a corporate suffix that no
 accounts for — which is the definition of unchecked. The false-positive class goes
 structurally, with no stoplist and no bound.
 
+Two residues masking cannot reach are handled where they arise, both biased towards a false
+positive rather than a miss. A document that abbreviates a checked name — an org chart's box
+too narrow for "Helmswick Imaging Limited" holding "Imaging Ltd" — never contains the full
+name to be masked, so `abbreviates_a_cast_name` drops a candidate that is a *trailing*
+sub-phrase of a cast entry (reading `Ltd` and `Limited` as one suffix). Note the direction:
+only a candidate no **longer** than the cast entry is excused, which is the opposite of the
+rejected sub-phrase walk above, where a short cast entry waved a longer, different name
+through. And "Limited" is the one corporate suffix that is also an ordinary English
+adjective, so `entity_tokens` declines to read it as a suffix in front of a **closed list**
+of the words it qualifies (`Company`, `Liability`, `Assurance`, `by …`). A closed list can
+only ever be one word behind the next ordinary phrase, and being one word behind leaves a
+false positive — where the broader rule "any capitalised word after the suffix" would have
+silently swallowed `<Unchecked Name> Limited Retirement Benefits Scheme`.
+
 ---
 
 ## 6. The nineteen gates
@@ -222,7 +236,7 @@ structurally, with no stoplist and no bound.
 | 11 | Subset reconciliation | `subset/`, if built, reproduces every finding with its full evidence chain |
 | 12 | Answer-key containment | Nothing under `_key/` leaks into the blind tree |
 | 13 | Fact-sheet reconciliation | Canonical figures in `_key/fact-sheet.md` appear consistently, with no superseded value surviving |
-| 14 | Unchecked names | Every entity-shaped token in the room is on the fact-sheet cast list, and no recorded verdict is a collision |
+| 14 | Unchecked names | Every entity-shaped token in the room is on the fact-sheet cast list (or abbreviates one), and no recorded verdict is a collision |
 | 15 | Discoverability audit | Every registered finding has a recorded `discoverable_from_blind` verdict |
 | 16 | Render parity | DOCX/PDF renders, if built, mirror the blind tree's document set by filename, in both directions |
 | 17 | Answer-key validation | `_key/findings.yaml` / `_key/distractors.yaml` pass `synthvdr.schema.validate()`'s internal-consistency checks |
