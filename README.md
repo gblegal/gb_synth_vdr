@@ -92,3 +92,31 @@ files, so the empty folder matters. The exact commands are in
   workflow.
 - [TECHNICAL-NOTES.md](TECHNICAL-NOTES.md) — installation, commands, file formats, the test
   fixture, and the known limits of what this project can check.
+
+## Licence, and where the vocabulary came from
+
+This project is MIT-licensed — see [LICENSE](LICENSE).
+
+The document types in a room's classification answer key (`_key/labels.yaml`, and the
+`answer-key.jsonl` built from it) are not this project's own vocabulary. They belong to the
+downstream classifier, gb-docclass, and that classifier's list is derived in part from the
+[SALI LMSS](https://github.com/sali-legal/LMSS) — the Legal Matter Specification Standard
+published by the SALI Alliance, and MIT-licensed:
+
+> Copyright (c) 2022 SALI Alliance™
+
+Part of the classifier's list began as an LMSS node and was renamed to English-law terms;
+the rest was written from scratch, because LMSS reaches pensions, environmental, ESG and
+operations barely or not at all. The full provenance — each type's LMSS name and
+identifier, the pinned LMSS commit, and what was deliberately not used — is recorded in
+gb-docclass, in `profiles/SOURCES.md` and `profiles/sali-mapping.tsv` there.
+
+Nothing in this repository is a copy of LMSS. The type names appear here only as labels a
+room's authors write and as worked examples in the tests, and the `--vocabulary` file that
+constrains them is supplied by whoever runs the build. If this project ever ships that list
+itself, the SALI notice above moves into a `NOTICE` file alongside the copied material,
+which is what the MIT licence asks for.
+
+Naming SALI here identifies the source of the vocabulary. It is not a claim of endorsement
+or certification by the SALI Alliance, and neither this project nor gb-docclass's taxonomy
+is a conformant LMSS implementation.
