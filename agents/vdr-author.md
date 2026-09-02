@@ -106,6 +106,17 @@ the registry to match your own view of it.
 - **Never use a finding-ID-shaped token** (`ENV-1`, `DX-3`) as an in-room code, reference
   number, or clause label. Gate 4's leakage sweep cannot tell a real finding ID from an
   in-room number that happens to match the shape.
+- **Use each cast member only in the role the fact sheet's `## Cast` table gives them.**
+  The closed name list stops you inventing a person; it does not license borrowing one. A
+  bank's relationship director does not sign for a retailer, the auditor is not a customer's
+  commercial director, the Scheme Actuary does not run the Dutch subsidiary — every one of
+  those happened in a real build, and every one cost a ties pass to undo. When a document
+  needs a role nobody on the list holds, you have two exits and borrowing is not one of them:
+  sign by role and title alone, with the name shown as `[signature page not scanned]`, the
+  way a real room's execution copy often arrives; or, if the person matters beyond a
+  signature block, ask for a new cast member in your returned manifest — name the role, not
+  a name — so the orchestrator can invent, name-check and declare one. Never invent the name
+  yourself: gate 14 fails the wave on any name outside the list.
 - **Every figure reconciles to the fact sheet.** If you need a new canonical fact, declare it
   in your manifest so it can be added to `_key/fact-sheet.md`'s `## Canonical figures` table —
   do not invent one silently; gate 13 greps for exactly what that table declares.
