@@ -332,3 +332,108 @@ def test_cli_out_flag_names_the_directory_it_wrote(tmp_path, capsys):
     assert str(out) in printed
     assert (out / "answer-key.jsonl").is_file()
     assert not (room / CORRUPTED_DIR).exists()
+
+
+# --- The twin's own manifest. A corrupted twin had no manifest, so a twin
+# run's room_hash could only ever mismatch the CLEAN room's content_hash —
+# a `--key corrupted-heavy/answer-key.jsonl` run was permanently
+# UNVERIFIED, which is the one provenance state that cannot be checked.
+# The twin is a room in its own right: it gets its own hash, over its own
+# tree, and the scorer checks against the manifest sitting beside the key
+# it was pointed at.
+
+
+def test_the_twin_carries_its_own_manifest(tmp_path):
+    from synthvdr.manifest import MANIFEST_NAME, compute_content_hash
+
+    room, conf = _room(tmp_path)
+    corrupt_room(room, conf, seed=3, profile=PROFILES["heavy"])
+    manifest = json.loads((room / CORRUPTED_DIR / MANIFEST_NAME).read_text())
+    expected, count = compute_content_hash(room / CORRUPTED_DIR / "data-room")
+    assert manifest["content_hash"] == expected, (
+        "the twin's hash is over the twin's own tree — that is the room a "
+        "tool under test actually reads"
+    )
+    assert manifest["documents"] == count
+
+
+def test_the_twin_manifest_names_the_room_it_derives_from(tmp_path):
+    from synthvdr.manifest import MANIFEST_NAME
+
+    room, conf = _room(tmp_path)
+    (room / "_key" / MANIFEST_NAME).write_text(json.dumps({"content_hash": "sha256:clean"}))
+    corrupt_room(room, conf, seed=3, profile=PROFILES["heavy"])
+    manifest = json.loads((room / CORRUPTED_DIR / MANIFEST_NAME).read_text())
+    assert manifest["derived_from"] == "sha256:clean", (
+        "a twin is only meaningful against the room it was cut from; the "
+        "clean hash is how a scorecard can say which one that was"
+    )
+    assert manifest["content_hash"] != "sha256:clean"
+
+
+def test_the_twin_manifest_carries_no_clock(tmp_path):
+    # The twin is byte-identical by (room, seed, profile) — a build date
+    # would break that, and `built` is the one field the packaged room's
+    # manifest carries that this one must not.
+    from synthvdr.manifest import MANIFEST_NAME
+
+    room, conf = _room(tmp_path)
+    corrupt_room(room, conf, seed=3, profile=PROFILES["light"])
+    assert "built" not in json.loads((room / CORRUPTED_DIR / MANIFEST_NAME).read_text())
+
+
+def test_a_twin_run_verifies_against_the_twins_own_manifest(tmp_path, capsys):
+    from synthvdr.__main__ import main
+    from synthvdr.manifest import MANIFEST_NAME
+
+    room, conf = _room(tmp_path)
+    corrupt_room(room, conf, seed=9, profile=PROFILES["heavy"])
+    twin_hash = json.loads(
+        (room / CORRUPTED_DIR / MANIFEST_NAME).read_text()
+    )["content_hash"]
+    key_rows = [
+        json.loads(line)
+        for line in (room / CORRUPTED_DIR / "answer-key.jsonl").read_text().splitlines()
+    ]
+    out = tmp_path / "twin-run.json"
+    out.write_text(json.dumps({
+        "tool": "acme/1.0", "room_hash": twin_hash, "classifications": key_rows,
+    }))
+    code = main([
+        "score-classification", str(out), "--room", str(room),
+        "--key", str(room / CORRUPTED_DIR / "answer-key.jsonl"),
+    ])
+    printed = capsys.readouterr().out
+    assert code == 0, printed
+    assert "Provenance: verified" in printed
+
+
+def test_the_clean_rooms_hash_is_refused_on_a_twin_run(tmp_path, capsys):
+    # The whole point of giving the twin a manifest: scoring a clean-room
+    # run against the twin's key must now be caught, where before it was an
+    # unverifiable UNVERIFIED that scored anyway.
+    from synthvdr.__main__ import main
+    from synthvdr.manifest import MANIFEST_NAME, compute_content_hash
+
+    room, conf = _room(tmp_path)
+    (room / "_key" / MANIFEST_NAME).write_text(json.dumps({
+        "content_hash": compute_content_hash(room / "data-room")[0]
+    }))
+    corrupt_room(room, conf, seed=9, profile=PROFILES["heavy"])
+    clean_hash = compute_content_hash(room / "data-room")[0]
+    key_rows = [
+        json.loads(line)
+        for line in (room / CORRUPTED_DIR / "answer-key.jsonl").read_text().splitlines()
+    ]
+    out = tmp_path / "wrong-room.json"
+    out.write_text(json.dumps({
+        "tool": "acme/1.0", "room_hash": clean_hash, "classifications": key_rows,
+    }))
+    code = main([
+        "score-classification", str(out), "--room", str(room),
+        "--key", str(room / CORRUPTED_DIR / "answer-key.jsonl"),
+    ])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "different room" in captured.err
+    assert "Classification scorecard" not in captured.out

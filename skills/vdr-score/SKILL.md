@@ -136,11 +136,19 @@ than findings.yaml. Two input shapes:
   optional `room_hash`, and one record per document under `classifications`;
 - anything else is read as JSONL, one record per line — which is exactly the downstream
   classifier's native manifest, so that file scores as-is. Extra per-record fields are
-  ignored; with no `room_hash` the scorecard reads `UNVERIFIED`, same as the findings side.
+  ignored, and `room_hash` is read **off the records**, which is where a manifest stamps
+  it. Records carrying no hash say nothing, so a partly-stamped manifest still verifies;
+  two *different* hashes in one file is a spliced run over more than one room and refuses;
+  with no hash anywhere the scorecard reads `UNVERIFIED`, same as the findings side.
 
 Provenance follows the same discipline as `score`: a `room_hash` that provably names a
 different room refuses to score and exits `2`; a missing hash or manifest scores with an
-`UNVERIFIED` line. Coverage must match the key exactly, in both directions — a skipped
+`UNVERIFIED` line. With `--key`, the manifest checked is the one **beside that key** —
+`corrupted-heavy/manifest.json` for a `--key corrupted-heavy/answer-key.jsonl` run — because
+the twin is a room in its own right, with renamed and misfiled documents and therefore its
+own hash. `corrupt` writes that manifest as it builds the twin, so hand a twin run the
+twin's hash, not the clean room's; the clean room's now fails the check rather than scoring
+as an unverifiable guess. Coverage must match the key exactly, in both directions — a skipped
 document would be graded against silence, and a path the key does not know is a typo or a
 stale key — so a mismatch refuses with names rather than quietly scoring the intersection.
 A tool that cannot classify a document says so with an `unsure` record, never by omission.

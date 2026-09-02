@@ -283,3 +283,134 @@ def test_cli_refuses_a_proven_room_hash_mismatch(tmp_path, capsys):
     assert "Classification scorecard" not in captured.out, (
         "a proven mismatch must abort before any scorecard is printed"
     )
+
+
+# ---------------------------------------------------------------------------
+# Defect 1 (found 2 Sep 2026 packaging ll_vdr_06, "Project Cairn") — the JSONL
+# branch hardcoded room_hash="" and never read it off the records, so every
+# gb-docclass manifest scored "UNVERIFIED provenance" no matter how correct
+# its stamped hash was. The .json branch read it; the same manifest wrapped
+# into the pinned JSON form verified against the same room. The whole point of
+# content_hash is that one room's output cannot be scored against another
+# room's key and produce a confident, meaningless number — and on the JSONL
+# path, which is the path a real manifest takes, that check never ran.
+# ---------------------------------------------------------------------------
+
+
+def _manifest_room(tmp_path: Path, content_hash: str) -> Path:
+    (tmp_path / "_key").mkdir(exist_ok=True)
+    (tmp_path / "_key" / "manifest.json").write_text(
+        json.dumps({"content_hash": content_hash})
+    )
+    return tmp_path
+
+
+def test_jsonl_room_hash_is_read_off_the_records(tmp_path):
+    # gb-docclass 0.2.0 stamps room_hash on every manifest record, precisely
+    # so provenance can be checked. Every record agreeing is the ordinary
+    # case: that hash is the output's hash.
+    rows = _rows(
+        ("01_corporate/articles.md", "Articles of association", "corporate"),
+        ("01_corporate/spa.md", "Share purchase agreement", "corporate"),
+        ("06_property/lease.md", "Lease", "real-estate"),
+    )
+    for row in rows:
+        row["room_hash"] = "sha256:aaa"
+    output = load_classification_output(_write(tmp_path, "manifest.jsonl", rows))
+    assert output.room_hash == "sha256:aaa"
+    status = check_provenance(_manifest_room(tmp_path, "sha256:aaa"), output)
+    assert status.verified, status.detail
+
+
+def test_jsonl_room_hash_is_read_from_the_records_that_carry_one(tmp_path):
+    # A record without the field says nothing; it does not contradict the
+    # ones that do. Only disagreement between two stamped hashes is a
+    # defect, so a partially-stamped manifest still verifies.
+    rows = _rows(
+        ("01_corporate/articles.md", "Articles of association", "corporate"),
+        ("01_corporate/spa.md", "Share purchase agreement", "corporate"),
+        ("06_property/lease.md", "Lease", "real-estate"),
+    )
+    rows[0]["room_hash"] = "sha256:aaa"
+    rows[2]["room_hash"] = "sha256:aaa"
+    output = load_classification_output(_write(tmp_path, "manifest.jsonl", rows))
+    assert output.room_hash == "sha256:aaa"
+
+
+def test_jsonl_records_disagreeing_about_room_hash_are_refused(tmp_path):
+    # Two different room_hashes in one manifest is a spliced run — two
+    # rooms' output concatenated. Picking one would be luck rather than
+    # intent, the same reasoning the loader already applies to a duplicated
+    # source_path, so it refuses instead.
+    rows = _rows(
+        ("01_corporate/articles.md", "Articles of association", "corporate"),
+        ("01_corporate/spa.md", "Share purchase agreement", "corporate"),
+    )
+    rows[0]["room_hash"] = "sha256:aaa"
+    rows[1]["room_hash"] = "sha256:bbb"
+    path = _write(tmp_path, "manifest.jsonl", rows)
+    with pytest.raises(ClassificationOutputError) as exc:
+        load_classification_output(path)
+    assert "sha256:aaa" in str(exc.value) and "sha256:bbb" in str(exc.value)
+
+
+def test_jsonl_with_no_room_hash_is_still_unverified(tmp_path):
+    # The correct reading for a tool that stamps nothing: no hash, no
+    # verification, and the scorecard says so rather than assuming a match.
+    rows = _rows(
+        ("01_corporate/articles.md", "Articles of association", "corporate"),
+        ("01_corporate/spa.md", "Share purchase agreement", "corporate"),
+    )
+    output = load_classification_output(_write(tmp_path, "manifest.jsonl", rows))
+    assert output.room_hash == ""
+    status = check_provenance(_manifest_room(tmp_path, "sha256:aaa"), output)
+    assert not status.verified
+    assert "carries no room_hash" in status.detail
+
+
+def test_cli_verifies_provenance_from_a_jsonl_manifest(tmp_path, capsys):
+    # End to end, the way it is actually run:
+    #   synthvdr score-classification manifest.jsonl --room .
+    from synthvdr.__main__ import main
+
+    room = _cli_room(tmp_path)
+    (room / "_key" / "manifest.json").write_text(
+        json.dumps({"content_hash": "sha256:aaa"})
+    )
+    rows = _rows(
+        ("01_corporate/articles.md", "Articles of association", "corporate"),
+        ("01_corporate/spa.md", "Share purchase agreement", "corporate"),
+        ("06_property/lease.md", "Lease", "real-estate"),
+    )
+    for row in rows:
+        row["room_hash"] = "sha256:aaa"
+    out = _write(tmp_path, "manifest.jsonl", rows)
+    code = main(["score-classification", str(out), "--room", str(room)])
+    printed = capsys.readouterr().out
+    assert code == 0, printed
+    assert "Provenance: verified" in printed
+    assert "UNVERIFIED" not in printed
+
+
+def test_cli_refuses_a_proven_room_hash_mismatch_from_a_jsonl_manifest(tmp_path, capsys):
+    # The point of the whole exercise: one room's manifest scored against a
+    # different room's key must abort, not print a confident number.
+    from synthvdr.__main__ import main
+
+    room = _cli_room(tmp_path)
+    (room / "_key" / "manifest.json").write_text(
+        json.dumps({"content_hash": "sha256:aaa"})
+    )
+    rows = _rows(
+        ("01_corporate/articles.md", "Articles of association", "corporate"),
+        ("01_corporate/spa.md", "Share purchase agreement", "corporate"),
+        ("06_property/lease.md", "Lease", "real-estate"),
+    )
+    for row in rows:
+        row["room_hash"] = "sha256:bbb"
+    out = _write(tmp_path, "manifest.jsonl", rows)
+    code = main(["score-classification", str(out), "--room", str(room)])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "different room" in captured.err
+    assert "Classification scorecard" not in captured.out

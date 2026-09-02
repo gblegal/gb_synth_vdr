@@ -179,6 +179,7 @@ judgement-shaped work. Anything that must be identical across runs lives here.
 | `names` | Cast-name masking and corporate-suffix scanning — the primitives behind the unchecked-name sweep. |
 | `namecheck` | Extracts candidate invented names from three declared sources and keeps the durable `name-check.md` record. The searching itself happens in `/vdr-scope`, because only the agent has WebSearch. |
 | `schema` | The answer-key model — findings and distractors — plus `validate()`'s internal-consistency checks. YAML is canonical; `findings.md` is generated from it. |
+| `manifest` | The room's `content_hash` — sha256 over the sorted `rel_path + "\0" + sha256(bytes)` of the blind tree — and the two manifests that carry it (the packaged room's and the corrupted twin's). Takes `built` as a value and never reads the clock. |
 | `score` | Deterministic scoring: provenance check, evidence-path prematching, recall/precision/partial trails, adjudication reconciliation, scorecard rendering and baseline diff. |
 | `qa/` | The nineteen gates (`structural`, `leakage`, `depth`, `integrity`, `renders`) and the runner that enforces how they report. |
 | `render/` | The optional DOCX (`docx.py`) and PDF (`pdf.mjs`, a separate Node process) renders. Never imported at core-build time. |
@@ -198,6 +199,20 @@ gone before the regex ever runs, so no number of ordinary leading words can manu
 candidate, and whatever the regex still finds carries a corporate suffix that no cast entry
 accounts for — which is the definition of unchecked. The false-positive class goes
 structurally, with no stoplist and no bound.
+
+Two residues masking cannot reach are handled where they arise, both biased towards a false
+positive rather than a miss. A document that abbreviates a checked name — an org chart's box
+too narrow for "Helmswick Imaging Limited" holding "Imaging Ltd" — never contains the full
+name to be masked, so `abbreviates_a_cast_name` drops a candidate that is a *trailing*
+sub-phrase of a cast entry (reading `Ltd` and `Limited` as one suffix). Note the direction:
+only a candidate no **longer** than the cast entry is excused, which is the opposite of the
+rejected sub-phrase walk above, where a short cast entry waved a longer, different name
+through. And "Limited" is the one corporate suffix that is also an ordinary English
+adjective, so `entity_tokens` declines to read it as a suffix in front of a **closed list**
+of the words it qualifies (`Company`, `Liability`, `Assurance`, `by …`). A closed list can
+only ever be one word behind the next ordinary phrase, and being one word behind leaves a
+false positive — where the broader rule "any capitalised word after the suffix" would have
+silently swallowed `<Unchecked Name> Limited Retirement Benefits Scheme`.
 
 ---
 
@@ -222,7 +237,7 @@ structurally, with no stoplist and no bound.
 | 11 | Subset reconciliation | `subset/`, if built, reproduces every finding with its full evidence chain |
 | 12 | Answer-key containment | Nothing under `_key/` leaks into the blind tree |
 | 13 | Fact-sheet reconciliation | Canonical figures in `_key/fact-sheet.md` appear consistently, with no superseded value surviving |
-| 14 | Unchecked names | Every entity-shaped token in the room is on the fact-sheet cast list, and no recorded verdict is a collision |
+| 14 | Unchecked names | Every entity-shaped token in the room is on the fact-sheet cast list (or abbreviates one), and no recorded verdict is a collision |
 | 15 | Discoverability audit | Every registered finding has a recorded `discoverable_from_blind` verdict |
 | 16 | Render parity | DOCX/PDF renders, if built, mirror the blind tree's document set by filename, in both directions |
 | 17 | Answer-key validation | `_key/findings.yaml` / `_key/distractors.yaml` pass `synthvdr.schema.validate()`'s internal-consistency checks |
@@ -286,6 +301,10 @@ another. This is an interlock against misconfiguration, not a security control; 
 **A scorecard is tied to the room that produced it.** `_key/manifest.json` carries a
 `content_hash` over the blind tree, and `/vdr-score` compares a tool output's `room_hash`
 against it — the classification scorer (`score-classification`) runs the identical check.
+The hash is computed by `synthvdr.manifest` and written by `python3 -m synthvdr manifest`;
+it is deliberately not an algorithm the packaging skill retypes, because
+`check_provenance` compares the result as a plain string and a hash built differently does
+not fail loudly — it reports that a correct output came from a different room.
 
 **A room can be scored dirty as well as clean.** `python3 -m synthvdr corrupt` writes a
 derived `corrupted/` view (or `--out`, one directory per profile when a room needs both
@@ -294,6 +313,12 @@ answer key rewritten to the corrupted paths and a log mapping clean to dirty. De
 by (seed, profile), owned by its own marker like `subset/`, guarded by the same out_dir
 safety rule as `subset/` (`synthvdr.ownership.assert_safe_out_dir`), and never
 walked by any gate: the canonical room stays the QA-checked object, the corrupted twin is
-regenerable eval material for the "too clean" risk. Without that check, scoring one room's output against another room's key
+regenerable eval material for the "too clean" risk. **The twin is a room in its own
+right**, so it carries its own `manifest.json` — its own hash over its own tree, plus the
+seed and the clean room's `content_hash` it derives from. Its documents are renamed and
+misfiled, so its hash could only ever mismatch the clean room's; before it had a manifest
+a `--key corrupted-heavy/answer-key.jsonl` run was permanently UNVERIFIED, which is the one
+provenance state that cannot be checked. The scorer reads the manifest sitting beside the
+key it was pointed at. Without that check, scoring one room's output against another room's key
 produces a confident, precise, entirely meaningless number that nothing in the pipeline
 could catch.

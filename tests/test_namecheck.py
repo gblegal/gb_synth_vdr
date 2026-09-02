@@ -575,3 +575,41 @@ def test_a_contradiction_in_a_second_table_is_still_caught():
     )
     with pytest.raises(NameCheckError, match="Priya Nandan"):
         extract_candidates(text)
+
+
+def test_a_name_wrapped_across_a_line_break_in_prose_is_one_candidate():
+    # Defect 2, in the shape it was found: fact-sheet prose wraps, and the
+    # belt-and-braces suffix net used to stop at the line break — the name
+    # was not extracted at all, and nothing downstream ever checked it. The
+    # workaround was keeping entity names on one line, a constraint on the
+    # author that the tool should absorb.
+    fact_sheet = textwrap.dedent(
+        """
+        # Fact sheet
+
+        The group's operating subsidiary is The Helmswick Imaging
+        Group Limited, which trades from twelve centres.
+        """
+    ).strip()
+    names = {c.text for c in extract_candidates(fact_sheet) if c.kind == "entity"}
+    assert names == {"Helmswick Imaging Group Limited"}, (
+        "the name must be extracted whole, spelled the way the name check "
+        "will record it — no line break, and no leading determiner that "
+        "would make it a different name from the one the author declares"
+    )
+
+
+def test_the_participle_does_not_ride_along_on_a_fact_sheet_name():
+    # Where this defect actually landed: `extract_candidates` runs the
+    # suffix net over fact-sheet prose UNMASKED, so /vdr-scope recorded
+    # "... Limited incorporated" as a name to go and search.
+    fact_sheet = textwrap.dedent(
+        """
+        # Fact sheet
+
+        The target is Ashfell Advanced Materials Limited incorporated in
+        England on 4 June 2004.
+        """
+    ).strip()
+    names = {c.text for c in extract_candidates(fact_sheet) if c.kind == "entity"}
+    assert names == {"Ashfell Advanced Materials Limited"}

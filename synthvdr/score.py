@@ -76,6 +76,7 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple, Union
 
 import yaml
 
+from .manifest import MANIFEST_NAME
 from .schema import SEVERITIES, Distractor, FindingSet
 
 
@@ -150,16 +151,24 @@ class ProvenanceStatus:
     detail: str
 
 
-_MANIFEST_RELATIVE_PATH = Path("_key") / "manifest.json"
+_MANIFEST_RELATIVE_PATH = Path("_key") / MANIFEST_NAME
 
 
-def check_provenance(room: Path, output) -> ProvenanceStatus:
-    """Compare `output.room_hash` against `_key/manifest.json`'s content_hash.
+def check_provenance(room: Path, output, manifest_path=None) -> ProvenanceStatus:
+    """Compare `output.room_hash` against a manifest's content_hash.
 
     `output` is any tool output carrying a `room_hash` attribute — the
     findings ToolOutput above, or classify_score.ClassificationOutput. The
     annotation is deliberately loose: naming both types here would import
     classify_score into this module for a type hint alone.
+
+    `manifest_path` defaults to the room's own `_key/manifest.json`. The
+    one caller that overrides it is a run scored against the corrupted
+    twin: the twin is a room in its own right, with its own tree, its own
+    rewritten answer key and its own hash, so provenance is checked
+    against the manifest sitting BESIDE THE KEY IN USE. Checking a twin
+    run against the clean room's manifest could only ever mismatch, which
+    is why a twin run used to be permanently unverifiable.
 
     - Manifest present, both hashes non-empty, and they differ: raises
       ProvenanceError. This is the one case that must never silently produce
@@ -172,11 +181,16 @@ def check_provenance(room: Path, output) -> ProvenanceStatus:
     - Manifest present and both hashes present and equal: returns a
       verified ProvenanceStatus.
     """
-    manifest_path = room / _MANIFEST_RELATIVE_PATH
+    if manifest_path is None:
+        manifest_path = room / _MANIFEST_RELATIVE_PATH
+    try:
+        shown = manifest_path.relative_to(room)
+    except ValueError:
+        shown = manifest_path
     if not manifest_path.is_file():
         return ProvenanceStatus(
             False,
-            f"UNVERIFIED provenance — no {_MANIFEST_RELATIVE_PATH} found in this room; "
+            f"UNVERIFIED provenance — no {shown} found in this room; "
             "the tool output's room_hash could not be checked against it.",
         )
     try:
@@ -184,7 +198,7 @@ def check_provenance(room: Path, output) -> ProvenanceStatus:
     except (OSError, ValueError) as exc:
         return ProvenanceStatus(
             False,
-            f"UNVERIFIED provenance — {_MANIFEST_RELATIVE_PATH} could not be read ({exc}); "
+            f"UNVERIFIED provenance — {shown} could not be read ({exc}); "
             "the tool output's room_hash could not be checked against it.",
         )
     manifest_hash = ""
@@ -193,26 +207,26 @@ def check_provenance(room: Path, output) -> ProvenanceStatus:
     if not manifest_hash:
         return ProvenanceStatus(
             False,
-            f"UNVERIFIED provenance — {_MANIFEST_RELATIVE_PATH} has no content_hash; "
+            f"UNVERIFIED provenance — {shown} has no content_hash; "
             "the tool output's room_hash could not be checked against it.",
         )
     if not output.room_hash:
         return ProvenanceStatus(
             False,
             "UNVERIFIED provenance — the tool output carries no room_hash; "
-            f"it could not be checked against {_MANIFEST_RELATIVE_PATH}'s content_hash "
+            f"it could not be checked against {shown}'s content_hash "
             f"({manifest_hash!r}).",
         )
     if output.room_hash != manifest_hash:
         raise ProvenanceError(
             f"tool output room_hash {output.room_hash!r} does not match this room's "
-            f"{_MANIFEST_RELATIVE_PATH} content_hash {manifest_hash!r} — the output was "
+            f"{shown} content_hash {manifest_hash!r} — the output was "
             "produced against a different room; refusing to score it against this "
             "room's answer key."
         )
     return ProvenanceStatus(
         True,
-        f"provenance verified — room_hash matches {_MANIFEST_RELATIVE_PATH}'s "
+        f"provenance verified — room_hash matches {shown}'s "
         f"content_hash ({manifest_hash!r}).",
     )
 

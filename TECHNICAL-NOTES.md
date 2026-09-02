@@ -89,6 +89,25 @@ unlike the gate runner, the scorer has no "ran fine, found problems" state — a
 reporting poor recall is a successful run, so the only two outcomes are a trustworthy
 scorecard and none at all.
 
+### `python3 -m synthvdr manifest` — the room's content hash
+
+```bash
+python3 -m synthvdr manifest --room <room-dir> [--built YYYY-MM-DD]
+```
+
+Writes `_key/manifest.json` and prints the `content_hash` to hand to whoever produces the
+tool output scored against the room. This is `/vdr-package` step 4, and it is a command
+rather than a code block inside that skill because `check_provenance` compares the hash as a
+plain string: a hash constructed even slightly differently does not fail loudly, it reports
+that a correct output came from a different room. Exit **2** if `room.conf` cannot be
+loaded, if the blind tree is missing (a manifest there would certify an empty room), or if
+`findings.yaml` exists but is malformed.
+
+`--built` exists because the clock is read at this boundary and nowhere deeper:
+`synthvdr.manifest` takes the date as a value, so nothing inside the package reads a clock.
+The corrupted twin's manifest, written by `corrupt`, carries no date at all — it must stay
+byte-identical for a given room, seed and profile.
+
 ---
 
 ## 3. File formats
@@ -114,6 +133,23 @@ zero-finding run, because the two are not distinguishable from the file alone.
 
 YAML is canonical for the answer key; `_key/findings.md` is generated from it and must never
 be hand-edited.
+
+### `_key/manifest.json`, and the twin's own
+
+Two manifests, one hash construction (`synthvdr.manifest.compute_content_hash`). The
+packaged room's carries `room`, `content_hash`, `documents`, `findings` and `built`. The
+corrupted twin's — written at the twin's root by `corrupt`, beside its rewritten answer key
+— carries `room`, `content_hash` (over the twin's own tree), `documents`, `seed` and
+`derived_from` (the clean room's `content_hash`, where the room has been packaged). It
+carries **no `built` date**, deliberately: the twin is byte-identical for a given room, seed
+and profile, and a clock would break that.
+
+The twin needs a hash of its own because it *is* a different room — its documents are
+renamed, misfiled, noised and truncated, so a run against it can never carry the clean
+room's `content_hash`. `score-classification --key corrupted-heavy/answer-key.jsonl` checks
+provenance against `corrupted-heavy/manifest.json`, the manifest beside the key it was
+given. Before the twin had one, every twin run scored `UNVERIFIED` — the one provenance
+state that cannot be checked, and so the state a mismatched run hides in.
 
 ### `_key/adjudications.yaml`
 
@@ -299,6 +335,43 @@ often writes it, matches nothing and passes gate 14 unflagged. `synthvdr.names.E
 still carries a small, closed list of corporate-suffix tokens, and any future addition to it
 should be checked against the same question before being matched case-insensitively. Treat a
 clean check as lowered risk, never as a guarantee.
+
+**Two narrowings of that pattern, and what each gives up.** `Limited` is the one suffix on
+the list that is also an ordinary English adjective, and it was reading ordinary prose as
+company names — "a Private Limited Company", "Independent Limited Assurance Report", and
+Companies House's own "Private Company Limited by Shares". It is now declined in front of a
+**closed list** of the words the adjective qualifies (`synthvdr.names._ADJECTIVAL_CONTINUATIONS`).
+The list can only ever be one word behind the next ordinary phrase, which leaves a false
+positive — deliberately, because the broader rule that would need no list ("any capitalised
+word after the suffix ends the name") also swallows `<Unchecked Name> Limited Retirement
+Benefits Scheme`, and a counterparty named only in that shape would pass in silence.
+Separately, `abbreviates_a_cast_name` drops a candidate that is a trailing sub-phrase of a
+name already on the cast list, reading `Ltd`/`Limited` and `Inc`/`Incorporated` as one
+suffix — an org chart's box too narrow for "Helmswick Imaging Limited" holds "Imaging Ltd",
+and masking cannot help because the full name is not in the text to remove. What that gives
+up is a genuinely unchecked entity whose *whole* name is a tail of a checked one; the tail
+is by construction the generic end of an invented name, and a one-word or bare-suffix cast
+row, which would make the rule dangerous, is already rejected by `malformed_cast_entries`.
+Note the direction — only a candidate no **longer** than the cast entry is excused, so the
+rejected walk that let a cast "Holdings Limited" cover a different "Ashfell Trading Holdings
+Limited" stays rejected.
+
+**A suffix read out of an ordinary English word in the other direction: `Incorporated`.**
+The participle is one of the commonest words in a data room, and while the suffix was
+matched case-insensitively a capitalised phrase running into it — "Ashfell Advanced
+Materials Limited incorporated in 2004" — returned one over-long token. That is worse than a
+spurious candidate: it is a *corrupted* one, the real name plus a trailing word, which then
+gets searched, recorded in the name check and reported by gate 14 under a name that appears
+nowhere in the document. The remedy is one register milder than `SpA`'s: the initial letter
+must be capitalised and the rest is still matched in any case, so `Incorporated` and the
+all-caps `INCORPORATED` of an execution block both still read, and only the all-lower-case
+participle does not. Sentence-initial "Incorporated in 2004, the company ..." has no
+capitalised word in front of it and could never have matched. **What it gives up** is a
+genuine name whose suffix is written all in lower case — a typo shape rather than a document
+shape, and the safe direction. It is also why the rule sits in the pattern rather than in a
+filter over the matches: with `incorporated` no longer a suffix the regex backs off to the
+shorter match and returns the correct name, where discarding the over-long token would have
+turned a false positive into a miss.
 
 **Coverage of invented names depends on the fact sheet declaring them.** The automatic scan
 only catches a capitalised phrase ending in a corporate suffix, and the `## Cast` table only

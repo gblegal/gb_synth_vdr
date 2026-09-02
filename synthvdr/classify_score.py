@@ -30,9 +30,11 @@ leniency one register down:
     scorer runs;
   - anything else is read as JSONL, one record per line — which is
     exactly a gb-docclass manifest, so that file scores as-is. Extra
-    fields on a record are ignored, tool is taken from the filename, and
-    with no `room_hash` the scorecard reports UNVERIFIED rather than
-    assuming a match.
+    fields on a record are ignored and tool is taken from the filename.
+    `room_hash` is read off the records, which is where a manifest
+    stamps it (see `_room_hash_from_rows`); only where no record carries
+    one does the scorecard report UNVERIFIED rather than assuming a
+    match.
 
 A zero-record file is an error in both shapes, never a zero-document run:
 a tool that classified nothing and a file that failed to say anything are
@@ -135,6 +137,48 @@ def _records_from_rows(rows, where: str) -> List[ClassificationRecord]:
     return records
 
 
+def _room_hash_from_rows(rows, where: str) -> str:
+    """The one `room_hash` a JSONL output's records agree on, or "".
+
+    A gb-docclass manifest is JSONL, and gb-docclass stamps `room_hash` on
+    every record precisely so provenance can be checked — so the hash is
+    there to be read, per record, rather than in a wrapper object the way
+    the pinned `.json` form carries it. This branch used to hardcode "",
+    which meant `check_provenance` reported UNVERIFIED for every manifest
+    however correct its stamped hash was, and the content_hash check —
+    whose whole purpose is that one room's output cannot be scored against
+    another room's answer key and produce a confident, meaningless number
+    — never ran on the path a real manifest actually takes.
+
+    Records that carry no `room_hash` say nothing; they do not contradict
+    the ones that do, so a partially-stamped manifest still verifies. Two
+    DIFFERENT hashes in one file is another matter: that is a spliced run,
+    two rooms' output concatenated, and picking one of them would be luck
+    rather than intent. It refuses, the same reasoning
+    `_records_from_rows` already applies to a duplicated source_path. With
+    no hash anywhere, "" is the honest answer and the scorecard reports
+    UNVERIFIED, which is correct for a tool that stamps nothing.
+    """
+    found: Dict[str, int] = {}
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue  # _records_from_rows reports this properly
+        value = row.get("room_hash")
+        if isinstance(value, str) and value:
+            found.setdefault(value, index)
+    if len(found) > 1:
+        named = ", ".join(
+            f"{value!r} (record {index})" for value, index in sorted(found.items())
+        )
+        raise ClassificationOutputError(
+            f"{where}: the records carry {len(found)} different room_hash "
+            f"values — {named} — which makes this a spliced run over more "
+            "than one room; which hash names the room scored would be luck, "
+            "not intent, so re-run the tool over one room"
+        )
+    return next(iter(found), "")
+
+
 def load_classification_output(path: Path) -> ClassificationOutput:
     """Read a classification output — pinned JSON or lenient JSONL.
 
@@ -187,7 +231,9 @@ def load_classification_output(path: Path) -> ClassificationOutput:
             "something explicit to say"
         )
     return ClassificationOutput(
-        tool=path.stem, room_hash="", records=_records_from_rows(rows, str(path))
+        tool=path.stem,
+        room_hash=_room_hash_from_rows(rows, str(path)),
+        records=_records_from_rows(rows, str(path)),
     )
 
 

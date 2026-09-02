@@ -27,6 +27,7 @@ resolution is forced to be noticed, not quietly tolerated forever.
 import ast
 import importlib
 import json
+import shlex
 import os
 import sys
 import zipfile
@@ -663,17 +664,29 @@ def test_findings_skill_validate_example_executes_without_a_nameerror(tmp_path, 
     assert "Project Example" in (tmp_path / "_key" / "findings.md").read_text()
 
 
-def test_package_skill_manifest_script_executes_and_produces_a_real_hash(xs_room, monkeypatch):
+def test_package_skill_manifest_command_runs_and_produces_a_real_hash(xs_room, monkeypatch):
     """Final review, F10: `compute_content_hash` — the single definition of the room's
     provenance hash — "exists only inside a python fence ... and has no test" (confirmed by
-    the review by running it by hand against a real built room). Runs the shipped fence
-    verbatim against a real built fixture room and checks the result independently, rather
-    than trusting that a hand run once means it will keep working.
+    the review by running it by hand against a real built room). The fence is gone: the hash
+    lives in `synthvdr.manifest` and the skill runs `python3 -m synthvdr manifest`, because
+    an algorithm carried in prose is one an agent can retype slightly differently, and
+    `check_provenance` compares the result as a plain string — a differently-built hash does
+    not fail loudly, it reports that a correct output came from a different room.
+
+    This runs the SHIPPED command line out of the skill, so a step that drifts from the CLI
+    it documents is caught in the commit that drifts it, and checks the hash independently.
     """
+    from synthvdr.__main__ import main
+
     path = ROOT / "skills" / "vdr-package" / "SKILL.md"
-    block = find_example_by_marker(python_examples(path), "compute_content_hash", path)
+    block = find_example_by_marker(bash_examples(path), "synthvdr manifest", path)
+    argv = shlex.split(block.strip())
+    assert argv[:4] == ["python3", "-m", "synthvdr", "manifest"], (
+        f"{path}: step 4 must run the manifest command, not reconstruct the hash"
+    )
+
     monkeypatch.chdir(xs_room)
-    exec(compile(block, str(path), "exec"), {})
+    assert main(argv[3:]) == 0
 
     manifest = json.loads((xs_room / "_key" / "manifest.json").read_text())
     assert set(manifest) >= {"room", "content_hash", "documents", "findings", "built"}

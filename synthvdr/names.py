@@ -34,6 +34,13 @@ since the name check emits person names for exactly those front words. Where
 both nested names are genuine cast entries, hiding one is harmless — both are
 checked, and longest-first masking removes the container before the part.
 
+A SECOND RESIDUAL, and the one rule that reaches it. Masking also cannot see a
+name the document never spells in full: an org chart's box holds "Imaging Ltd"
+where the cast says "Helmswick Imaging Limited". `abbreviates_a_cast_name`
+drops a candidate that is a TRAILING sub-phrase of a cast entry — the opposite
+containment to the rejected walk above, and the reason it is safe where that
+was not; see its docstring for what it gives up in exchange.
+
 The rest is not chased. Guarding the mask's left edge (refuse to mask when a
 capitalised word precedes the occurrence) reopens the exact false-positive class
 above, since "See" and "Registered" are capitalised too. And gate 14 is a safety
@@ -78,20 +85,107 @@ ENTITY_SUFFIXES = (
 # written — keeps real detections ("Kessler Werke SpA") while dropping the
 # false ones, without touching case-insensitivity for any other suffix.
 _CASE_SENSITIVE_SUFFIXES = ("SpA",)
-_CASE_INSENSITIVE_SUFFIXES = tuple(s for s in ENTITY_SUFFIXES if s not in _CASE_SENSITIVE_SUFFIXES)
+
+# "Incorporated" is the same problem one register milder, and takes a milder
+# remedy. Its all-lower-case form is not a word in its own right the way "spa"
+# is — it is the ordinary past participle, and one of the commonest words in a
+# data room: "a private limited company incorporated in England on 17 April
+# 1998". Because `_ENTITY` requires capitalised words immediately in front of
+# the suffix, that read as a company name wherever a capitalised run met the
+# participle, and what came back was not a spurious extra candidate but a
+# CORRUPTED one — the real name plus a trailing word ("Ashfell Advanced
+# Materials Limited incorporated"), which then gets searched, recorded in the
+# name check and reported by gate 14 under a name that appears nowhere in the
+# document.
+#
+# So: the initial letter must be capitalised, the rest is matched in any case.
+# A legal name's suffix is capitalised; the participle in prose is not, and
+# the one place it is — sentence-initial "Incorporated in 2004, the company
+# ..." — has no capitalised word in front of it and could never match anyway.
+# This keeps both "Kessler Werke Incorporated" and the all-caps "KESSLER WERKE
+# INCORPORATED" a deed's execution block uses, where the SpA remedy (canonical
+# case only) would have lost the second. It gives up a genuine name whose
+# suffix is written all in lower case, which is a typo shape rather than a
+# document shape, and is the safe direction: the alternative is reading
+# ordinary prose as a company name on every room. "Inc" needs none of this —
+# it is not an English word — and stays case-insensitive.
+#
+# Note this must BACK OFF rather than reject: with "incorporated" no longer a
+# suffix the regex backtracks to the shorter match and returns the correct
+# name. A filter applied to the matches after the fact would have dropped the
+# over-long token and lost the name with it, turning a false positive into a
+# miss.
+_CAPITALISED_SUFFIXES = ("Incorporated",)
+
+_CASE_INSENSITIVE_SUFFIXES = tuple(
+    s for s in ENTITY_SUFFIXES
+    if s not in _CASE_SENSITIVE_SUFFIXES and s not in _CAPITALISED_SUFFIXES
+)
 
 _SUFFIX_ALTERNATION = (
     "(?:(?i:" + "|".join(re.escape(s) for s in _CASE_INSENSITIVE_SUFFIXES) + ")"
-    "|" + "|".join(re.escape(s) for s in _CASE_SENSITIVE_SUFFIXES) + ")"
+    + "".join(
+        "|" + re.escape(s[0]) + "(?i:" + re.escape(s[1:]) + ")"
+        for s in _CAPITALISED_SUFFIXES
+    )
+    + "".join("|" + re.escape(s) for s in _CASE_SENSITIVE_SUFFIXES)
+    + ")"
 )
 _SUFFIXES_LOWER = frozenset(s.lower() for s in ENTITY_SUFFIXES)
 
-# Inter-word separation is spaces and tabs only, not \s — an entity name
-# does not span a paragraph, and \s would let the run cross a blank line
-# (or any line break), joining a heading to the sentence below it into one
-# false candidate ("Supply\n\nSee Kessler Werke GmbH").
+# Separator allowed between the words of a name: any run of spaces and tabs,
+# optionally spanning ONE line break. Never empty, and never two breaks — one
+# break is a wrap, two is a paragraph or table-row boundary. Shared by
+# `entity_tokens` and `mask_cast_names`, which must agree about what a name
+# looks like: they are two halves of one mechanism (mask, then scan the
+# residue), and while `mask_cast_names` alone spanned a wrap the scan could
+# report a name the mask had been handed.
+_WITHIN_NAME = r"(?:[ \t]*\n[ \t]*|[ \t]+)"
+
+# The words a corporate suffix is followed by when it is NOT a corporate
+# suffix at all. "Limited" is the one entry in ENTITY_SUFFIXES that is also an
+# ordinary English adjective, and read as an adjective it qualifies the noun
+# after it: "a Private Limited Company", "Independent Limited Assurance
+# Report", "Private Company Limited by Shares" (Companies House's own
+# boilerplate on a certificate of incorporation). Each of those puts a
+# capitalised word in front of "Limited" and so matched as a company name that
+# was never named; one XS-scale build spent several remediation edits keeping
+# ordinary prose out of gate 14 for exactly this reason.
+#
+# WHY A CLOSED LIST OF FOLLOWING WORDS AND NOT "ANY CAPITALISED WORD AFTER THE
+# SUFFIX". The tempting rule — a legal name ends at its suffix, so a capital
+# after it means the phrase continues — is broader, and broader in the unsafe
+# direction: it would also swallow "<Unchecked Name> Limited Retirement
+# Benefits Scheme", which is how a pension scheme, a share plan or a document
+# title routinely names the company it belongs to, and a counterparty named
+# only in that shape would pass the gate in silence. This list can only ever
+# be one word behind the next ordinary phrase, and being one word behind
+# leaves a FALSE POSITIVE, which is the direction this gate is deliberately
+# biased in: a real uncoined counterparty slipping through is much worse.
+# Extend it only with words that follow the ADJECTIVE "limited" in ordinary
+# legal or financial English — never with a word that could follow a company
+# name.
+_ADJECTIVAL_CONTINUATIONS = (
+    "by", "company", "companies", "liability", "partnership", "partnerships",
+    "assurance", "recourse", "warranty", "warranties", "edition",
+)
+_NOT_A_SUFFIX_AFTER_ALL = (
+    "(?!" + _WITHIN_NAME
+    + "(?i:" + "|".join(_ADJECTIVAL_CONTINUATIONS) + r")\b)"
+)
+
+# Inter-word separation spans at most ONE line break, never a blank line — an
+# entity name does not span a paragraph, and \s would let the run cross any
+# amount of whitespace, joining a heading to the sentence below it into one
+# false candidate ("Supply\n\nSee Kessler Werke GmbH"). One break it must
+# span: markdown prose wraps, so a long name arrives split mid-phrase as a
+# matter of course, and while this pattern was spaces-and-tabs only such a
+# name was not extracted at all — the fact sheet's belt-and-braces net went
+# blind to it, and the workaround was a rule that authors keep entity names on
+# one line, which is a constraint the tool should absorb.
 _ENTITY = re.compile(
-    r"\b((?:[A-Z][\w&'’-]*[ \t]+){1,4}" + _SUFFIX_ALTERNATION + r")\b"
+    r"\b((?:[A-Z][\w&'’-]*" + _WITHIN_NAME + r"){1,4}"
+    + _SUFFIX_ALTERNATION + r")\b" + _NOT_A_SUFFIX_AFTER_ALL
 )
 
 
@@ -108,19 +202,36 @@ def entity_tokens(text: str) -> Set[str]:
     the names they already know with `mask_cast_names` BEFORE calling this,
     rather than asking this function to guess; it stays a plain,
     context-free matcher. The suffix is matched case-insensitively
-    (Limited/limited, GmbH/GMBH all count) EXCEPT "SpA", which is matched
-    only in its exact canonical case — see the module-level comment above
-    `_CASE_SENSITIVE_SUFFIXES` for why: unlike every other suffix here, its
-    lower- and upper-case forms ("spa", "SPA") are ordinary English/business
-    words in their own right.
+    (Limited/limited, GmbH/GMBH all count) with two exceptions, both for
+    suffixes whose own casings collide with ordinary words: "SpA" is
+    matched only in its exact canonical case, and "Incorporated" only with
+    a capital I (so "INCORPORATED" still counts, "incorporated" — the
+    participle — does not). See the module-level comments above
+    `_CASE_SENSITIVE_SUFFIXES` and `_CAPITALISED_SUFFIXES` for why each
+    line is drawn where it is.
+
+    A match may span a line break, because markdown prose wraps; the token
+    that comes back never does. Whitespace inside it is normalised to
+    single spaces, and a leading "The" is dropped, because the token is a
+    KEY — it is compared against the cast list, reported by gate 14, and
+    written into the name check, all of which spell a name one way. Left
+    alone, "The Helmswick Group Limited" was checked, recorded and searched
+    as a different name from "Helmswick Group Limited", and a wrapped name
+    could not be written into the name-check table at all (a line break in
+    the Name column does not survive the round trip — see
+    `namecheck._validate_name_for_render`). "The" is dropped only where a
+    capitalised word still remains in front of the suffix: "The Limited" is
+    not a determiner and a name, and stripping it would leave a bare
+    suffix, which is not a candidate at all.
     """
-    return {match.group(1).strip() for match in _ENTITY.finditer(text)}
+    return {_as_key(match.group(1)) for match in _ENTITY.finditer(text)}
 
 
-# Separator allowed between the words of a cast name: any run of spaces and
-# tabs, optionally spanning ONE line break. Never empty, and never two breaks
-# — see `mask_cast_names` for why both bounds matter.
-_WITHIN_NAME = r"(?:[ \t]*\n[ \t]*|[ \t]+)"
+def _as_key(raw: str) -> str:
+    words = raw.split()
+    if len(words) > 2 and words[0].lower() == "the":
+        words = words[1:]
+    return " ".join(words)
 
 
 def mask_cast_names(text: str, cast: Set[str]) -> str:
@@ -207,6 +318,59 @@ def malformed_cast_entries(cast: Set[str]) -> List[str]:
         for name in cast
         if len(name.split()) < 2 or name.strip().lower() in _SUFFIXES_LOWER
     )
+
+
+# Suffix spellings that name the same thing. Only these two pairs: every
+# other entry in ENTITY_SUFFIXES is a distinct legal form, not a shorthand
+# for another one.
+_SUFFIX_SYNONYMS = {"ltd": "limited", "inc": "incorporated"}
+
+
+def _canonical_words(name: str) -> List[str]:
+    words = [word.lower() for word in name.split()]
+    if words:
+        words[-1] = _SUFFIX_SYNONYMS.get(words[-1], words[-1])
+    return words
+
+
+def abbreviates_a_cast_name(candidate: str, cast: Set[str]) -> bool:
+    """True if `candidate` is a checked name, shortened.
+
+    An org chart abbreviates: a box too narrow for "Helmswick Imaging
+    Limited" holds "Imaging Ltd", and a schedule that has already said
+    "Helmswick" in its heading says "Clinics Ltd" in the rows below. Both
+    are entity-shaped, neither is on the cast list verbatim, and masking
+    cannot help — the text does not contain the full name to remove. Gate
+    14 reported them as unchecked names, and an author fixed the room
+    rather than the gate, which is the wrong way round.
+
+    A candidate counts as an abbreviation when it is a TRAILING sub-phrase
+    of a cast entry, reading "Ltd" and "Limited" (and "Inc" and
+    "Incorporated") as the same suffix so a shortened suffix still matches.
+
+    THE DIRECTION IS LOAD-BEARING, and it is the opposite of the trailing
+    sub-phrase walk the module docstring records as rejected. There, a
+    SHORT cast entry ("Holdings Limited") excused a LONGER unchecked name
+    ("Ashfell Trading Holdings Limited") — a different company, waved
+    through. Here only a candidate no longer than the cast entry is
+    excused, so that name still fails the gate. What is accepted instead is
+    the residual that a genuinely unchecked entity whose whole name is a
+    tail of a checked one goes unreported ("Imaging Limited" behind cast
+    "Helmswick Imaging Limited"). That tail is by construction the generic
+    end of an invented name — this project's rooms build entity names on a
+    distinctive leading token, which is exactly the part an abbreviation
+    drops — and `malformed_cast_entries` already refuses the degenerate
+    case that would make the rule dangerous, a one-word or bare-suffix cast
+    row, which would otherwise excuse every name ending in that suffix.
+    """
+    words = _canonical_words(candidate)
+    if len(words) < 2:
+        return False
+    for entry in cast:
+        entry_words = _canonical_words(entry)
+        if len(words) <= len(entry_words) and entry_words[-len(words):] == words:
+            return True
+    return False
 
 
 def cast_list(path: Path, kind: str = "entity") -> Set[str]:

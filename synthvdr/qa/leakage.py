@@ -15,7 +15,13 @@ from pathlib import Path
 from typing import List, Set, Tuple
 
 from ..namecheck import load_name_check, unresolved
-from ..names import cast_list, entity_tokens, malformed_cast_entries, mask_cast_names
+from ..names import (
+    abbreviates_a_cast_name,
+    cast_list,
+    entity_tokens,
+    malformed_cast_entries,
+    mask_cast_names,
+)
 from .runner import fail, ok, skip, truncated, warn
 
 # Gate 4. "registry" is deliberately absent: Land Registry is legitimate in-room.
@@ -199,6 +205,19 @@ def gate_14_unchecked_names(ctx):
     or bare-suffix entity row would blanket-mask a whole suffix family, and
     a gate that silently cannot fail is worse than one that reports the row.
 
+    TWO SHAPES MASKING CANNOT REACH, both handled in the safe direction. A
+    document that ABBREVIATES a checked name — an org chart's box too narrow
+    for "Helmswick Imaging Limited" holding "Imaging Ltd" — never contains
+    the full name to be masked, so `abbreviates_a_cast_name` filters the
+    residue for candidates that merely shorten a cast entry; only a
+    candidate no longer than that entry is dropped, so the different, longer
+    name the names module's docstring warns about still fails. And "Limited"
+    is the one corporate suffix that is also an ordinary English adjective,
+    which had this gate reporting "a Private Limited Company" and
+    "Independent Limited Assurance Report" as unchecked companies; that is
+    handled one register down, in `entity_tokens`, against a closed list of
+    the words the adjective qualifies.
+
     THE RECORDED VERDICTS ARE READ, NOT JUST THE NAMES. Until this gate did
     that, nothing in `synthvdr/` ever looked at name-check.md's Verdict
     column: `cast_list` takes columns 1 and 2 (Name, Kind) and stops, so a
@@ -286,6 +305,14 @@ def gate_14_unchecked_names(ctx):
             replaced += 1
         unchecked |= entity_tokens(mask_cast_names(text, cast))
         unchecked |= entity_tokens(mask_cast_names(path.name, cast))
+    # An org chart's box, or a schedule whose heading has already said the
+    # group name, holds the name shortened: "Imaging Ltd" for a cast
+    # "Helmswick Imaging Limited". Masking cannot reach that — the full name
+    # is not in the text to remove — so the abbreviation is filtered here,
+    # after the sweep. Only a candidate no LONGER than the cast entry it
+    # tails is dropped, which is the opposite of the rejected walk the
+    # names module documents; see `abbreviates_a_cast_name`.
+    unchecked = {name for name in unchecked if not abbreviates_a_cast_name(name, cast)}
     if unchecked:
         detail = truncated(sorted(unchecked), sep=", ") + " — not on the cast list; check or remove"
         return fail("14", "unchecked names", detail + _fallback_note(replaced) + unresolved_note)
