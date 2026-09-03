@@ -249,6 +249,33 @@ rehoming the evidence or by rescoping the room, never later: the alternative is
 `build_flagged_tree` raising `TwinError` waves into the build, on a registry the user has
 already signed off.
 
+## 6. Put the classifier's document list in the room — eval rooms only
+
+`/vdr-build` hands every author this list and checks each wave's labels against it, so it
+has to exist before a single document is written. Copy the downstream classifier's
+document-type names — one per line, `#` comments allowed — to
+`_key/classifier-vocab.txt`:
+
+```bash
+python3 -c "
+import yaml
+from pathlib import Path
+tax = yaml.safe_load(Path('<path-to-the-classifier>/profiles/<profile>.taxonomy.yaml').read_text())
+names = [t['type'] for t in tax['document_types']]
+Path('_key/classifier-vocab.txt').write_text('\n'.join(names) + '\n')
+print(len(names), 'document types')
+"
+```
+
+**The taxonomy's type list is the only file of the classifier's this room may read.** Its
+routing and recognition rules are exactly what the room exists to measure, and a room whose
+authors have seen them is measuring its own authors.
+
+Without this file the authors free-type their labels, and nothing compares them to the list
+until `/vdr-package` — which is a whole build too late to fix cheaply. In the room that
+established this, 184 of 200 labels landed outside the list and every one had to be remapped
+by hand after both waves had finished.
+
 ## Gate B — hard stop
 
 Show the user the complete registry: every finding with its severity, its source and

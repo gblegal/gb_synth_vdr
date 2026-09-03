@@ -482,21 +482,25 @@ def test_render_raises_on_names_that_do_not_survive_the_round_trip(bad_name):
 
 
 @pytest.mark.parametrize(
-    "good_name",
+    "good_name,kind",
     [
-        "Ashfell Ltd",
-        "Ashfell-Brandt Limited",
-        "Ashfell & Co",
-        "Kessler Werke GmbH & Co. KG",
-        "ashfell.example",
-        "Ashfell 2 Limited",
-        "Tab	Separated Ltd",
-        "O’Ashfell Limited",  # curly apostrophe
-        "Ashfell Inc.",  # trailing full stop
+        ("Ashfell Ltd", "entity"),
+        ("Ashfell-Brandt Limited", "entity"),
+        ("Ashfell & Co", "entity"),
+        ("Kessler Werke GmbH & Co. KG", "entity"),
+        # A domain is one token by nature, so it takes Kind 'domain'. Gate 14
+        # masks with entity rows only, so a one-token domain masks nothing;
+        # declared as 'entity' it would disarm the gate, and both the writer
+        # and the gate now refuse it.
+        ("ashfell.example", "domain"),
+        ("Ashfell 2 Limited", "entity"),
+        ("Tab	Separated Ltd", "entity"),
+        ("O’Ashfell Limited", "entity"),  # curly apostrophe
+        ("Ashfell Inc.", "entity"),  # trailing full stop
     ],
 )
-def test_render_round_trips_plausible_names_cleanly(good_name, tmp_path):
-    verdicts = [Verdict(good_name, "entity", "clear", "2026-08-24", "a note")]
+def test_render_round_trips_plausible_names_cleanly(good_name, kind, tmp_path):
+    verdicts = [Verdict(good_name, kind, "clear", "2026-08-24", "a note")]
     path = tmp_path / "name-check.md"
     path.write_text(render_name_check_md(verdicts, "Project Testbed"))
     loaded = load_name_check(path)
@@ -613,3 +617,67 @@ def test_the_participle_does_not_ride_along_on_a_fact_sheet_name():
     ).strip()
     names = {c.text for c in extract_candidates(fact_sheet) if c.kind == "entity"}
     assert names == {"Ashfell Advanced Materials Limited"}
+
+
+# --- entity rows that would make gate 14 unable to fail ---------------------
+
+
+def _v(text, kind="entity"):
+    from synthvdr.namecheck import Verdict
+
+    return Verdict(text=text, kind=kind, verdict="clear", checked="2026-01-01")
+
+
+def test_render_refuses_a_single_word_entity_row():
+    """The shape that does not merely trip gate 14 — it disarms it."""
+    from synthvdr.namecheck import NameCheckError, render_name_check_md
+
+    with pytest.raises(NameCheckError) as excinfo:
+        render_name_check_md([_v("Ashfell Trading Limited"), _v("Ashfell")], "Room")
+    message = str(excinfo.value)
+    assert "'Ashfell'" in message
+    assert "Ashfell Trading Limited" not in message.split(":", 1)[1].split(".")[0]
+
+
+def test_render_refuses_a_bare_corporate_suffix_entity_row():
+    from synthvdr.namecheck import NameCheckError, render_name_check_md
+
+    with pytest.raises(NameCheckError):
+        render_name_check_md([_v("Limited")], "Room")
+
+
+def test_render_allows_a_one_word_non_entity_row():
+    """Gate 14 masks with entity rows only, so a one-word site or brand
+    masks nothing and is ordinary."""
+    from synthvdr.namecheck import render_name_check_md
+
+    out = render_name_check_md(
+        [_v("Ashfell", kind="site"), _v("Ashfell", kind="brand")], "Room"
+    )
+    assert "| Ashfell | site |" in out
+    assert "| Ashfell | brand |" in out
+
+
+def test_refused_row_is_exactly_what_gate_14_would_reject():
+    """One predicate, not two opinions: whatever the gate calls malformed
+    is what this refuses to write."""
+    from synthvdr.names import malformed_cast_entries
+    from synthvdr.namecheck import NameCheckError, render_name_check_md
+
+    for name in ("Ashfell", "Limited", "GmbH", "plc"):
+        assert malformed_cast_entries({name}) == [name]
+        with pytest.raises(NameCheckError):
+            render_name_check_md([_v(name)], "Room")
+
+
+def test_a_clean_entity_table_still_renders_and_reloads():
+    from synthvdr.names import cast_list, malformed_cast_entries
+    from synthvdr.namecheck import render_name_check_md
+
+    names = ["Ashfell Trading Limited", "Brentmoor Capital LLP", "Corvale Bank plc"]
+    out = render_name_check_md([_v(n) for n in names], "Room")
+    path = pathlib.Path(tempfile.mkdtemp()) / "name-check.md"
+    path.write_text(out, encoding="utf-8")
+    cast = cast_list(path, kind="entity")
+    assert cast == set(names)
+    assert malformed_cast_entries(cast) == []

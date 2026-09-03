@@ -276,3 +276,114 @@ def test_cli_vocabulary_flag(tmp_path, capsys):
     assert main(["answerkey", "--room", str(tmp_path),
                  "--vocabulary", str(vocab)]) == 2
     assert "Articles of association" in capsys.readouterr().err
+
+
+# --- the classifier vocabulary, checkable per wave --------------------------
+
+
+def test_load_vocabulary_skips_blanks_and_comments(tmp_path):
+    from synthvdr.answer_key import load_vocabulary
+
+    path = tmp_path / "classifier-vocab.txt"
+    path.write_text(
+        "# taken from the taxonomy's document_types\n"
+        "Articles of association\n"
+        "\n"
+        "  Lease  \n"
+        "   # indented comment\n",
+        encoding="utf-8",
+    )
+    assert load_vocabulary(path) == {"Articles of association", "Lease"}
+
+
+def test_load_vocabulary_does_not_normalise_case_or_punctuation(tmp_path):
+    """A type is matched by exact equality, so normalising here would accept
+    a label the classifier itself would refuse."""
+    from synthvdr.answer_key import load_vocabulary
+
+    path = tmp_path / "v.txt"
+    path.write_text("Non-disclosure agreement\n", encoding="utf-8")
+    vocab = load_vocabulary(path)
+    assert "non-disclosure agreement" not in vocab
+    assert "Non disclosure agreement" not in vocab
+
+
+def test_labels_outside_vocabulary_groups_by_type():
+    from synthvdr.answer_key import labels_outside_vocabulary
+
+    labels = {
+        "a.md": "Lease",
+        "b.md": "NDA",
+        "c.md": "NDA",
+        "d.md": "Articles of association",
+    }
+    out = labels_outside_vocabulary(labels, {"Lease", "Articles of association"})
+    assert out == {"NDA": ["b.md", "c.md"]}
+
+
+def test_labels_outside_vocabulary_is_empty_when_every_label_is_known():
+    from synthvdr.answer_key import labels_outside_vocabulary
+
+    labels = {"a.md": "Lease"}
+    assert labels_outside_vocabulary(labels, {"Lease"}) == {}
+
+
+def test_per_wave_check_and_the_build_refusal_agree():
+    """One predicate, two callers. A wave that clears the per-wave check
+    cannot then be refused by the builder for the same reason — the bug
+    this pair exists to prevent is a drift found only at package time."""
+    from synthvdr.answer_key import labels_outside_vocabulary
+
+    vocab = {"Lease"}
+    labels = {"a.md": "Lease", "b.md": "Tenancy"}
+    drifted = labels_outside_vocabulary(labels, vocab)
+    assert sorted(drifted) == ["Tenancy"]
+    # answer_key_records refuses on exactly sorted(labels_outside_vocabulary(...))
+    assert sorted(drifted) == sorted({t for t in labels.values() if t not in vocab})
+
+
+def test_cli_uses_the_rooms_own_vocabulary_without_being_told(tmp_path, capsys):
+    """The flag being forgotten used to mean no checking at all, silently."""
+    from synthvdr.__main__ import main
+
+    _room(tmp_path)
+    (tmp_path / "_key" / "classifier-vocab.txt").write_text("Lease\n", encoding="utf-8")
+    # The room's only label is "Articles of association", which this vocabulary
+    # does not contain — so a default that works refuses, and one that is
+    # skipped writes the key.
+    assert main(["answerkey", "--room", str(tmp_path)]) == 2
+    assert "outside the" in capsys.readouterr().err
+    assert not (tmp_path / "_key" / "answer-key.jsonl").is_file()
+
+
+def test_cli_explicit_vocabulary_overrides_the_rooms_copy(tmp_path):
+    from synthvdr.__main__ import main
+
+    _room(tmp_path)
+    (tmp_path / "_key" / "classifier-vocab.txt").write_text("Lease\n", encoding="utf-8")
+    override = tmp_path / "elsewhere.txt"
+    override.write_text("Articles of association\n", encoding="utf-8")
+    assert main(["answerkey", "--room", str(tmp_path), "--vocabulary", str(override)]) == 0
+    assert (tmp_path / "_key" / "answer-key.jsonl").is_file()
+
+
+def test_cli_warns_when_an_eval_room_has_no_vocabulary(tmp_path, capsys):
+    from synthvdr.__main__ import main
+
+    _room(tmp_path)
+    conf = tmp_path / "room.conf"
+    conf.write_text(conf.read_text() + 'ROOM_ROLE="eval"\n')
+    assert main(["answerkey", "--room", str(tmp_path)]) == 0
+    assert "unchecked" in capsys.readouterr().err
+
+
+def test_cli_does_not_warn_an_exemplar_room_about_a_vocabulary(tmp_path, capsys):
+    """An exemplar room has none by definition; warning there is noise, and
+    noise is how a real warning gets ignored."""
+    from synthvdr.__main__ import main
+
+    _room(tmp_path)
+    conf = tmp_path / "room.conf"
+    conf.write_text(conf.read_text() + 'ROOM_ROLE="exemplar"\n')
+    assert main(["answerkey", "--room", str(tmp_path)]) == 0
+    assert capsys.readouterr().err == ""

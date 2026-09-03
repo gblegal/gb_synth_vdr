@@ -235,24 +235,50 @@ def _run_corrupt(args) -> int:
 
 
 def _run_answerkey(args) -> int:
-    from .answer_key import AnswerKeyError, build_answer_key
+    from .answer_key import (
+        VOCABULARY_NAME,
+        AnswerKeyError,
+        build_answer_key,
+        load_vocabulary,
+    )
     from .domain import DEFAULT_DOMAIN_ROOT, DomainError, load_domain
 
-    vocabulary = None
-    if args.vocabulary is not None:
-        if not args.vocabulary.is_file():
-            print(
-                f"synthvdr answerkey: no vocabulary file at {args.vocabulary}",
-                file=sys.stderr,
-            )
-            return 2
-        vocabulary = {
-            line.strip()
-            for line in args.vocabulary.read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.lstrip().startswith("#")
-        }
     try:
         conf = load_room_conf(args.room / "room.conf")
+    except RoomConfError as exc:
+        print(f"synthvdr answerkey: {exc}".replace("\n", " "), file=sys.stderr)
+        return 2
+
+    # An explicit --vocabulary wins; otherwise the room's own copy is used when it
+    # has one. Defaulting matters more than it looks: the check is the only thing
+    # standing between a free-typed label and a key that scores a drift as a
+    # classifier miss, and before this it was skipped entirely whenever the flag
+    # was forgotten — silently, with a written key to show for it.
+    vocabulary_path = args.vocabulary
+    if vocabulary_path is None:
+        candidate = args.room / conf.get_relative_path("KEY_ROOT") / VOCABULARY_NAME
+        vocabulary_path = candidate if candidate.is_file() else None
+    elif not vocabulary_path.is_file():
+        print(
+            f"synthvdr answerkey: no vocabulary file at {vocabulary_path}",
+            file=sys.stderr,
+        )
+        return 2
+
+    vocabulary = load_vocabulary(vocabulary_path) if vocabulary_path else None
+    # Only an eval room is warned. An exemplar room has no classifier vocabulary
+    # by definition — it teaches the classifier rather than scoring it — so the
+    # warning would be noise there, and noise is how a real warning gets ignored.
+    if vocabulary is None and conf.values.get("ROOM_ROLE") == "eval":
+        print(
+            "synthvdr answerkey: no classifier vocabulary given and none at "
+            f"{conf.get('KEY_ROOT')}/{VOCABULARY_NAME} — this is an eval room, "
+            "so its labels are going into the key unchecked against the "
+            "classifier's document list.",
+            file=sys.stderr,
+        )
+
+    try:
         pack = load_domain(DEFAULT_DOMAIN_ROOT)
         out = build_answer_key(args.room, conf, pack, vocabulary=vocabulary)
     except (RoomConfError, DomainError, AnswerKeyError) as exc:
@@ -343,8 +369,9 @@ def main(argv=None) -> int:
         "--vocabulary",
         type=Path,
         default=None,
-        help="Optional file of legitimate document-type names, one per "
-        "line — the classifier's own list; labels outside it are refused.",
+        help="File of legitimate document-type names, one per line — the "
+        "classifier's own list; labels outside it are refused. Defaults to "
+        "<KEY_ROOT>/classifier-vocab.txt when the room has one.",
     )
 
     score_parser = subparsers.add_parser(

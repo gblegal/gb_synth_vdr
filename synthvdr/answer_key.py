@@ -48,12 +48,57 @@ from .roomconf import RoomConf
 
 ANSWER_KEY_NAME = "answer-key.jsonl"
 LABELS_NAME = "labels.yaml"
+# Where a room keeps the classifier's own document-type list, one name per
+# line. It is a COPY of the downstream taxonomy's type names, held in the
+# room so the authoring flow can be handed it without reaching into the
+# classifier's repository — and so a wave can be checked against it while
+# the wave that caused a drift is still the one being worked on.
+VOCABULARY_NAME = "classifier-vocab.txt"
 
 _SHOW = 10
 
 
 class AnswerKeyError(Exception):
     """The labels file or the domain pack cannot support a complete key."""
+
+
+def load_vocabulary(path: Path) -> set:
+    """The classifier's document-type names, one per line.
+
+    Blank lines and `#` comments are skipped so the file can carry a
+    provenance header; everything else is taken verbatim, because a type
+    name is matched by exact string equality and normalising it here would
+    silently accept a label the classifier itself would not.
+    """
+    return {
+        line.strip()
+        for line in Path(path).read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+
+def labels_outside_vocabulary(labels: Dict[str, str], vocabulary) -> Dict[str, list]:
+    """`{document_type: [paths]}` for every label the classifier's list does
+    not contain, sorted.
+
+    This exists so a drift can be caught in the WAVE THAT CAUSED IT rather
+    than at package time. `answer_key_records` refuses the same condition,
+    but it refuses by raising, at the end of the build, once — which is far
+    too late to be actionable: the room that surfaced this had 184 of 200
+    labels outside the list, written across ten author batches over two
+    waves, and every one of them had to be remapped by hand after the fact
+    because nothing checked while the authors were still running.
+
+    Returns rather than raises, and groups by type rather than listing
+    paths flat, because the caller is a per-wave loop that wants to see
+    which NAMES drifted (usually a handful of near-misses — 'NDA' for
+    'Non-disclosure agreement') and which documents each one touched.
+    """
+    out: Dict[str, list] = {}
+    for path, document_type in labels.items():
+        if document_type not in vocabulary:
+            out.setdefault(document_type, []).append(path)
+    return {k: sorted(v) for k, v in sorted(out.items())}
 
 
 def _named(paths, limit: int = _SHOW) -> str:
@@ -171,7 +216,9 @@ def answer_key_records(
     labels = load_labels(key_root / LABELS_NAME)
 
     if vocabulary is not None:
-        unknown = sorted({t for t in labels.values() if t not in vocabulary})
+        # Same predicate the per-wave check uses, so a wave that clears
+        # `labels_outside_vocabulary` cannot fail here for a different reason.
+        unknown = sorted(labels_outside_vocabulary(labels, vocabulary))
         if unknown:
             raise AnswerKeyError(
                 f"{len(unknown)} label(s) use a name outside the "

@@ -27,14 +27,24 @@ Every slot is exactly one of:
 
 Whatever its class, every document in your batch gets one `labels:` row in
 `_key/incoming/<your-label>.yaml` (see the shape in `skills/vdr-build/SKILL.md`): its path
-relative to the blind tree root, and its `document_type` — the plain English name of what
-you actually wrote, as a UK lawyer would title the type. "Articles of association",
-"Lease", "Non-disclosure agreement" — never an abbreviation ("NDA"), a filename slug, or a
-workstream name. This is the raw material of the classification answer key, recorded now
-because you are the one who knows what the document is; a label derived later by reading
-the finished room would be a second classifier's opinion, not the truth. Benign filler is
-not exempt — a room's answer key that skips the filler grades a classifier against
-silence, and real rooms are mostly filler.
+relative to the blind tree root, and its `document_type`. This is the raw material of the
+classification answer key, recorded now because you are the one who knows what the document
+is; a label derived later by reading the finished room would be a second classifier's
+opinion, not the truth. Benign filler is not exempt — a room's answer key that skips the
+filler grades a classifier against silence, and real rooms are mostly filler.
+
+**In an eval room you are given the classifier's document list, and `document_type` must be
+one of its entries, copied exactly.** Not the nearest phrasing, not a better name for the
+same thing: the key is matched against that list by exact string equality, so
+"Actuarial valuation report" where the list says "Actuarial valuation" scores as a miss the
+classifier never made. If nothing on the list fits the document you wrote, say so in your
+returned manifest and use the closest entry — do not coin a name, and do not ask for the
+list to be extended, which in a held-out room would mean fitting the classifier to the room
+it is about to be measured on.
+
+Where no list is supplied (an exemplar room), fall back to the plain English name a UK
+lawyer would title the type by: "Articles of association", "Lease", "Non-disclosure
+agreement" — never an abbreviation ("NDA"), a filename slug, or a workstream name.
 
 ## If you discover a genuine finding that was not in the Gate-B registry
 
