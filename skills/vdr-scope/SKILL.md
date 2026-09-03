@@ -255,6 +255,20 @@ every affected name's verdict as `unchecked` with a note explaining why — neve
 record silent about a name that was never actually checked, and never present an unchecked
 name as if it were clear.
 
+**An `entity` row carries the FULL name the room will use, never the distinctive token on
+its own.** "Ashfell Trading Limited", not "Ashfell". This is not tidiness: gate 14 masks
+every entity row out of the room before scanning the residue for unchecked names, so a
+one-word entity row masks every name ending in that word — and a bare "Ashfell" row leaves
+the gate unable to fail on any Ashfell-something company that never went through a check at
+all. `render_name_check_md` refuses to write such a row for that reason.
+
+The distinctive token is normally what you actually searched, and it belongs in the Note:
+one row per full name, each noting the token that was checked once on the family's behalf.
+Where a bare token is worth its own row, give it a non-entity Kind — gate 14 masks with
+entity rows only, so a `site`, `brand`, `product` or `domain` row can be a single word
+without disarming anything. A domain in particular is one token by nature and takes
+`domain`.
+
 Write every verdict — one row per name, including any that came from an earlier round in
 this same scoping session — to `_key/name-check.md` using the module that owns this record
 format, with today's real date:

@@ -178,11 +178,22 @@ so it is easy to leave them out — and each one is a gate the wave fails withou
 | The finding-ID prefix alphabet | `room.conf` `FINDING_PREFIXES` | gate 4, blind-tree vocabulary |
 | The declared gap refs | `_key/gaps.yaml` | gate 9, dangling cross-reference |
 | The closed name list | the fact sheet's `## Cast` and `## Invented names` | gate 14, unchecked name |
+| The classifier's document list (eval rooms) | `_key/classifier-vocab.txt` | gate 19, at package time — far too late |
+
+**The last one is the one most easily forgotten, and it fails latest.** `document_type` is
+matched against the classifier's list by exact string equality, and nothing before
+`/vdr-package` compares them, so an author left to free-type the label produces something
+plausible that is simply not on the list — "Actuarial valuation report" for "Actuarial
+valuation". In the room that surfaced this, 184 of 200 labels were outside the list and
+every one had to be remapped by hand after both waves had finished, because no author was
+ever shown it. Paste the list itself into every author's prompt, and run Step 3.1 below
+after every wave. In an exemplar room there is no list and this invariant does not apply.
 
 Compose the paragraph once and paste it verbatim into every author's prompt:
 
 ```python
 from pathlib import Path
+from synthvdr.answer_key import load_vocabulary
 from synthvdr.names import cast_list
 from synthvdr.qa.structural import parse_gaps_allowlist
 from synthvdr.roomconf import load_room_conf
@@ -190,6 +201,9 @@ from synthvdr.roomconf import load_room_conf
 conf = load_room_conf(Path("room.conf"))
 gaps = sorted(parse_gaps_allowlist(Path("_key/gaps.yaml").read_text(encoding="utf-8")))
 names = sorted(cast_list(Path("_key/name-check.md"), kind=None))
+
+vocab_path = Path("_key") / "classifier-vocab.txt"
+vocabulary = sorted(load_vocabulary(vocab_path)) if vocab_path.is_file() else []
 
 print(f'''Room invariants, all four of which a gate checks:
 - Never write these two strings into any document: {conf.get("FLAG_STRING_1")!r},
@@ -200,6 +214,13 @@ print(f'''Room invariants, all four of which a gate checks:
   Every other reference you write must point at a slot the index declares.
 - Every entity, brand, product, site or domain name you use must already be one of
   these: {", ".join(names)}. Invent no others.''')
+
+if vocabulary:
+    print(f'''
+Every `document_type` you record must be one of these {len(vocabulary)} names, copied
+exactly — the answer key matches them by exact string equality, and the nearest
+phrasing scores as a miss the classifier never made:
+{chr(10).join("  " + v for v in vocabulary)}''')
 ```
 
 `cast_list(..., kind=None)` is deliberate here: gate 14 masks with the entity rows only, but
@@ -268,6 +289,45 @@ subagents. Catching it here costs one re-dispatch inside the wave that caused it
 so a wave that clears this check clears gate 10 in Step 7 for the same reason. Note it also
 reports placeholder tokens and slots missing from `anchors.csv` — both are real defects in
 what the author returned, and both are fixed the same way, by re-dispatching.
+
+### 3.1 Check the wave's labels against the classifier's list — eval rooms only
+
+Run this in the same breath as the depth check, and re-dispatch on the same terms:
+
+```python
+from pathlib import Path
+import yaml
+from synthvdr.answer_key import labels_outside_vocabulary, load_vocabulary
+
+vocab_path = Path("_key/classifier-vocab.txt")
+if vocab_path.is_file():
+    vocabulary = load_vocabulary(vocab_path)
+    labels = {
+        row["path"]: row["document_type"]
+        for f in sorted(Path("_key/incoming").glob("*.yaml"))
+        for row in (yaml.safe_load(f.read_text()) or {}).get("labels") or []
+    }
+    for document_type, paths in labels_outside_vocabulary(labels, vocabulary).items():
+        print(f"{document_type!r} is not on the classifier's list — {len(paths)} document(s)")
+        for path in paths:
+            print(f"    {path}")
+```
+
+Anything printed is a label that will be refused at package time. Fix it in the wave that
+wrote it: re-dispatch the author with the offending name and the closest entries from the
+list, or — where the author was right and the label is genuinely the best available — set it
+yourself and say so in `_key/build-status.md`.
+
+**Never resolve this by extending the classifier's list.** `python3 -m synthvdr answerkey`
+offers "fix the label or extend the list" and only the first half is available to you: this
+room is about to measure that classifier, and adding the room's own vocabulary to the
+classifier's taxonomy is fitting the thing under test to the test. In a held-out room it
+destroys the measurement outright.
+
+This reads every wave's intake, not just this one's, for the same reason the depth check
+sweeps the whole tree: earlier waves already cleared it, so anything printed belongs to the
+batch that just came back, and there is no wave-membership list to thread through and get
+subtly wrong.
 
 ### 4. Consolidate the answer-key refinements
 

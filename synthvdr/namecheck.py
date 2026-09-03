@@ -102,7 +102,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterator, List
 
-from .names import entity_tokens
+from .names import entity_tokens, malformed_cast_entries
 
 # The four values `_key/name-check.md` may record, and the only ones
 # `render_name_check_md` will write. Three of them are search OUTCOMES, which
@@ -433,6 +433,27 @@ def render_name_check_md(verdicts: List[Verdict], room_codename: str) -> str:
     still writing the record and can simply retype it; the same typo
     reaching the file by hand-edit is gate 14's problem, and gate 14 is
     built to WARN rather than crash on it.
+
+    AND raises on a single-word or bare-suffix ENTITY row, using gate 14's
+    own `malformed_cast_entries` predicate rather than a second opinion
+    about what malformed means. This is the one shape that does not merely
+    make gate 14 report something — it makes gate 14 UNABLE TO FAIL. Gate
+    14 masks every cast name out of the room before scanning the residue,
+    so a bare 'Corrandale' row masks every name ending in 'Corrandale',
+    and an entity that never went through a name check at all comes back
+    clean. The gate already rejects such a row when it reads one, and that
+    is the right backstop; but a room whose generator WROTE one has to
+    have the file repaired after the fact, and in the room that surfaced
+    this the repair meant reclassifying 24 rows and adding the ten full
+    entity names those bare tokens had been standing in for. Refusing to
+    write it is cheaper than detecting it later, and it is refused here on
+    exactly the terms gate 14 would refuse it on.
+
+    An entity row carries the full name — 'Ashfell Trading Limited', not
+    'Ashfell'. The distinctive token that was actually searched belongs in
+    the Note, which is where a reader looks to see what was checked.
+    Non-entity kinds are unaffected: a one-word `site` or `brand` row is
+    ordinary and masks nothing, because gate 14 masks with entity rows only.
     """
     lines = [
         f"# {room_codename} — name check",
@@ -464,6 +485,21 @@ def render_name_check_md(verdicts: List[Verdict], room_codename: str) -> str:
         row = f"| {v.text} | {v.kind} | {v.verdict} | {v.checked} | {note} |"
         _validate_name_for_render(v.text, row)
         lines.append(row)
+
+    # Last, so that a name which is ALSO empty or separator-shaped gets the
+    # specific diagnosis above rather than this (equally true) one.
+    malformed = malformed_cast_entries({v.text for v in verdicts if v.kind == "entity"})
+    if malformed:
+        raise NameCheckError(
+            f"{len(malformed)} entity row(s) are a single word or a bare corporate "
+            f"suffix: {', '.join(repr(m) for m in malformed)}. Gate 14 masks every "
+            "entity name out of the room before scanning for unchecked ones, so a "
+            "one-word entity row masks every name ending in it and the gate can no "
+            "longer fail on anything. Write the full name the room uses and record "
+            "the distinctive token you searched in the Note, or declare the bare "
+            "token under a non-entity Kind."
+        )
+
     lines.append("")
     return "\n".join(lines)
 

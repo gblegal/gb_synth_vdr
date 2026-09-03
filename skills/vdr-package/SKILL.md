@@ -179,9 +179,17 @@ the key the room exists to carry:
 python3 -m synthvdr answerkey --room .
 ```
 
-Pass `--vocabulary <file>` when the classifier's own document list is to hand (one type
-name per line): a label outside it is refused as author drift now, rather than scoring as
-a phantom classifier miss later. The command refuses a key that covers anything less than
+The classifier's document list is read from `_key/classifier-vocab.txt` automatically —
+`/vdr-findings` step 6 puts it there and `/vdr-build` checks every wave against it, so by
+this point the labels should already be clean. Pass `--vocabulary <file>` only to override
+that with a different list. A label outside the list is refused as author drift now rather
+than scoring as a phantom classifier miss later; if a refusal reaches you HERE, a wave's
+check was skipped, and the fix is the label, never widening the classifier's list to
+accommodate a room that is about to measure it. An eval room with no vocabulary at all says
+so on stderr and writes the key unchecked — legal, but not something to freeze without
+noticing.
+
+The command refuses a key that covers anything less than
 the whole blind tree, and gate 19 in Step 6 rebuilds the same derivation in memory and
 compares it with the file on disk — so a key that went stale after a late edit fails the
 strict run rather than freezing into the release. An eval room that reaches Step 6 without
