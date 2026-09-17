@@ -1,0 +1,697 @@
+#!/usr/bin/env python3
+"""The vdr-build probe: does Legora, in normal running, have what a room
+build needs? Every check writes a file under /workspace/scratch/probe/<run>/
+and `report` reads those files back. Nothing is scored from the agent's
+account of what happened; a claim with no file behind it is UNKNOWN.
+
+Standard library only, because that is all the sandbox promises. Saved as
+.txt because the sandbox will run a .txt and not a .py.
+
+Subcommands, in the order the skill runs them:
+
+  start                        make a run id, record where we are and what
+                               earlier runs left behind (persistence)
+  env      --run R             Python, libraries, folders, writability
+  bench    --run R             a fixed CPU workload, for speed against a laptop
+  io-bench --run R             write, read back and delete a hundred small files
+                               in scratch and in /tmp; the first run showed the
+                               scratch mount, not the CPU, is what is slow
+  tmp-mark --run R             write a file under /tmp, for the next call to look for
+  tmp-check --run R            does the file the last call wrote under /tmp still
+                               exist? (does /tmp outlive a shell call)
+  mark     --run R --agent A --nonce N [--hold S]
+                               a sub-agent proving it can run this and write
+                               here; holds S seconds so overlap shows parallelism
+  record   --run R --agent A --text T
+                               what a sub-agent replied when it could not run
+                               the script or write here; the orchestrator
+                               records it so the report can tell text-only
+                               sub-agents from file-writing ones
+  seal     --run R --passphrase P
+                               store only the hash of a phrase the orchestrator
+                               invented, so a blind sub-agent's answer can be
+                               checked without the phrase ever sitting on disk
+  answer   --run R --agent A --passphrase P --context C
+                               a sub-agent's answer to "do you know a passphrase?"
+  hold     --run R --seconds S a foreground call that prints a heartbeat and
+                               writes a file at the end, for the timeout tests
+  zip-out  --run R             build a room-shaped tree, zip it, unzip it,
+                               compare; the zip is what the agent saves out
+  zip-in   --run R --zip PATH  unzip a zip that came back in through the
+                               project and check it against its own manifest
+  note     --run R --key K --value V
+                               something only the agent can observe, recorded
+                               as a fact with a name (the timeout the tool took,
+                               the model name, a web search result)
+  report   --run R             the verdicts, from the files, as Markdown
+"""
+import argparse
+import hashlib
+import json
+import os
+import platform
+import shutil
+import subprocess
+import sys
+import time
+import zipfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+VERSION = "0.2.0"
+HERE = Path(__file__).resolve().parent
+SCRATCH = Path(os.environ.get("VDR_PROBE_SCRATCH", "/workspace/scratch")) / "probe"
+DOCS = [Path("/workspace/documents/projects"), Path("/workspace/documents/databases")]
+
+# Measured on the laptop this was written on (Apple silicon, Python 3.14,
+# 16 September 2026) so a sandbox number means something on its own.
+LAPTOP_BENCH_SECONDS = 0.58
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def run_dir(run: str) -> Path:
+    d = SCRATCH / run
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def write_json(path: Path, obj) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(obj, indent=1, sort_keys=True) + "\n")
+    print(f"wrote {path}")
+
+
+def read_json(path: Path):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def visible_mounts() -> dict:
+    out = {}
+    for root in DOCS:
+        try:
+            out[str(root)] = sorted(p.name for p in root.iterdir())[:50]
+        except OSError as exc:
+            out[str(root)] = f"not listable: {exc.__class__.__name__}"
+    return out
+
+
+def writable(path: Path) -> bool:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / f".probe-{os.getpid()}"
+        probe.write_text("x")
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+# --------------------------------------------------------------- start
+
+def cmd_start(args) -> int:
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    earlier = []
+    for d in sorted(SCRATCH.iterdir()):
+        info = read_json(d / "start.json")
+        if info:
+            earlier.append({"run": d.name, "started": info.get("started"),
+                            "mounts": info.get("mounts"), "cwd": info.get("cwd")})
+    run = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + sha256_bytes(os.urandom(8))[:4]
+    info = {"run": run, "started": now(), "probe_version": VERSION,
+            "cwd": os.getcwd(), "skill_folder": str(HERE.parent),
+            "mounts": visible_mounts(), "earlier_runs_seen": earlier}
+    write_json(run_dir(run) / "start.json", info)
+    print(f"RUN={run}")
+    print(f"earlier runs visible under {SCRATCH}: {len(earlier)}")
+    for e in earlier:
+        print(f"  {e['run']} started {e['started']}")
+    return 0
+
+
+# ----------------------------------------------------------------- env
+
+def cmd_env(args) -> int:
+    libs = {}
+    for name in ("yaml", "pypdf", "docx", "openpyxl", "pandas", "numpy", "pptx", "fitz"):
+        try:
+            mod = __import__(name)
+            libs[name] = getattr(mod, "__version__", "present")
+        except Exception as exc:  # noqa: BLE001 - any failure means absent here
+            libs[name] = f"absent ({exc.__class__.__name__})"
+    tools = {t: shutil.which(t) for t in ("node", "pandoc", "git", "zip", "unzip", "libreoffice", "soffice",
+                                          "chromium", "chromium-browser", "google-chrome")}
+    node = {}
+    if tools["node"]:
+        for label, cmd in (("version", ["node", "--version"]),
+                           ("puppeteer", ["node", "-e", "require('puppeteer'); console.log('present')"])):
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+                text = (r.stdout or r.stderr).strip()
+                node[label] = "absent" if "Cannot find module" in text else text[:120]
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                node[label] = f"failed: {exc.__class__.__name__}"
+    info = {
+        "python": sys.version, "platform": platform.platform(),
+        "executable": sys.executable, "cwd": os.getcwd(),
+        "skill_folder": str(HERE.parent), "skill_folder_name": HERE.parent.name,
+        "libraries": libs, "tools_on_path": tools, "node": node,
+        "writable": {
+            "skill_folder": writable(HERE.parent / ".probe-w"),
+            "scratch": writable(SCRATCH / ".probe-w"),
+            "cwd": writable(Path.cwd() / ".probe-w"),
+            "tmp": writable(Path("/tmp/.probe-w")),
+        },
+        "mounts": visible_mounts(),
+        "env_keys": sorted(k for k in os.environ if not k.startswith("LC_"))[:60],
+        "recorded": now(),
+    }
+    for p in (HERE.parent / ".probe-w", SCRATCH / ".probe-w", Path.cwd() / ".probe-w", Path("/tmp/.probe-w")):
+        shutil.rmtree(p, ignore_errors=True)
+    write_json(run_dir(args.run) / "env.json", info)
+    return 0
+
+
+# --------------------------------------------------------------- bench
+
+def _workload() -> float:
+    t0 = time.perf_counter()
+    h = hashlib.sha256()
+    block = b"synth-vdr" * 1024
+    for _ in range(4096):          # 36 MB hashed
+        h.update(block)
+    acc = 0
+    for i in range(20_000_000):    # pure-Python loop
+        acc += (i * 7) % 13
+    words = [f"w{i % 977}" for i in range(2_000_000)]
+    counts = {}
+    for w in words:                # dict churn, the shape of the QA gates
+        counts[w] = counts.get(w, 0) + 1
+    return time.perf_counter() - t0
+
+
+def cmd_bench(args) -> int:
+    seconds = min(_workload() for _ in range(3))
+    if args.calibrate:
+        print(f"laptop bench: {seconds:.2f}s — paste into LAPTOP_BENCH_SECONDS")
+        return 0
+    write_json(run_dir(args.run) / "bench.json", {"seconds": round(seconds, 3), "recorded": now()})
+    return 0
+
+
+# ------------------------------------------------------------ io-bench
+
+IO_FILES = 100
+
+
+def _io_trial(root: Path) -> dict:
+    root.mkdir(parents=True, exist_ok=True)
+    folder = root / f"io-{os.getpid()}"
+    shutil.rmtree(folder, ignore_errors=True)
+    t0 = time.perf_counter()
+    for i in range(IO_FILES):
+        sub = folder / f"{i % 10:02d}_section"
+        sub.mkdir(parents=True, exist_ok=True)
+        (sub / f"doc-{i:03d}.md").write_text(f"# Document {i}\n\n" + "Ordinary seller-side paperwork.\n" * 40)
+    t1 = time.perf_counter()
+    total = 0
+    for pth in sorted(folder.rglob("*.md")):
+        total += len(pth.read_bytes())
+    t2 = time.perf_counter()
+    listed = len(list(folder.rglob("*")))
+    t3 = time.perf_counter()
+    shutil.rmtree(folder, ignore_errors=True)
+    t4 = time.perf_counter()
+    return {"files": IO_FILES, "bytes_read": total, "entries_listed": listed,
+            "write_s": round(t1 - t0, 2), "read_s": round(t2 - t1, 2),
+            "list_s": round(t3 - t2, 2), "delete_s": round(t4 - t3, 2),
+            "ms_per_file_write": round(1000 * (t1 - t0) / IO_FILES, 1),
+            "ms_per_file_read": round(1000 * (t2 - t1) / IO_FILES, 1)}
+
+
+def cmd_io_bench(args) -> int:
+    d = run_dir(args.run)
+    results = {}
+    for label, root in (("scratch", d / "io"), ("tmp", Path("/tmp") / "vdr-probe-io")):
+        try:
+            results[label] = _io_trial(root)
+        except OSError as exc:
+            results[label] = {"failed": f"{exc.__class__.__name__}: {exc}"}
+        print(f"{label}: {results[label]}", flush=True)
+    write_json(d / "io.json", {"results": results, "recorded": now()})
+    print("IO-BENCH DONE")
+    return 0
+
+
+# ------------------------------------------------------------ tmp-mark/check
+
+def _tmp_marker(run: str) -> Path:
+    return Path("/tmp") / f"vdr-probe-{run}.txt"
+
+
+def cmd_tmp_mark(args) -> int:
+    marker = _tmp_marker(args.run)
+    marker.write_text(f"{now()} pid {os.getpid()}\n")
+    write_json(run_dir(args.run) / "tmp" / "mark.json", {"path": str(marker), "written": now(), "pid": os.getpid()})
+    print(f"TMP-MARK {marker}")
+    return 0
+
+
+def cmd_tmp_check(args) -> int:
+    marker = _tmp_marker(args.run)
+    found = marker.is_file()
+    write_json(run_dir(args.run) / "tmp" / "check.json",
+               {"path": str(marker), "found": found, "content": marker.read_text() if found else None,
+                "checked": now(), "pid": os.getpid()})
+    print(f"TMP-CHECK {'found' if found else 'missing'}")
+    return 0
+
+
+# ---------------------------------------------------------------- mark
+
+def cmd_mark(args) -> int:
+    d = run_dir(args.run) / "agents"
+    start = now()
+    info = {"agent": args.agent, "nonce": args.nonce, "started": start,
+            "cwd": os.getcwd(), "pid": os.getpid(), "python": sys.version.split()[0],
+            "can_see_skill_folder": HERE.is_dir(), "can_see_scratch_run": (run_dir(args.run) / "start.json").is_file(),
+            "hold_seconds": args.hold}
+    write_json(d / f"{args.agent}.json", info)
+    if args.hold:
+        for i in range(args.hold):
+            time.sleep(1)
+            if i % 5 == 4:
+                print(f"{args.agent} holding {i + 1}/{args.hold}s", flush=True)
+    write_json(d / f"{args.agent}.done.json", {"agent": args.agent, "ended": now()})
+    print(f"{args.agent}: wrote {d}")
+    return 0
+
+
+def cmd_record(args) -> int:
+    write_json(run_dir(args.run) / "agents" / f"{args.agent}.recorded.json",
+               {"agent": args.agent, "text": args.text, "recorded_by_orchestrator": now()})
+    return 0
+
+
+# ---------------------------------------------------------- seal / answer
+
+def cmd_seal(args) -> int:
+    phrase = " ".join(args.passphrase.lower().split())
+    write_json(run_dir(args.run) / "blind" / "sealed.json",
+               {"sha256": sha256_bytes(phrase.encode()), "words": len(phrase.split()), "sealed": now()})
+    print("sealed: only the hash is on disk")
+    return 0
+
+
+def cmd_answer(args) -> int:
+    phrase = " ".join(args.passphrase.lower().split())
+    write_json(run_dir(args.run) / "blind" / f"{args.agent}.json",
+               {"agent": args.agent, "answer_sha256": sha256_bytes(phrase.encode()),
+                "answer_was_none": phrase in ("none", ""), "answer_words": len(phrase.split()),
+                "context": args.context, "cwd": os.getcwd(), "answered": now()})
+    return 0
+
+
+# ---------------------------------------------------------------- hold
+
+def cmd_hold(args) -> int:
+    d = run_dir(args.run) / "holds"
+    d.mkdir(exist_ok=True)
+    t0 = time.perf_counter()
+    started = now()
+    (d / f"hold-{args.seconds}.started").write_text(started + "\n")
+    for i in range(args.seconds):
+        time.sleep(1)
+        if i % 10 == 9:
+            print(f"hold {i + 1}/{args.seconds}s", flush=True)
+    write_json(d / f"hold-{args.seconds}.json",
+               {"seconds_asked": args.seconds, "started": started, "ended": now(),
+                "elapsed": round(time.perf_counter() - t0, 1)})
+    print(f"HOLD {args.seconds} DONE")
+    return 0
+
+
+# ------------------------------------------------------------ zip-out/in
+
+SECTIONS = ["01_corporate", "02_financial", "03_tax", "04_financing-banking", "05_commercial",
+            "06_intellectual-property", "07_information-technology", "08_property", "09_employment",
+            "10_regulatory-trade", "11_environmental-hs", "12_insurance", "13_pensions",
+            "14_data-protection", "15_litigation", "16_operations-quality",
+            "17_management-presentations", "18_transaction", "19_esg", "20_jv-minority-interests"]
+
+
+def build_tree(root: Path) -> dict:
+    """A tree the shape of a room: twenty sections, two subsections each,
+    five documents in each, a csv, and a key folder three levels deep."""
+    shutil.rmtree(root, ignore_errors=True)
+    files = {}
+    for n, section in enumerate(SECTIONS, 1):
+        for sub in (1, 2):
+            folder = root / "data-room" / section / f"{n}.{sub}_sub-{sub}"
+            folder.mkdir(parents=True)
+            for k in range(1, 6):
+                p = folder / f"{n}.{sub}.{k}_document-{k:02d}.md"
+                p.write_text(f"# Document {n}.{sub}.{k}\n\nSection {section}, file {k}.\n" * 20)
+                files[str(p.relative_to(root))] = sha256_file(p)
+    csv = root / "data-room" / "12_insurance" / "12.1_sub-1" / "12.1.9_register.csv"
+    csv.write_text("policy,insurer,expiry\nPL-1,Invented Mutual,2027-03-31\n")
+    files[str(csv.relative_to(root))] = sha256_file(csv)
+    deep = root / "_key" / "flagged" / "01_corporate" / "1.1_sub-1" / "1.1.1_document-01.md"
+    deep.parent.mkdir(parents=True)
+    deep.write_text("# Document 1.1.1\n\n---\nKey diligence points: CORP-1\n")
+    files[str(deep.relative_to(root))] = sha256_file(deep)
+    conf = root / "room.conf"
+    conf.write_text('ROOM_CODENAME="Project Probe"\nBLIND_TREE="data-room"\n')
+    files[str(conf.relative_to(root))] = sha256_file(conf)
+    manifest = root / "sha256.txt"
+    manifest.write_text("".join(f"{h}  {p}\n" for p, h in sorted(files.items())))
+    return files
+
+
+def zip_tree(root: Path, out: Path) -> None:
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for p in sorted(root.rglob("*")):
+            if p.is_file():
+                z.write(p, p.relative_to(root).as_posix())
+
+
+def verify_against_manifest(root: Path) -> dict:
+    manifest = root / "sha256.txt"
+    if not manifest.is_file():
+        return {"ok": False, "reason": "no sha256.txt in the unzipped tree"}
+    expected = {}
+    for line in manifest.read_text().splitlines():
+        h, _, p = line.partition("  ")
+        expected[p] = h
+    missing = [p for p in expected if not (root / p).is_file()]
+    wrong = [p for p in expected if p not in missing and sha256_file(root / p) != expected[p]]
+    extra = [str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()
+             and str(p.relative_to(root)) not in expected and p.name != "sha256.txt"]
+    depth = max((len(p.relative_to(root).parts) for p in root.rglob("*") if p.is_file()), default=0)
+    return {"ok": not (missing or wrong), "expected": len(expected), "missing": missing[:20],
+            "wrong": wrong[:20], "extra": extra[:20], "max_depth": depth}
+
+
+def cmd_zip_out(args) -> int:
+    d = run_dir(args.run)
+    tree = d / "tree"
+    files = build_tree(tree)
+    out = d / f"probe-room-{args.run}.zip"
+    zip_tree(tree, out)
+    restore = d / "restore"
+    shutil.rmtree(restore, ignore_errors=True)
+    with zipfile.ZipFile(out) as z:
+        z.extractall(restore)
+    result = verify_against_manifest(restore)
+    info = {"zip": str(out), "zip_sha256": sha256_file(out), "zip_bytes": out.stat().st_size,
+            "files_in_tree": len(files) + 1, "roundtrip_in_sandbox": result, "recorded": now()}
+    write_json(d / "zip" / "out.json", info)
+    print(f"ZIP {out}")
+    print(f"ZIP_SHA256 {info['zip_sha256']}  ({info['zip_bytes']} bytes, {info['files_in_tree']} files)")
+    print("round trip inside the sandbox:", "OK" if result["ok"] else f"FAILED {result}")
+    return 0
+
+
+def cmd_zip_in(args) -> int:
+    d = run_dir(args.run)
+    src = Path(args.zip)
+    info = {"zip": str(src), "recorded": now()}
+    if not src.is_file():
+        info["ok"] = False
+        info["reason"] = "the path given is not a file"
+    else:
+        info["zip_sha256"] = sha256_file(src)
+        info["zip_bytes"] = src.stat().st_size
+        inbound = d / "inbound"
+        shutil.rmtree(inbound, ignore_errors=True)
+        try:
+            with zipfile.ZipFile(src) as z:
+                z.extractall(inbound)
+            result = verify_against_manifest(inbound)
+        except zipfile.BadZipFile as exc:
+            result = {"ok": False, "reason": f"not a zip: {exc}"}
+        info["verify"] = result
+        info["ok"] = result["ok"]
+    write_json(d / "zip" / "in.json", info)
+    print("inbound zip:", "OK" if info.get("ok") else f"FAILED {info}")
+    return 0
+
+
+# ---------------------------------------------------------------- note
+
+def cmd_note(args) -> int:
+    write_json(run_dir(args.run) / "notes" / f"{args.key}.json",
+               {"key": args.key, "value": args.value, "recorded": now()})
+    return 0
+
+
+# -------------------------------------------------------------- report
+
+def _overlap(intervals):
+    """True if any two [start, end] intervals overlap."""
+    xs = sorted(intervals)
+    return any(xs[i][1] > xs[i + 1][0] for i in range(len(xs) - 1))
+
+
+def cmd_report(args) -> int:
+    d = run_dir(args.run)
+    lines = [f"# vdr-build probe report — run {args.run}", "",
+             f"probe {VERSION}, written {now()} from the files under `{d}`.",
+             "A verdict is YES or NO only where a file says so; UNKNOWN means no file was found.", ""]
+    verdicts = []
+
+    def verdict(q, v, why):
+        verdicts.append((q, v, why))
+        lines.append(f"- **{q}: {v}.** {why}")
+
+    start = read_json(d / "start.json") or {}
+    env = read_json(d / "env.json") or {}
+
+    # 1. sub-agents write
+    agents = sorted(p for p in (d / "agents").glob("*.json")
+                    if not p.name.endswith((".done.json", ".recorded.json"))) \
+        if (d / "agents").is_dir() else []
+    marks = [read_json(p) for p in agents]
+    recorded = [read_json(p) for p in sorted((d / "agents").glob("*.recorded.json"))] \
+        if (d / "agents").is_dir() else []
+    if marks or recorded:
+        verdict("Sub-agents can run the script and write to scratch",
+                "YES" if marks and not recorded else ("PARTLY" if marks else "NO"),
+                f"{len(marks)} agent file(s) written by the script itself"
+                + (f" ({', '.join(m['agent'] for m in marks)})" if marks else "")
+                + f"; {len(recorded)} sub-agent(s) could only return text")
+    if marks:
+        lines.append(f"  - nonces received, per agent: { {m.get('agent'): m.get('nonce') for m in marks} }")
+        lines.append(f"  - could see the skill folder: {[m.get('can_see_skill_folder') for m in marks]}; "
+                     f"could see the run folder in scratch: {[m.get('can_see_scratch_run') for m in marks]}")
+        lines.append(f"  - sub-agent cwd: {sorted(set(m.get('cwd') for m in marks))}")
+    if not marks and not recorded:
+        verdict("Sub-agents can run the script and write to scratch", "UNKNOWN",
+                "no agents/*.json found — no sub-agent ran `mark`, and nothing was recorded on one's behalf")
+    if recorded:
+        lines.append(f"  - {len(recorded)} sub-agent(s) could not write here and returned text the orchestrator "
+                     f"recorded instead: " + "; ".join(f"{r['agent']}: {r['text'][:120]!r}" for r in recorded))
+
+    # 2. parallel
+    intervals = []
+    for m in marks:
+        done = read_json(d / "agents" / f"{m['agent']}.done.json")
+        if done and m.get("hold_seconds"):
+            intervals.append((m["started"], done["ended"]))
+    if len(intervals) >= 2:
+        verdict("Sub-agents run in parallel", "YES" if _overlap(intervals) else "NO",
+                f"{len(intervals)} held agents; their start/end windows "
+                + ("overlap" if _overlap(intervals) else "do not overlap") + f": {intervals}")
+    else:
+        verdict("Sub-agents run in parallel", "UNKNOWN", "fewer than two agents completed a `mark --hold`")
+
+    # 3. blind
+    sealed = read_json(d / "blind" / "sealed.json")
+    answers = [read_json(p) for p in sorted((d / "blind").glob("*.json")) if p.name != "sealed.json"] \
+        if (d / "blind").is_dir() else []
+    if sealed and answers:
+        leaked = [a["agent"] for a in answers if a.get("answer_sha256") == sealed["sha256"]]
+        guessed = [a["agent"] for a in answers if not a.get("answer_was_none") and a["agent"] not in leaked]
+        if leaked:
+            verdict("Sub-agents start blind", "NO",
+                    f"{leaked} reproduced the orchestrator's passphrase, which was never written to disk")
+        else:
+            verdict("Sub-agents start blind", "YES",
+                    f"{len(answers)} answer(s), none matched the sealed hash"
+                    + (f"; {guessed} offered a phrase that did not match (a guess, not a leak)" if guessed else ""))
+        for a in answers:
+            lines.append(f"  - {a['agent']} on its context: {a.get('context')!r}")
+    else:
+        verdict("Sub-agents start blind", "UNKNOWN",
+                "need blind/sealed.json and at least one blind/<agent>.json")
+
+    # 4. persistence
+    earlier = start.get("earlier_runs_seen", [])
+    verdict("Scratch persists between conversations / projects",
+            "YES" if earlier else "UNKNOWN",
+            f"{len(earlier)} earlier run(s) visible at start: "
+            + (", ".join(f"{e['run']} (mounts {list((e.get('mounts') or {}).values())})" for e in earlier)
+               if earlier else "none. Run the probe again in a new conversation, then in another project, "
+                               "and read this line each time: an earlier run visible in a new conversation means "
+                               "scratch outlives the conversation; one visible from another project means scratch "
+                               "is shared across projects, so a room's name must carry its project"))
+    lines.append(f"  - this run saw mounts: {start.get('mounts')}")
+
+    # 5. zip
+    zo = read_json(d / "zip" / "out.json")
+    zi = read_json(d / "zip" / "in.json")
+    if zo:
+        verdict("A zip round-trips inside the sandbox", "YES" if zo["roundtrip_in_sandbox"]["ok"] else "NO",
+                f"{zo['files_in_tree']} files, depth {zo['roundtrip_in_sandbox'].get('max_depth')}, "
+                f"zip sha256 `{zo['zip_sha256']}` ({zo['zip_bytes']} bytes). Check the downloaded copy "
+                f"against that hash at home: `shasum -a 256 <file>`")
+    else:
+        verdict("A zip round-trips inside the sandbox", "UNKNOWN", "no zip/out.json")
+    if zi:
+        v = zi.get("verify", {})
+        verdict("A zip uploaded to the project is readable, tree intact", "YES" if zi.get("ok") else "NO",
+                f"`{zi['zip']}`: {v.get('expected')} expected, {len(v.get('missing', []))} missing, "
+                f"{len(v.get('wrong', []))} wrong, depth {v.get('max_depth')}"
+                + (f"; reason: {zi.get('reason') or v.get('reason')}" if not zi.get("ok") else ""))
+    else:
+        verdict("A zip uploaded to the project is readable, tree intact", "UNKNOWN",
+                "no zip/in.json — upload the zip the run saved, then run `zip-in`")
+
+    # 6. timeouts
+    holds = sorted((d / "holds").glob("hold-*.json")) if (d / "holds").is_dir() else []
+    started = sorted((d / "holds").glob("hold-*.started")) if (d / "holds").is_dir() else []
+    done = {int(p.stem.split("-")[1]): read_json(p) for p in holds}
+    asked = sorted({int(p.stem.split("-")[1]) for p in started})
+    if asked:
+        cut = [s for s in asked if s not in done]
+        verdict("Long foreground calls finish", "YES" if not cut else "PARTLY",
+                f"asked {asked}s; finished {sorted(done)}; no finishing file for {cut}"
+                + (" — those calls were cut off AND the script did not survive the cut" if cut else ""))
+        for s, info in sorted(done.items()):
+            lines.append(f"  - hold {s}s: elapsed {info['elapsed']}s, ended {info['ended']}")
+    else:
+        verdict("Long foreground calls finish", "UNKNOWN", "no holds/ files")
+
+    # 7. speed
+    bench = read_json(d / "bench.json")
+    if bench:
+        why = f"{bench['seconds']}s for the fixed workload"
+        if LAPTOP_BENCH_SECONDS:
+            why += f"; the laptop took {LAPTOP_BENCH_SECONDS}s, so the sandbox is about " \
+                   f"{bench['seconds'] / LAPTOP_BENCH_SECONDS:.0f}x slower"
+        verdict("Sandbox speed", "MEASURED", why)
+    else:
+        verdict("Sandbox speed", "UNKNOWN", "no bench.json")
+
+    # 7b. file I/O
+    io = read_json(d / "io.json")
+    if io:
+        r = io["results"]
+        parts = []
+        for label in ("scratch", "tmp"):
+            x = r.get(label, {})
+            parts.append(f"{label}: " + (x["failed"] if "failed" in x else
+                         f"{x['ms_per_file_write']} ms per write, {x['ms_per_file_read']} ms per read, "
+                         f"list {x['list_s']}s, delete {x['delete_s']}s"))
+        verdict("File I/O speed, scratch against /tmp", "MEASURED", "; ".join(parts)
+                + f" ({IO_FILES} files each). At home both are well under 1 ms per file")
+    else:
+        verdict("File I/O speed, scratch against /tmp", "UNKNOWN", "no io.json")
+
+    # 7c. /tmp between calls
+    tm = read_json(d / "tmp" / "mark.json")
+    tc = read_json(d / "tmp" / "check.json")
+    if tm and tc:
+        verdict("/tmp outlives a shell call", "YES" if tc["found"] else "NO",
+                f"marked at {tm['written']} (pid {tm['pid']}), checked at {tc['checked']} (pid {tc['pid']}): "
+                + ("found" if tc["found"] else "missing")
+                + ". If YES, a build can work in /tmp and copy to scratch only at the end")
+    else:
+        verdict("/tmp outlives a shell call", "UNKNOWN", "need tmp/mark.json from one call and tmp/check.json from a later one")
+
+    # 8. environment
+    if env:
+        libs = env.get("libraries", {})
+        verdict("Environment", "RECORDED",
+                f"Python {env.get('python', '?').split()[0]}; yaml {libs.get('yaml')}; pypdf {libs.get('pypdf')}; "
+                f"python-docx {libs.get('docx')}; node {env.get('tools_on_path', {}).get('node')} "
+                f"{env.get('node', {})}; "
+                f"writable: {env.get('writable')}; skill folder `{env.get('skill_folder')}`")
+    else:
+        verdict("Environment", "UNKNOWN", "no env.json")
+
+    # 9. notes
+    notes = [read_json(p) for p in sorted((d / "notes").glob("*.json"))] if (d / "notes").is_dir() else []
+    lines += ["", "## What the agent recorded (its own observations, not the script's)", ""]
+    lines += [f"- {n['key']}: {n['value']}" for n in notes] or ["- nothing recorded with `note`"]
+
+    lines += ["", "## Files this report was read from", ""]
+    files = sorted(p for p in d.rglob("*") if p.is_file() and not p.is_relative_to(d / "tree")
+                   and not p.is_relative_to(d / "restore") and not p.is_relative_to(d / "inbound"))
+    lines += [f"- `{p.relative_to(d)}` {sha256_file(p)[:12]}" for p in files]
+
+    text = "\n".join(lines) + "\n"
+    out = d / f"probe-report-{args.run}.md"
+    out.write_text(text)
+    (d / f"sha256-report-{args.run}.txt").write_text(f"{sha256_file(out)}  {out.name}\n")
+    print(text)
+    print(f"REPORT {out}")
+    print(f"REPORT_SHA256 {sha256_file(out)}")
+    return 0
+
+
+# ---------------------------------------------------------------- main
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    def add(name, fn, *specs):
+        s = sub.add_parser(name)
+        for flags, kw in specs:
+            s.add_argument(*flags, **kw)
+        s.set_defaults(fn=fn)
+
+    R = (("--run",), {"required": True})
+    add("start", cmd_start)
+    add("env", cmd_env, R)
+    add("bench", cmd_bench, (("--run",), {}), (("--calibrate",), {"action": "store_true"}))
+    add("io-bench", cmd_io_bench, R)
+    add("tmp-mark", cmd_tmp_mark, R)
+    add("tmp-check", cmd_tmp_check, R)
+    add("mark", cmd_mark, R, (("--agent",), {"required": True}), (("--nonce",), {"required": True}),
+        (("--hold",), {"type": int, "default": 0}))
+    add("record", cmd_record, R, (("--agent",), {"required": True}), (("--text",), {"required": True}))
+    add("seal", cmd_seal, R, (("--passphrase",), {"required": True}))
+    add("answer", cmd_answer, R, (("--agent",), {"required": True}), (("--passphrase",), {"required": True}),
+        (("--context",), {"default": ""}))
+    add("hold", cmd_hold, R, (("--seconds",), {"type": int, "required": True}))
+    add("zip-out", cmd_zip_out, R)
+    add("zip-in", cmd_zip_in, R, (("--zip",), {"required": True}))
+    add("note", cmd_note, R, (("--key",), {"required": True}), (("--value",), {"required": True}))
+    add("report", cmd_report, R)
+    args = p.parse_args()
+    if args.cmd == "bench" and not args.calibrate and not args.run:
+        p.error("bench needs --run unless --calibrate")
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
