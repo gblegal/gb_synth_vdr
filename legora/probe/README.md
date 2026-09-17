@@ -83,6 +83,57 @@ From the report and the agent's run log, both in Drive under
   restore the room from the project's zip first. Whether it is per project
   as well no longer matters.
 
+## What run 1 established (17 September 2026, probe 0.2.0)
+
+From the report, its checksum file and the agent's pasted reply, in Drive
+under `Legora Skills/Runs/2026-09-17 synth-vdr probe 0.2.0 Run 1`. The
+skill was uploaded as "vdr-synth-probe 0.20.0", so its folder reads
+`0-20-0`; the report's own version line says 0.2.0, which is the build that
+ran. Run `20260917-072349-15ca`, project `vdr-synth-probe 0.2.0`.
+
+- Everything 0.1.0 found held. Four sub-agents wrote in parallel, one
+  through a 120-second hold, all four starting in the skill folder. Two
+  blind sub-agents answered NONE. The 75-second call finished; the
+  330-second call was cut off at the tool's ceiling and finished anyway.
+  The zip round-tripped inside the sandbox: 204 files, five deep, 61,132
+  bytes.
+- The shell tool's setting is `timeoutMs`, schema maximum 300,000, default
+  60,000. The orchestrator cannot name its model: nothing in its context
+  carries an identifier. So the dated identifier 0.1.0's orchestrator wrote
+  was the skill's own example handed back.
+- The file system is the cost, not the CPU. The fixed workload took 1.58 s
+  against 0.58 s on the laptop, under three times slower. A hundred small
+  files in scratch: 525 ms per write, 208 ms per read, 0.9 s to list, 14 s
+  to delete. The same hundred in `/tmp`: 0.1 ms per write and per read.
+- `/tmp` is writable and fast but does not outlive a call: a marker written
+  in one call was gone four seconds later in the next. So a build can work
+  in `/tmp` within a call, but must bring its state in from scratch at the
+  start of every call and put it back at the end. One zip each way is the
+  cheap shape; a file per document in scratch is not.
+- The zip-out call was cut off at 300 s and `zip/out.json` appeared about
+  four minutes later, outside the three 30-second waits the skill allows.
+  0.2.1 should wait longer on that step, or build the tree in `/tmp` and
+  write only the zip to scratch.
+- Zip in: NO, but not as the skill meant to test it. The zip was saved to
+  the project and accepted mid-run, before step 8, so step 8 found it. The
+  project listing showed 61,132 bytes; the script's own read found 0 bytes
+  and "not a zip". Whether a zip uploaded from outside reads any better is
+  what run 2 is for. Run 2 can use the intact 0.1.0 zip from Drive: the
+  check verifies against the manifest inside the zip, not against the run.
+- The project download did not come down as the zip. It came as
+  `legora-download-20260917T084641.zip`, holding the tree unpacked: 203 of
+  204 files, folders intact five levels deep, all 202 documents matching
+  the manifest, and `room.conf` missing. So a zip saved to a project is
+  unpacked by Legora on the way in or on the way out, and one file was
+  lost. Nothing said so; the manifest did.
+- Environment as before: Python 3.13.5, pypdf 6.16.2, python-docx 1.2.0,
+  Node v24.7.0 without puppeteer, no PyYAML. Scratch and `/tmp` writable;
+  the skill folder and the working directory not. Web search works from
+  the orchestrator. Saving is `suggest-save`, mode create, one acceptance
+  per file.
+- Persistence: UNKNOWN on a first run, as expected. 0.1.0's run 2 already
+  showed scratch does not outlive a conversation.
+
 ## Afterwards
 
 Each fact goes on `gb-docclass/docs/legora-environment.md`, dated and saying

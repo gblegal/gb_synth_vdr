@@ -109,7 +109,7 @@ each cheap to ask with a probe skill before any port is attempted:
 
 The probe that asks them is built: `legora/probe/` (a `SKILL.md`, a
 stdlib-only `scripts/probe.txt`, and a README with the three-conversation
-procedure), zipped to `dist/legora/vdr-probe-0.1.0.zip`. Every verdict it
+procedure), zipped to `dist/legora/vdr-probe-0.2.0.zip`. Every verdict it
 gives comes from a file the script wrote, never from the agent's account.
 
 Each answer goes on gb-docclass's environment page, dated. The fallbacks:
@@ -117,6 +117,31 @@ if (1) is no, authors return their documents and the orchestrator writes
 them through a hand-back file the runner reads; if (3) is no, every session
 ends by zipping the room into the project and starts by restoring it, which
 `_key/build-status.md` already makes safe; if (2) is no, Tier B is not built.
+
+### What the probe answered, 17 September 2026
+
+Two runs of 0.1.0 and one of 0.2.0, recorded on the environment page and in
+`legora/probe/README.md`:
+
+1. Yes. Four sub-agents each left a file the script itself wrote.
+2. Yes. Two blind sub-agents answered NONE, on both builds.
+3. No. Scratch does not outlive a conversation.
+4. Half. The zip downloaded intact once, by hash. But the fallback for (3)
+   is restore-from-project, and the one zip read back from a project so far
+   came back as 0 bytes, and the project download came unpacked with one
+   file missing. Run 2 of 0.2.0 settles it by uploading a zip from outside.
+5. Four at once at least, one through 120 seconds; the shell tool's ceiling
+   is 300 seconds.
+
+And one the plan did not ask: scratch costs half a second per file written
+and a fifth per file read, while `/tmp` is free but empty on every call. So
+the engine in the sandbox keeps the room as one zip in scratch, unpacks it
+into `/tmp` at the start of every call and repacks it at the end. Never a
+file per document in scratch.
+
+Tier B stays gated on run 2. If a zip uploaded to the project reads back,
+build it on the zip-in-scratch shape above. If not, a build cannot span
+conversations and Tier B is not built.
 
 ### The engine in the sandbox
 
