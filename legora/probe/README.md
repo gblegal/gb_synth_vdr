@@ -134,6 +134,35 @@ ran. Run `20260917-072349-15ca`, project `vdr-synth-probe 0.2.0`.
 - Persistence: UNKNOWN on a first run, as expected. 0.1.0's run 2 already
   showed scratch does not outlive a conversation.
 
+## Outstanding, 17 September 2026
+
+Still to do on 0.2.0, in order:
+
+1. **Run 2, project A, a new conversation.** Upload the intact 0.1.0 zip
+   from Drive into the project first, then "run the vdr probe". Step 8
+   should read it back as a zip. Run 1's zip read as 0 bytes, but it was
+   saved from inside the run, not uploaded from outside, so the question
+   is still open. Everything below waits on this.
+2. **Run 3, project B, a new conversation.** Whether scratch is per
+   project or shared. Low priority: 0.1.0's run 2 already showed scratch
+   does not outlive a conversation, so a build restores from the project
+   either way.
+3. **Decide Tier B of `docs/legora-bundle-plan.md`.** If run 2 reads the
+   zip back, build on the zip-in-scratch shape: one zip in scratch,
+   unpacked into `/tmp` at the start of every call and repacked at the
+   end. If not, a build cannot span conversations and Tier B is not built.
+4. **Record run 2 on `gb-docclass/docs/legora-environment.md`.** Run 1 of
+   0.2.0 is already there; only the run 2 entries are owed.
+
+Carried to 0.2.1, not blocking:
+
+- **Wait longer after the zip-out step.** The call was cut off at 300 s
+  and `zip/out.json` appeared four minutes later, outside the three
+  30-second waits. Either wait longer, or build the tree in `/tmp` and
+  write only the zip to scratch.
+- **Name the upload exactly.** 0.2.0 went up as "0.20.0", so Legora's
+  folder reads `0-20-0` while the report says 0.2.0.
+
 ## Afterwards
 
 Each fact goes on `gb-docclass/docs/legora-environment.md`, dated and saying
