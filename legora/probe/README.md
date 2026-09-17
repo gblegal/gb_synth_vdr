@@ -78,11 +78,10 @@ From the report and the agent's run log, both in Drive under
   skill folder and the working directory are not.
 - Web search works from the orchestrator. Saving is `suggest-save`, one
   acceptance per file.
-- Run 2, a new conversation, saw no earlier runs. If run 2 was in the same
-  project as run 1, scratch does not outlive a conversation, and every build
-  session must restore the room from the project's zip first. If it was in a
-  different project, the per-conversation question is still open and run 2
-  in the same project answers it.
+- Run 2, a new conversation in the same project, saw no earlier runs.
+  Scratch does not outlive a conversation, so every build session must
+  restore the room from the project's zip first. Whether it is per project
+  as well no longer matters.
 
 ## Afterwards
 
