@@ -189,14 +189,16 @@ cd "<this skill's folder>"
 python3 -u scripts/probe.txt zip-out --run <RUN>
 ```
 
-The script builds a tree the shape of a data room, zips it, unzips it and
-compares. On the first run this took over five minutes and was cut off
-three times; the finishing file is `zip/out.json`, so if the call is cut
-off, wait for that file rather than running it again. Copy the `ZIP` and
-`ZIP_SHA256` lines into your reply, or if the call was cut off take them
-from `zip/out.json`. Then save
-the zip file it names into this project, using whatever command saves a
-file from scratch to the project, and record that command's name:
+The script builds a tree the shape of a data room under `/tmp`, zips it
+into scratch, unzips it and compares, then writes the zip's base64 text
+beside it as `probe-room-<RUN>.b64.txt`. On 0.2.0 this step took over five
+minutes in scratch; it should now take seconds, but if the call is cut off
+the finishing file is `zip/out.json`, so wait for that file rather than
+running it again. Copy the `ZIP`, `ZIP_SHA256` and `B64` lines into your
+reply, or if the call was cut off take them from `zip/out.json`. Then save
+both files it names into this project, the zip and the `.b64.txt`, using
+whatever command saves a file from scratch to the project, and record that
+command's name:
 
 ```
 cd "<this skill's folder>"
@@ -205,8 +207,11 @@ python3 -u scripts/probe.txt note --run <RUN> --key save-command --value "<the c
 
 ## 8. A zip in
 
-List the project's documents. If a file whose name begins `probe-room-` and
-ends `.zip` is there, it came back in from an earlier run. Check it:
+List the project's documents. If a file whose name begins `probe-room` and
+ends `.b64.txt` is there, it is the zip's text form, saved by an earlier run
+or uploaded from outside. Check it; the script decodes the text itself. If
+only a `.zip` is there, check that instead, though Legora is known to unpack
+a zip it is given, so the text form is the one expected to read back:
 
 ```
 cd "<this skill's folder>"

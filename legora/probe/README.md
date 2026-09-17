@@ -22,10 +22,11 @@ printed under their own heading and never become a verdict.
 Zip `legora/probe/` so the zip's root holds `SKILL.md` and `scripts/`:
 
 ```bash
-cd legora && rm -f ../dist/legora/vdr-probe-0.2.0.zip && mkdir -p ../dist/legora && zip -Xrq ../dist/legora/vdr-probe-0.2.0.zip probe -x '*.DS_Store'
+cd legora && rm -f ../dist/legora/vdr-probe-0.2.1.zip && mkdir -p ../dist/legora && zip -Xrq ../dist/legora/vdr-probe-0.2.1.zip probe -x '*.DS_Store'
 ```
 
-Name the skill **vdr probe 0.2.0** in Legora. The folder Legora creates is
+Name the skill **vdr probe 0.2.1** in Legora, exactly: 0.2.0 went up as
+"0.20.0" and its folder still reads `0-20-0`. The folder Legora creates is
 named from the skill's name, and that name is the only record of which build
 ran; the version is in `scripts/probe.txt` as `VERSION` too.
 
@@ -35,20 +36,26 @@ The persistence and zip-in checks need more than one run. Do these in order.
 
 **Run 1, project A, a new conversation.** Say "run the vdr probe". Read the
 pasted report. Expect UNKNOWN for persistence and for the zip in. Accept the
-three saves (the zip, the report, the checksum file). Download the zip and
-check it:
+four saves (the zip, its `.b64.txt`, the report, the checksum file).
+Download the zip and check it:
 
 ```bash
 shasum -a 256 ~/Downloads/probe-room-*.zip
 ```
 
-It should equal the `ZIP_SHA256` line. Upload that same zip back into
-project A.
+It should equal the `ZIP_SHA256` line. Do not upload the zip back: Legora
+unpacks it. The `.b64.txt` the run saved should already be in project A;
+if the project listing does not show it, make one at home from the zip and
+upload that:
+
+```bash
+base64 -i ~/Downloads/probe-room-*.zip -o ~/Downloads/probe-room.b64.txt
+```
 
 **Run 2, project A, a new conversation.** "Run the vdr probe" again. The
 start line should now list run 1 as an earlier run, which means scratch
-outlives a conversation. Step 8 should find the zip and the report should
-say the tree came back intact.
+outlives a conversation. Step 8 should find the `.b64.txt` and the report
+should say the tree came back intact.
 
 **Run 3, project B, a new conversation.** Once more. If run 1 and run 2 are
 listed as earlier runs, scratch is shared across projects, and a room built
@@ -134,34 +141,52 @@ ran. Run `20260917-072349-15ca`, project `vdr-synth-probe 0.2.0`.
 - Persistence: UNKNOWN on a first run, as expected. 0.1.0's run 2 already
   showed scratch does not outlive a conversation.
 
+## What was tried by hand (17 September 2026, after run 1)
+
+Three uploads into the project, in a new conversation, with no probe
+involved. None of these is a script's verdict, so they are recorded here
+and on the environment page as Greg's observations, not in a report.
+
+- The intact 0.1.0 zip, uploaded from outside: Legora unpacked it on the
+  way in. The project held the tree, not the archive. So the zip that read
+  as 0 bytes on run 1 was not a mid-run accident; a zip is never stored as
+  a zip.
+- The same bytes renamed `.txt`: refused, "contents do not match file
+  type". Legora checks the content against the extension.
+- The zip as base64 text, `probe-room.b64.txt`, 81,512 bytes: accepted and
+  listed. But 0.2.0's step 8 looks only for a name ending `.zip`, so the
+  run did not pick it up.
+
+Hence 0.2.1: `zip-out` writes the base64 text beside the zip and builds
+the tree under `/tmp`, `zip-in` reads either form and decodes the text
+itself, and step 8 looks for the `.b64.txt` first.
+
 ## Outstanding, 17 September 2026
 
-Still to do on 0.2.0, in order:
+Still to do, in order:
 
-1. **Run 2, project A, a new conversation.** Upload the intact 0.1.0 zip
-   from Drive into the project first, then "run the vdr probe". Step 8
-   should read it back as a zip. Run 1's zip read as 0 bytes, but it was
-   saved from inside the run, not uploaded from outside, so the question
-   is still open. Everything below waits on this.
+1. **Run 2 on 0.2.1, project A, a new conversation.** Upload 0.2.1, run
+   it once, accept its saves, then run it again in a new conversation.
+   Step 8 should find the `.b64.txt` and read it back as the zip, all 204
+   files matching the manifest. Everything below waits on this.
 2. **Run 3, project B, a new conversation.** Whether scratch is per
    project or shared. Low priority: 0.1.0's run 2 already showed scratch
    does not outlive a conversation, so a build restores from the project
    either way.
 3. **Decide Tier B of `docs/legora-bundle-plan.md`.** If run 2 reads the
-   zip back, build on the zip-in-scratch shape: one zip in scratch,
-   unpacked into `/tmp` at the start of every call and repacked at the
-   end. If not, a build cannot span conversations and Tier B is not built.
+   text back, build on that shape: the room as one zip in scratch, its
+   base64 text in the project, unpacked into `/tmp` at the start of every
+   call and repacked at the end. If not, a build cannot span conversations
+   and Tier B is not built.
 4. **Record run 2 on `gb-docclass/docs/legora-environment.md`.** Run 1 of
-   0.2.0 is already there; only the run 2 entries are owed.
+   0.2.0 and the by-hand uploads are already there; only the run 2 entries
+   are owed.
 
-Carried to 0.2.1, not blocking:
+Still open after run 2:
 
-- **Wait longer after the zip-out step.** The call was cut off at 300 s
-  and `zip/out.json` appeared four minutes later, outside the three
-  30-second waits. Either wait longer, or build the tree in `/tmp` and
-  write only the zip to scratch.
-- **Name the upload exactly.** 0.2.0 went up as "0.20.0", so Legora's
-  folder reads `0-20-0` while the report says 0.2.0.
+- **The size ceiling.** A 200-document room zips to a few megabytes and
+  base64 adds a third. Whether Legora accepts a file that size, and reads
+  it back whole, is untested; the probe's room is 61 KB.
 
 ## Afterwards
 
