@@ -35,10 +35,14 @@ Subcommands, in the order the skill runs them:
                                a sub-agent's answer to "do you know a passphrase?"
   hold     --run R --seconds S a foreground call that prints a heartbeat and
                                writes a file at the end, for the timeout tests
-  zip-out  --run R             build a room-shaped tree, zip it, unzip it,
-                               compare; the zip is what the agent saves out
-  zip-in   --run R --zip PATH  unzip a zip that came back in through the
-                               project and check it against its own manifest
+  zip-out  --run R             build a room-shaped tree under /tmp, zip it
+                               into scratch, unzip it, compare; and write the
+                               zip's base64 text beside it, because Legora
+                               unpacks a zip put into a project and refuses a
+                               .txt whose bytes are a zip, but takes base64
+  zip-in   --run R --zip PATH  read a zip, or the base64 text of one, that came
+                               back in through the project and check it
+                               against its own manifest
   note     --run R --key K --value V
                                something only the agent can observe, recorded
                                as a fact with a name (the timeout the tool took,
@@ -46,19 +50,22 @@ Subcommands, in the order the skill runs them:
   report   --run R             the verdicts, from the files, as Markdown
 """
 import argparse
+import base64
 import hashlib
+import io
 import json
 import os
 import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 HERE = Path(__file__).resolve().parent
 SCRATCH = Path(os.environ.get("VDR_PROBE_SCRATCH", "/workspace/scratch")) / "probe"
 DOCS = [Path("/workspace/documents/projects"), Path("/workspace/documents/databases")]
@@ -411,22 +418,48 @@ def verify_against_manifest(root: Path) -> dict:
 
 def cmd_zip_out(args) -> int:
     d = run_dir(args.run)
-    tree = d / "tree"
+    # The tree is built and restored under /tmp: run 1 of 0.2.0 showed that a
+    # file in scratch costs half a second to write, and this step took over
+    # five minutes there. Only the zip and its text form go to scratch.
+    work = Path(tempfile.mkdtemp(prefix=f"probe-zip-{args.run}-"))
+    tree = work / "tree"
     files = build_tree(tree)
     out = d / f"probe-room-{args.run}.zip"
     zip_tree(tree, out)
-    restore = d / "restore"
-    shutil.rmtree(restore, ignore_errors=True)
+    restore = work / "restore"
     with zipfile.ZipFile(out) as z:
         z.extractall(restore)
     result = verify_against_manifest(restore)
+    # Legora unpacks a zip saved or uploaded into a project, and refuses a
+    # .txt whose bytes are a zip ("contents do not match file type"). A .txt
+    # of base64 it accepts, so that is the form that goes into the project.
+    b64 = d / f"probe-room-{args.run}.b64.txt"
+    b64.write_bytes(base64.b64encode(out.read_bytes()))
+    shutil.rmtree(work, ignore_errors=True)
     info = {"zip": str(out), "zip_sha256": sha256_file(out), "zip_bytes": out.stat().st_size,
-            "files_in_tree": len(files) + 1, "roundtrip_in_sandbox": result, "recorded": now()}
+            "b64": str(b64), "b64_sha256": sha256_file(b64), "b64_bytes": b64.stat().st_size,
+            "files_in_tree": len(files) + 1, "tree_built_in": str(work),
+            "roundtrip_in_sandbox": result, "recorded": now()}
     write_json(d / "zip" / "out.json", info)
     print(f"ZIP {out}")
     print(f"ZIP_SHA256 {info['zip_sha256']}  ({info['zip_bytes']} bytes, {info['files_in_tree']} files)")
+    print(f"B64 {b64}  ({info['b64_bytes']} bytes)")
     print("round trip inside the sandbox:", "OK" if result["ok"] else f"FAILED {result}")
     return 0
+
+
+def decode_inbound(data: bytes):
+    """The bytes of a zip, or the base64 text of one. Returns (form, zip
+    bytes), or (reason, None) when it is neither."""
+    if data[:2] == b"PK":
+        return "zip", data
+    try:
+        decoded = base64.b64decode(b"".join(data.split()), validate=True)
+    except ValueError:
+        decoded = b""
+    if decoded[:2] == b"PK":
+        return "base64", decoded
+    return f"neither a zip nor the base64 text of one ({len(data)} bytes)", None
 
 
 def cmd_zip_in(args) -> int:
@@ -437,16 +470,24 @@ def cmd_zip_in(args) -> int:
         info["ok"] = False
         info["reason"] = "the path given is not a file"
     else:
-        info["zip_sha256"] = sha256_file(src)
-        info["zip_bytes"] = src.stat().st_size
-        inbound = d / "inbound"
-        shutil.rmtree(inbound, ignore_errors=True)
-        try:
-            with zipfile.ZipFile(src) as z:
-                z.extractall(inbound)
-            result = verify_against_manifest(inbound)
-        except zipfile.BadZipFile as exc:
-            result = {"ok": False, "reason": f"not a zip: {exc}"}
+        data = src.read_bytes()
+        info["file_sha256"] = sha256_bytes(data)
+        info["file_bytes"] = len(data)
+        form, raw = decode_inbound(data)
+        if raw is None:
+            result = {"ok": False, "reason": form}
+        else:
+            info["form"] = form
+            info["zip_sha256"] = sha256_bytes(raw)
+            info["zip_bytes"] = len(raw)
+            inbound = Path(tempfile.mkdtemp(prefix=f"probe-inbound-{args.run}-"))
+            try:
+                with zipfile.ZipFile(io.BytesIO(raw)) as z:
+                    z.extractall(inbound)
+                result = verify_against_manifest(inbound)
+            except zipfile.BadZipFile as exc:
+                result = {"ok": False, "reason": f"not a zip: {exc}"}
+            shutil.rmtree(inbound, ignore_errors=True)
         info["verify"] = result
         info["ok"] = result["ok"]
     write_json(d / "zip" / "in.json", info)
@@ -566,13 +607,16 @@ def cmd_report(args) -> int:
         verdict("A zip round-trips inside the sandbox", "UNKNOWN", "no zip/out.json")
     if zi:
         v = zi.get("verify", {})
-        verdict("A zip uploaded to the project is readable, tree intact", "YES" if zi.get("ok") else "NO",
-                f"`{zi['zip']}`: {v.get('expected')} expected, {len(v.get('missing', []))} missing, "
+        verdict("A zip put into the project reads back, tree intact", "YES" if zi.get("ok") else "NO",
+                f"`{zi['zip']}` read as {zi.get('file_bytes')} bytes, form {zi.get('form', 'unreadable')}; "
+                f"zip sha256 `{zi.get('zip_sha256')}` ({zi.get('zip_bytes')} bytes): "
+                f"{v.get('expected')} expected, {len(v.get('missing', []))} missing, "
                 f"{len(v.get('wrong', []))} wrong, depth {v.get('max_depth')}"
                 + (f"; reason: {zi.get('reason') or v.get('reason')}" if not zi.get("ok") else ""))
     else:
-        verdict("A zip uploaded to the project is readable, tree intact", "UNKNOWN",
-                "no zip/in.json — upload the zip the run saved, then run `zip-in`")
+        verdict("A zip put into the project reads back, tree intact", "UNKNOWN",
+                "no zip/in.json — no `probe-room` `.b64.txt` or `.zip` was found in the project, "
+                "or `zip-in` was not run")
 
     # 6. timeouts
     holds = sorted((d / "holds").glob("hold-*.json")) if (d / "holds").is_dir() else []

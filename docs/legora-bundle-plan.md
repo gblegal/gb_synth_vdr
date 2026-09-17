@@ -129,7 +129,10 @@ Two runs of 0.1.0 and one of 0.2.0, recorded on the environment page and in
 4. Half. The zip downloaded intact once, by hash. But the fallback for (3)
    is restore-from-project, and the one zip read back from a project so far
    came back as 0 bytes, and the project download came unpacked with one
-   file missing. Run 2 of 0.2.0 settles it by uploading a zip from outside.
+   file missing. Uploading a zip from outside, tried by hand the same day,
+   unpacked it too: Legora never stores a zip as a zip, and it refuses a
+   `.txt` whose bytes are a zip. A `.txt` of the zip's base64 it accepts.
+   Probe 0.2.1 saves and reads that form; run 2 of 0.2.1 settles it.
 5. Four at once at least, one through 120 seconds; the shell tool's ceiling
    is 300 seconds.
 
@@ -139,8 +142,9 @@ the engine in the sandbox keeps the room as one zip in scratch, unpacks it
 into `/tmp` at the start of every call and repacks it at the end. Never a
 file per document in scratch.
 
-Tier B stays gated on run 2. If a zip uploaded to the project reads back,
-build it on the zip-in-scratch shape above. If not, a build cannot span
+Tier B stays gated on run 2. If the base64 text in the project reads back
+as the zip, build it on the zip-in-scratch shape above, with the text as
+the project's copy. If not, a build cannot span
 conversations and Tier B is not built.
 
 ### The engine in the sandbox
@@ -160,9 +164,10 @@ differences from that pack:
   becomes `python3 scripts/run.txt …` and nothing else in the fence
   changes.
 - **A `room` subcommand.** `run.txt room new <name>` makes the room under
-  `/workspace/scratch/`; `room zip` writes one archive the agent saves out;
-  `room restore <zip>` unpacks it back. The zip in the project is the
-  durable state.
+  `/workspace/scratch/`; `room zip` writes one archive and its base64
+  text, and the text is what the agent saves out, since Legora unpacks a
+  zip put into a project; `room restore <zip or text>` decodes and unpacks
+  it back. The text in the project is the durable state.
 
 Not available there: the PDF render (Node), so `/vdr-package` renders DOCX
 only in Legora and says so. The sandbox is around thirty times slower than
