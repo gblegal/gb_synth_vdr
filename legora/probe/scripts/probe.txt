@@ -13,6 +13,12 @@ Subcommands, in the order the skill runs them:
                                earlier runs left behind (persistence)
   env      --run R             Python, libraries, folders, writability
   bench    --run R             a fixed CPU workload, for speed against a laptop
+  io-bench --run R             write, read back and delete a hundred small files
+                               in scratch and in /tmp; the first run showed the
+                               scratch mount, not the CPU, is what is slow
+  tmp-mark --run R             write a file under /tmp, for the next call to look for
+  tmp-check --run R            does the file the last call wrote under /tmp still
+                               exist? (does /tmp outlive a shell call)
   mark     --run R --agent A --nonce N [--hold S]
                                a sub-agent proving it can run this and write
                                here; holds S seconds so overlap shows parallelism
@@ -52,7 +58,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 HERE = Path(__file__).resolve().parent
 SCRATCH = Path(os.environ.get("VDR_PROBE_SCRATCH", "/workspace/scratch")) / "probe"
 DOCS = [Path("/workspace/documents/projects"), Path("/workspace/documents/databases")]
@@ -150,12 +156,23 @@ def cmd_env(args) -> int:
             libs[name] = getattr(mod, "__version__", "present")
         except Exception as exc:  # noqa: BLE001 - any failure means absent here
             libs[name] = f"absent ({exc.__class__.__name__})"
-    tools = {t: shutil.which(t) for t in ("node", "pandoc", "git", "zip", "unzip", "libreoffice", "soffice")}
+    tools = {t: shutil.which(t) for t in ("node", "pandoc", "git", "zip", "unzip", "libreoffice", "soffice",
+                                          "chromium", "chromium-browser", "google-chrome")}
+    node = {}
+    if tools["node"]:
+        for label, cmd in (("version", ["node", "--version"]),
+                           ("puppeteer", ["node", "-e", "require('puppeteer'); console.log('present')"])):
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+                text = (r.stdout or r.stderr).strip()
+                node[label] = "absent" if "Cannot find module" in text else text[:120]
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                node[label] = f"failed: {exc.__class__.__name__}"
     info = {
         "python": sys.version, "platform": platform.platform(),
         "executable": sys.executable, "cwd": os.getcwd(),
         "skill_folder": str(HERE.parent), "skill_folder_name": HERE.parent.name,
-        "libraries": libs, "tools_on_path": tools,
+        "libraries": libs, "tools_on_path": tools, "node": node,
         "writable": {
             "skill_folder": writable(HERE.parent / ".probe-w"),
             "scratch": writable(SCRATCH / ".probe-w"),
@@ -196,6 +213,74 @@ def cmd_bench(args) -> int:
         print(f"laptop bench: {seconds:.2f}s — paste into LAPTOP_BENCH_SECONDS")
         return 0
     write_json(run_dir(args.run) / "bench.json", {"seconds": round(seconds, 3), "recorded": now()})
+    return 0
+
+
+# ------------------------------------------------------------ io-bench
+
+IO_FILES = 100
+
+
+def _io_trial(root: Path) -> dict:
+    root.mkdir(parents=True, exist_ok=True)
+    folder = root / f"io-{os.getpid()}"
+    shutil.rmtree(folder, ignore_errors=True)
+    t0 = time.perf_counter()
+    for i in range(IO_FILES):
+        sub = folder / f"{i % 10:02d}_section"
+        sub.mkdir(parents=True, exist_ok=True)
+        (sub / f"doc-{i:03d}.md").write_text(f"# Document {i}\n\n" + "Ordinary seller-side paperwork.\n" * 40)
+    t1 = time.perf_counter()
+    total = 0
+    for pth in sorted(folder.rglob("*.md")):
+        total += len(pth.read_bytes())
+    t2 = time.perf_counter()
+    listed = len(list(folder.rglob("*")))
+    t3 = time.perf_counter()
+    shutil.rmtree(folder, ignore_errors=True)
+    t4 = time.perf_counter()
+    return {"files": IO_FILES, "bytes_read": total, "entries_listed": listed,
+            "write_s": round(t1 - t0, 2), "read_s": round(t2 - t1, 2),
+            "list_s": round(t3 - t2, 2), "delete_s": round(t4 - t3, 2),
+            "ms_per_file_write": round(1000 * (t1 - t0) / IO_FILES, 1),
+            "ms_per_file_read": round(1000 * (t2 - t1) / IO_FILES, 1)}
+
+
+def cmd_io_bench(args) -> int:
+    d = run_dir(args.run)
+    results = {}
+    for label, root in (("scratch", d / "io"), ("tmp", Path("/tmp") / "vdr-probe-io")):
+        try:
+            results[label] = _io_trial(root)
+        except OSError as exc:
+            results[label] = {"failed": f"{exc.__class__.__name__}: {exc}"}
+        print(f"{label}: {results[label]}", flush=True)
+    write_json(d / "io.json", {"results": results, "recorded": now()})
+    print("IO-BENCH DONE")
+    return 0
+
+
+# ------------------------------------------------------------ tmp-mark/check
+
+def _tmp_marker(run: str) -> Path:
+    return Path("/tmp") / f"vdr-probe-{run}.txt"
+
+
+def cmd_tmp_mark(args) -> int:
+    marker = _tmp_marker(args.run)
+    marker.write_text(f"{now()} pid {os.getpid()}\n")
+    write_json(run_dir(args.run) / "tmp" / "mark.json", {"path": str(marker), "written": now(), "pid": os.getpid()})
+    print(f"TMP-MARK {marker}")
+    return 0
+
+
+def cmd_tmp_check(args) -> int:
+    marker = _tmp_marker(args.run)
+    found = marker.is_file()
+    write_json(run_dir(args.run) / "tmp" / "check.json",
+               {"path": str(marker), "found": found, "content": marker.read_text() if found else None,
+                "checked": now(), "pid": os.getpid()})
+    print(f"TMP-CHECK {'found' if found else 'missing'}")
     return 0
 
 
@@ -515,12 +600,39 @@ def cmd_report(args) -> int:
     else:
         verdict("Sandbox speed", "UNKNOWN", "no bench.json")
 
+    # 7b. file I/O
+    io = read_json(d / "io.json")
+    if io:
+        r = io["results"]
+        parts = []
+        for label in ("scratch", "tmp"):
+            x = r.get(label, {})
+            parts.append(f"{label}: " + (x["failed"] if "failed" in x else
+                         f"{x['ms_per_file_write']} ms per write, {x['ms_per_file_read']} ms per read, "
+                         f"list {x['list_s']}s, delete {x['delete_s']}s"))
+        verdict("File I/O speed, scratch against /tmp", "MEASURED", "; ".join(parts)
+                + f" ({IO_FILES} files each). At home both are well under 1 ms per file")
+    else:
+        verdict("File I/O speed, scratch against /tmp", "UNKNOWN", "no io.json")
+
+    # 7c. /tmp between calls
+    tm = read_json(d / "tmp" / "mark.json")
+    tc = read_json(d / "tmp" / "check.json")
+    if tm and tc:
+        verdict("/tmp outlives a shell call", "YES" if tc["found"] else "NO",
+                f"marked at {tm['written']} (pid {tm['pid']}), checked at {tc['checked']} (pid {tc['pid']}): "
+                + ("found" if tc["found"] else "missing")
+                + ". If YES, a build can work in /tmp and copy to scratch only at the end")
+    else:
+        verdict("/tmp outlives a shell call", "UNKNOWN", "need tmp/mark.json from one call and tmp/check.json from a later one")
+
     # 8. environment
     if env:
         libs = env.get("libraries", {})
         verdict("Environment", "RECORDED",
                 f"Python {env.get('python', '?').split()[0]}; yaml {libs.get('yaml')}; pypdf {libs.get('pypdf')}; "
-                f"python-docx {libs.get('docx')}; node {env.get('tools_on_path', {}).get('node')}; "
+                f"python-docx {libs.get('docx')}; node {env.get('tools_on_path', {}).get('node')} "
+                f"{env.get('node', {})}; "
                 f"writable: {env.get('writable')}; skill folder `{env.get('skill_folder')}`")
     else:
         verdict("Environment", "UNKNOWN", "no env.json")
@@ -561,6 +673,9 @@ def main() -> int:
     add("start", cmd_start)
     add("env", cmd_env, R)
     add("bench", cmd_bench, (("--run",), {}), (("--calibrate",), {"action": "store_true"}))
+    add("io-bench", cmd_io_bench, R)
+    add("tmp-mark", cmd_tmp_mark, R)
+    add("tmp-check", cmd_tmp_check, R)
     add("mark", cmd_mark, R, (("--agent",), {"required": True}), (("--nonce",), {"required": True}),
         (("--hold",), {"type": int, "default": 0}))
     add("record", cmd_record, R, (("--agent",), {"required": True}), (("--text",), {"required": True}))

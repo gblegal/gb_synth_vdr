@@ -22,10 +22,10 @@ printed under their own heading and never become a verdict.
 Zip `legora/probe/` so the zip's root holds `SKILL.md` and `scripts/`:
 
 ```bash
-cd legora && rm -f ../dist/legora/vdr-probe-0.1.0.zip && mkdir -p ../dist/legora && zip -Xrq ../dist/legora/vdr-probe-0.1.0.zip probe -x '*.DS_Store'
+cd legora && rm -f ../dist/legora/vdr-probe-0.2.0.zip && mkdir -p ../dist/legora && zip -Xrq ../dist/legora/vdr-probe-0.2.0.zip probe -x '*.DS_Store'
 ```
 
-Name the skill **vdr probe 0.1.0** in Legora. The folder Legora creates is
+Name the skill **vdr probe 0.2.0** in Legora. The folder Legora creates is
 named from the skill's name, and that name is the only record of which build
 ran; the version is in `scripts/probe.txt` as `VERSION` too.
 
@@ -54,6 +54,35 @@ say the tree came back intact.
 listed as earlier runs, scratch is shared across projects, and a room built
 in Legora must carry its project in its folder name. If none are listed,
 scratch is per project.
+
+## What run 1 established (17 September 2026, probe 0.1.0)
+
+From the report and the agent's run log, both in Drive under
+`Legora Skills/Runs/2026-09-17 synth-vdr probe 0.1.0 Run 1`:
+
+- Four sub-agents ran the script and wrote to scratch, in parallel, one of
+  them through a 120-second hold. None could name its own model.
+- Two blind sub-agents answered NONE. Each knew only that "the primary
+  agent dispatched me to run this probe".
+- A 75-second call finished. A 330-second call was cut off at the tool's
+  300,000 ms ceiling and the script finished anyway, 30 seconds later.
+- The zip round-tripped, downloaded with its hash intact, and verified at
+  home against its own manifest.
+- CPU is about twice as slow as the laptop. File I/O is the problem: 204
+  small files written, zipped, unzipped and hashed took over five minutes,
+  three times running, and cut-off calls that were re-run raced each other
+  and left FUSE placeholder files that `rm` could not clear. Hence 0.2.0's
+  rule never to re-run a cut-off call, and its `io-bench` and `/tmp` checks.
+- Python 3.13.5, pypdf 6.16.2 (so `extraction_mode="layout"` is available),
+  python-docx 1.2.0, Node present, no PyYAML. Scratch is writable; the
+  skill folder and the working directory are not.
+- Web search works from the orchestrator. Saving is `suggest-save`, one
+  acceptance per file.
+- Run 2, a new conversation, saw no earlier runs. If run 2 was in the same
+  project as run 1, scratch does not outlive a conversation, and every build
+  session must restore the room from the project's zip first. If it was in a
+  different project, the per-conversation question is still open and run 2
+  in the same project answers it.
 
 ## Afterwards
 

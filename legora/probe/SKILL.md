@@ -30,6 +30,18 @@ in the background.
 Where a command prints a line beginning `RUN=`, `ZIP_SHA256`, `REPORT` or
 `REPORT_SHA256`, copy that line into your reply exactly as printed.
 
+**If your shell tool reports a call cut off, never run that command again.**
+The script keeps running after the tool gives up, and a second copy races
+the first over the same files. Each command writes one finishing file, named
+below, last. After a cut-off, wait thirty seconds and list the run folder;
+when the finishing file is there the step is over, whatever the tool said.
+If it is still missing after three such waits, record that with `note` and
+move on. The finishing files: `start.json`, `env.json`, `bench.json`,
+`io.json`, `tmp/mark.json`, `tmp/check.json`, `agents/<agent>.done.json`,
+`blind/sealed.json`, `blind/<agent>.json`, `holds/hold-<N>.json`,
+`zip/out.json`, `zip/in.json`, `notes/<key>.json`, and for the report
+`sha256-report-<RUN>.txt`.
+
 ## 1. Start
 
 ```
@@ -51,6 +63,25 @@ python3 -u scripts/probe.txt env --run <RUN>
 ```
 cd "<this skill's folder>"
 python3 -u scripts/probe.txt bench --run <RUN>
+```
+
+Then the file checks. The first measures writing and reading a hundred
+small files in scratch and in `/tmp`; the next two, in separate calls,
+ask whether `/tmp` outlives a call.
+
+```
+cd "<this skill's folder>"
+python3 -u scripts/probe.txt io-bench --run <RUN>
+```
+
+```
+cd "<this skill's folder>"
+python3 -u scripts/probe.txt tmp-mark --run <RUN>
+```
+
+```
+cd "<this skill's folder>"
+python3 -u scripts/probe.txt tmp-check --run <RUN>
 ```
 
 ## 3. What only you can see
@@ -159,7 +190,11 @@ python3 -u scripts/probe.txt zip-out --run <RUN>
 ```
 
 The script builds a tree the shape of a data room, zips it, unzips it and
-compares. Copy the `ZIP` and `ZIP_SHA256` lines into your reply. Then save
+compares. On the first run this took over five minutes and was cut off
+three times; the finishing file is `zip/out.json`, so if the call is cut
+off, wait for that file rather than running it again. Copy the `ZIP` and
+`ZIP_SHA256` lines into your reply, or if the call was cut off take them
+from `zip/out.json`. Then save
 the zip file it names into this project, using whatever command saves a
 file from scratch to the project, and record that command's name:
 
