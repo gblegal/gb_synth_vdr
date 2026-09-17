@@ -161,32 +161,49 @@ Hence 0.2.1: `zip-out` writes the base64 text beside the zip and builds
 the tree under `/tmp`, `zip-in` reads either form and decodes the text
 itself, and step 8 looks for the `.b64.txt` first.
 
+## What run 2 established (17 September 2026, probe 0.2.0, project A)
+
+From the report and its checksum file, in Drive under `Legora Skills/Runs/
+2026-09-17 synth-vdr probe 0.2.0 Run 2 w zip`. Run `20260917-134332-64a6`,
+a new conversation in the same project, with `probe-room.b64.txt` uploaded
+beforehand.
+
+- **The base64 text in the project reads back as the zip, byte for byte.**
+  The orchestrator, told by step 8 to look for a `.zip`, found the `.b64.txt`
+  instead, decoded it itself into scratch, and ran `zip-in` on the result.
+  The decoded zip was 61,132 bytes with sha256 `4a2e5226…`, the hash of the
+  0.1.0 zip it was made from; all 203 manifest entries matched, none
+  missing, none wrong, depth 5. The verdict is from `zip/in.json`, so it
+  counts, though the decoding step was the agent's own and 0.2.1 makes it
+  the script's.
+- No earlier run visible at start: the second confirmation that scratch
+  does not outlive a conversation.
+- Everything else as run 1: four sub-agents in parallel, two blind, the 75
+  and 330-second holds finished, the shell ceiling 300 s, the workload
+  1.295 s against 0.58 s at home, scratch 591 ms per write and 26 s to
+  delete a hundred files, `/tmp` gone by the next call.
+- The model note reads `claude-sonnet-4-5-20250929`, which is the skill's
+  own example at `SKILL.md`. Handed back again, as on 0.1.0.
+
+So the plan's question 4 is answered yes, and Tier B is built on the
+zip-in-scratch shape with the base64 text as the project's copy.
+
 ## Outstanding, 17 September 2026
 
-Still to do, in order:
+Done: run 2, the Tier B decision, and the environment page entries. Left:
 
-1. **Run 2 on 0.2.1, project A, a new conversation.** Upload 0.2.1, run
-   it once, accept its saves, then run it again in a new conversation.
-   Step 8 should find the `.b64.txt` and read it back as the zip, all 204
-   files matching the manifest. Everything below waits on this.
+1. **Run 0.2.1 once, in a new conversation.** Not a gate now; it confirms
+   that the script finds and decodes the text without the agent
+   improvising. Upload `dist/legora/vdr-probe-0.2.1.zip`, run it, accept
+   its saves, and run it again in a new conversation.
 2. **Run 3, project B, a new conversation.** Whether scratch is per
-   project or shared. Low priority: 0.1.0's run 2 already showed scratch
-   does not outlive a conversation, so a build restores from the project
-   either way.
-3. **Decide Tier B of `docs/legora-bundle-plan.md`.** If run 2 reads the
-   text back, build on that shape: the room as one zip in scratch, its
-   base64 text in the project, unpacked into `/tmp` at the start of every
-   call and repacked at the end. If not, a build cannot span conversations
-   and Tier B is not built.
-4. **Record run 2 on `gb-docclass/docs/legora-environment.md`.** Run 1 of
-   0.2.0 and the by-hand uploads are already there; only the run 2 entries
-   are owed.
-
-Still open after run 2:
-
-- **The size ceiling.** A 200-document room zips to a few megabytes and
-  base64 adds a third. Whether Legora accepts a file that size, and reads
-  it back whole, is untested; the probe's room is 61 KB.
+   project or shared. Low priority: scratch does not outlive a
+   conversation, so a build restores from the project either way.
+3. **The size ceiling.** A 200-document room zips to a few megabytes and
+   base64 adds a third. Whether Legora accepts a file that size, and reads
+   it back whole, is untested; the probe's room is 61 KB. The first real
+   build in Legora will answer it, so `room restore` must verify the
+   manifest and refuse a short read.
 
 ## Afterwards
 

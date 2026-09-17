@@ -120,19 +120,19 @@ ends by zipping the room into the project and starts by restoring it, which
 
 ### What the probe answered, 17 September 2026
 
-Two runs of 0.1.0 and one of 0.2.0, recorded on the environment page and in
+Two runs of 0.1.0 and two of 0.2.0, recorded on the environment page and in
 `legora/probe/README.md`:
 
 1. Yes. Four sub-agents each left a file the script itself wrote.
 2. Yes. Two blind sub-agents answered NONE, on both builds.
 3. No. Scratch does not outlive a conversation.
-4. Half. The zip downloaded intact once, by hash. But the fallback for (3)
-   is restore-from-project, and the one zip read back from a project so far
-   came back as 0 bytes, and the project download came unpacked with one
-   file missing. Uploading a zip from outside, tried by hand the same day,
-   unpacked it too: Legora never stores a zip as a zip, and it refuses a
-   `.txt` whose bytes are a zip. A `.txt` of the zip's base64 it accepts.
-   Probe 0.2.1 saves and reads that form; run 2 of 0.2.1 settles it.
+4. Yes, as base64 text. The zip downloaded intact, by hash. But Legora
+   never stores a zip as a zip: one saved from a run read back as 0 bytes,
+   one uploaded from outside was unpacked on the way in, and it refuses a
+   `.txt` whose bytes are a zip. A `.txt` of the zip's base64 it accepts,
+   and run 2 of 0.2.0 read that text back from the project as the zip, byte
+   for byte by hash, all 203 manifest entries matching. Probe 0.2.1 makes
+   that form the script's own.
 5. Four at once at least, one through 120 seconds; the shell tool's ceiling
    is 300 seconds.
 
@@ -142,10 +142,10 @@ the engine in the sandbox keeps the room as one zip in scratch, unpacks it
 into `/tmp` at the start of every call and repacks it at the end. Never a
 file per document in scratch.
 
-Tier B stays gated on run 2. If the base64 text in the project reads back
-as the zip, build it on the zip-in-scratch shape above, with the text as
-the project's copy. If not, a build cannot span
-conversations and Tier B is not built.
+Tier B is built, on the zip-in-scratch shape above with the base64 text as
+the project's copy. The one thing run 2 did not test is size: its room was
+61 KB, a real one is megabytes, so `room restore` verifies the manifest and
+refuses a short read, and the first real build is the size test.
 
 ### The engine in the sandbox
 
