@@ -2351,3 +2351,29 @@ def test_package_skill_and_technical_notes_agree_on_the_opt_in():
     assert "SCAN_PROFILE" in notes, (
         "TECHNICAL-NOTES must name the opt-in key the skill actually reads"
     )
+
+
+def test_scope_skill_names_every_room_conf_key_an_author_must_decide():
+    """`/vdr-scope` step 5 is the only place a room.conf is ever written from
+    scratch, and it is prose: a key added to `REQUIRED_KEYS` that step 5 never
+    mentions makes every new room fail at `load_room_conf` with an author who
+    has no idea what the key is for.
+
+    The two OPTIONAL declarations are pinned alongside the required ones, and
+    for a sharper reason than completeness. A key nobody is told about is a
+    feature nobody can reach: `ROOM_ROLE` gates the train/test split and
+    `SCAN_PROFILE` gates the degraded scan tree, and an author who never learns
+    either exists will conclude their room simply cannot do those things.
+    Neither belongs in `REQUIRED_KEYS` — omitting them must stay legal — so
+    nothing else in the suite would notice them falling out of the skill.
+    """
+    from synthvdr.roomconf import REQUIRED_KEYS
+
+    text = _read(ROOT / "skills" / "vdr-scope" / "SKILL.md")
+    step_5 = text[text.index("## 5. Write `room.conf`"):text.index("## Gate A")]
+
+    missing = [key for key in REQUIRED_KEYS + ("ROOM_ROLE", "SCAN_PROFILE") if key not in step_5]
+    assert not missing, (
+        f"/vdr-scope step 5 never names {missing} — an author following it "
+        "writes a room.conf without them"
+    )
