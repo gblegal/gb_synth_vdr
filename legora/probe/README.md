@@ -188,18 +188,49 @@ beforehand.
 So the plan's question 4 is answered yes, and Tier B is built on the
 zip-in-scratch shape with the base64 text as the project's copy.
 
-## Outstanding, 17 September 2026
+## What run 2 established (18 September 2026, probe 0.2.1, project A)
 
-Done: run 2, the Tier B decision, and the environment page entries. Left:
+From the report, its checksum file and the project download, in Drive under
+`Legora Skills/Runs/2016-09-19 probe 0.2.1 Run 2` (the folder's date is a
+slip; the run is 18 September). Run `20260918-092034-e49c`, a new
+conversation in the same project. Before it, run 1 of 0.2.1
+(`20260918-085959-f262`) had run in that project, its zip had been
+downloaded, encoded at home with `base64 -i … -o probe-room.b64.txt` and
+uploaded.
 
-1. **Run 0.2.1 once, in a new conversation.** Not a gate now; it confirms
-   that the script finds and decodes the text without the agent
-   improvising. Upload `dist/legora/vdr-probe-0.2.1.zip`, run it, accept
-   its saves, and run it again in a new conversation.
-2. **Run 3, project B, a new conversation.** Whether scratch is per
+- **The script found and decoded the text itself.** Step 8 pointed
+  `zip-in` at `probe-room.b64.txt` in the project. It read 81,513 bytes,
+  recognised the form as base64, decoded it to a 61,132-byte zip with
+  sha256 `7a9b872c…`, and verified all 203 manifest entries, depth 5. That
+  hash is the run 1 zip's, checked at home. No agent improvisation this
+  time; the improvisation of 0.2.0's run 2 is now the script's job.
+- The extra byte is the trailing newline macOS `base64` writes. The
+  decoder strips whitespace, so it did no harm.
+- **The saved zip came down as a zip.** The project download,
+  `legora-files-2026-09-18.zip`, held the run's own
+  `probe-room-….zip` intact at the printed hash, beside the `.b64.txt`,
+  the report and the checksum file. On 0.2.0 run 1 the download
+  (`legora-download-<stamp>.zip`) came unpacked with a file missing. The
+  names differ, so this may be a different export path; one observation
+  each way, not a conclusion.
+- **The model note is honest this time:** "exact identifier not known to
+  me; running as Legora Agent on a Claude Sonnet family model". Same
+  question as before, so the earlier reading stands: a dated identifier
+  in a note is a claim, not a reading.
+- Everything else as before: four sub-agents in parallel, two blind, the
+  75 and 330-second holds finished (only the 330 was cut off), no earlier
+  run visible at start, workload 1.244 s, scratch 555 ms per write,
+  `/tmp` gone by the next call. The zip-out step logged no cut-off.
+
+## Outstanding, 18 September 2026
+
+Done: the 0.2.1 confirmation run, the Tier B decision, and the environment
+page entries. Left:
+
+1. **Run 3, project B, a new conversation.** Whether scratch is per
    project or shared. Low priority: scratch does not outlive a
    conversation, so a build restores from the project either way.
-3. **The size ceiling.** A 200-document room zips to a few megabytes and
+2. **The size ceiling.** A 200-document room zips to a few megabytes and
    base64 adds a third. Whether Legora accepts a file that size, and reads
    it back whole, is untested; the probe's room is 61 KB. The first real
    build in Legora will answer it, so `room restore` must verify the
