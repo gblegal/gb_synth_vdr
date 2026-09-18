@@ -65,6 +65,34 @@ function rotationFor(slotId, page) {
   return digest[1] % 2 === 0 ? magnitude : -magnitude;
 }
 
+// The scan-degradation parameters for one page, in the same shape and for the
+// same reason as `rotationFor` above: a pure function of slot and page, so a
+// re-render reproduces the tree exactly and no RNG or clock ever enters the
+// render.
+//
+// The digest is taken over a `scan:`-PREFIXED string, deliberately. Sharing
+// rotationFor's digest would correlate a page's skew with its blur and grain,
+// so the most-tilted pages would also be the least legible ones — the tree
+// would then sweep a narrower band of difficulty than its parameter ranges
+// suggest, while looking from the outside as though it swept the whole range.
+//
+// Ranges are the spec's §5 starting points, to be tuned against the
+// "actually degrades" test rather than taken as settled. They bound the
+// REALISTIC tier: a page a person would file without comment. Widening them
+// far enough to make OCR fail outright is the fax-quality tier, which is out
+// of scope and needs a real image pipeline.
+function degradationFor(slotId, page) {
+  const digest = createHash("sha256").update(`scan:${slotId}:${page}`).digest();
+  return {
+    // puppeteer requires an integer quality; the others are CSS numbers.
+    quality: Math.round(45 + (digest[0] / 255) * 35),
+    blurPx: 0.2 + (digest[1] / 255) * 0.5,
+    contrast: 0.85 + (digest[2] / 255) * 0.15,
+    brightness: 0.92 + (digest[3] / 255) * 0.13,
+    grain: 0.04 + (digest[4] / 255) * 0.08,
+  };
+}
+
 function parseArgs(argv) {
   const args = { src: null, out: null };
   for (let i = 0; i < argv.length; i += 1) {

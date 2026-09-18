@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 import shutil
@@ -1052,3 +1053,114 @@ def test_pdf_mjs_reports_a_legacy_page_column_instead_of_ignoring_it(tmp_path):
         "both slots must still be scanned — the page column is obsolete, not disqualifying"
     )
     assert loaded["legacyPageRows"] == 2, "every row carrying the dead column must be counted"
+
+
+# --- the THIRD cross-language port: scan-degradation parameters -----------
+#
+# degradationFor is a pure function of (slot, page), like rotationFor, but
+# hashes a `scan:`-prefixed string so its digest is independent of
+# rotationFor's — otherwise a page's skew and its blur/grain would come from
+# the same digest, correlating the most-tilted pages with the least legible
+# ones.
+
+
+def _extract_degradation_js() -> str:
+    """Pull degradationFor's actual function body out of pdf.mjs, rather than
+    restating it here — a test that carries its own copy of the code passes
+    forever while the implementation drifts away from it."""
+    source = PDF_MJS.read_text(encoding="utf-8")
+    start = source.find("function degradationFor(")
+    if start == -1:
+        raise AssertionError(
+            "could not find `function degradationFor(...)` in synthvdr/render/pdf.mjs"
+        )
+    depth, i = 0, source.index("{", start)
+    for j in range(i, len(source)):
+        if source[j] == "{":
+            depth += 1
+        elif source[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : j + 1]
+    raise AssertionError("degradationFor's body is unbalanced in synthvdr/render/pdf.mjs")
+
+
+def _python_degradation(slot_id: str, page: int) -> dict:
+    """The expectation, computed independently of the JS."""
+    digest = hashlib.sha256(f"scan:{slot_id}:{page}".encode("utf-8")).digest()
+    return {
+        "quality": round(45 + (digest[0] / 255) * 35),
+        "blurPx": 0.2 + (digest[1] / 255) * 0.5,
+        "contrast": 0.85 + (digest[2] / 255) * 0.15,
+        "brightness": 0.92 + (digest[3] / 255) * 0.13,
+        "grain": 0.04 + (digest[4] / 255) * 0.08,
+    }
+
+
+def _run_node_degradation(node: str, pairs):
+    script = (
+        'import { createHash } from "node:crypto";\n'
+        + _extract_degradation_js()
+        + "\nconst pairs = "
+        + json.dumps([[s, p] for s, p in pairs])
+        + ";\n"
+        "console.log(JSON.stringify(pairs.map(([s, p]) => degradationFor(s, p))));\n"
+    )
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", script],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(f"node failed to run pdf.mjs's degradationFor: {proc.stderr}")
+    return json.loads(proc.stdout)
+
+
+def test_pdf_mjs_degradation_matches_python_exactly():
+    """degradationFor must be a pure function of (slot, page) and agree with an
+    independent implementation. SKIPs (never silently passes) without node."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed; cannot check pdf.mjs's degradationFor")
+
+    pairs = [
+        ("01_corporate/1.1_constitutional/1.1.1_constitutional-01", 1),
+        ("01_corporate/1.1_constitutional/1.1.1_constitutional-01", 2),
+        ("13_pensions/13.4_correspondence/13.4.3_correspondence-03", 1),
+        ("19_esg/19.4_climate/19.4.1_climate-01", 7),
+    ]
+    got = _run_node_degradation(node, pairs)
+    for (slot, page), actual in zip(pairs, got):
+        expected = _python_degradation(slot, page)
+        assert actual["quality"] == expected["quality"], (slot, page)
+        for key in ("blurPx", "contrast", "brightness", "grain"):
+            assert abs(actual[key] - expected[key]) < 1e-12, (slot, page, key)
+
+
+def test_degradation_is_independent_of_rotation():
+    """The two derive from DIFFERENT digests. Sharing one would correlate a
+    page's skew with its blur, so the worst-rotated pages would also be the
+    worst-degraded ones and the tree would exercise a narrower range than its
+    parameters suggest."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed; cannot check pdf.mjs")
+    source = PDF_MJS.read_text(encoding="utf-8")
+    assert 'update(`scan:${slotId}:${page}`)' in source, (
+        "degradationFor must hash a 'scan:'-prefixed string so its digest is "
+        "independent of rotationFor's"
+    )
+
+
+def test_degradation_ranges_are_bounded():
+    """Every parameter stays inside the spec's §5 range for any input, so no
+    page can be degraded past the realistic tier by an unlucky hash."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed; cannot check pdf.mjs")
+    pairs = [(f"slot-{i:03d}", (i % 9) + 1) for i in range(200)]
+    for d in _run_node_degradation(node, pairs):
+        assert 45 <= d["quality"] <= 80
+        assert 0.2 <= d["blurPx"] <= 0.7
+        assert 0.85 <= d["contrast"] <= 1.0
+        assert 0.92 <= d["brightness"] <= 1.05
+        assert 0.04 <= d["grain"] <= 0.12
