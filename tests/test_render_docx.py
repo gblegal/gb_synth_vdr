@@ -1164,3 +1164,63 @@ def test_degradation_ranges_are_bounded():
         assert 0.85 <= d["contrast"] <= 1.0
         assert 0.92 <= d["brightness"] <= 1.05
         assert 0.04 <= d["grain"] <= 0.12
+
+
+def _run_node_parse_args(node: str, argv):
+    """Run pdf.mjs's parseArgs on a synthetic argv, without running a render."""
+    source = PDF_MJS.read_text(encoding="utf-8")
+    start = source.find("const SCAN_PROFILES")
+    if start == -1:
+        raise AssertionError("could not find `const SCAN_PROFILES` in synthvdr/render/pdf.mjs")
+    end = source.find("function parseArgs(")
+    body_end = source.index("\n}", end) + 2
+    script = (
+        source[start:body_end]
+        + "\ntry { console.log(JSON.stringify(parseArgs("
+        + json.dumps(argv)
+        + "))); } catch (e) { console.log(JSON.stringify({error: e.message})); }\n"
+    )
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", script], capture_output=True, text=True
+    )
+    if proc.returncode != 0:
+        raise AssertionError(f"node failed to run pdf.mjs's parseArgs: {proc.stderr}")
+    return json.loads(proc.stdout)
+
+
+def test_scan_profile_defaults_to_none():
+    """Every existing caller passes no --scan-profile and must keep today's
+    behaviour. The default is the compatibility guarantee."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed; cannot check pdf.mjs")
+    args = _run_node_parse_args(node, ["--src", "data-room", "--out", "data-room-pdf"])
+    assert args["scanProfile"] == "none"
+
+
+def test_scan_profile_accepts_office():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed; cannot check pdf.mjs")
+    args = _run_node_parse_args(
+        node,
+        ["--src", "data-room", "--out", "data-room-pdf-scanned",
+         "--scan-profile", "office"],
+    )
+    assert args["scanProfile"] == "office"
+
+
+def test_unknown_scan_profile_is_refused_by_name():
+    """A typo must stop the render, not silently produce a pristine tree named
+    as though it were degraded — that is a wrong measurement rather than a
+    missing one, and nothing downstream would notice."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed; cannot check pdf.mjs")
+    args = _run_node_parse_args(
+        node,
+        ["--src", "data-room", "--out", "out", "--scan-profile", "ofice"],
+    )
+    assert "error" in args
+    assert "ofice" in args["error"]
+    assert "none" in args["error"] and "office" in args["error"]

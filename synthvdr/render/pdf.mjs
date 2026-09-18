@@ -93,14 +93,39 @@ function degradationFor(slotId, page) {
   };
 }
 
+// The scan profiles. `none` is the default and is exactly today's behaviour:
+// PNG screenshots, rotation only, nothing else. `office` is the realistic
+// tier — see degradationFor above and applyScanProfile below.
+//
+// A table rather than a boolean because the fax-quality tier will want a
+// third entry, and because an unknown NAME can then be refused with the list
+// of real ones (see parseArgs). That matters more than it looks: a typo that
+// fell through to "no degradation" would produce a pristine tree sitting in a
+// directory named as though it were degraded, and every number measured
+// against it would be wrong rather than missing.
+const SCAN_PROFILES = {
+  none: { degrade: false },
+  office: { degrade: true },
+};
+
 function parseArgs(argv) {
-  const args = { src: null, out: null };
+  const args = { src: null, out: null, scanProfile: "none" };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--src") args.src = argv[++i];
     else if (argv[i] === "--out") args.out = argv[++i];
+    else if (argv[i] === "--scan-profile") args.scanProfile = argv[++i];
   }
   if (!args.src || !args.out) {
-    throw new Error("usage: node pdf.mjs --src <blind-tree> --out <out-tree>");
+    throw new Error(
+      "usage: node pdf.mjs --src <blind-tree> --out <out-tree> " +
+        "[--scan-profile <name>]"
+    );
+  }
+  if (!Object.prototype.hasOwnProperty.call(SCAN_PROFILES, args.scanProfile)) {
+    throw new Error(
+      `pdf.mjs: unknown --scan-profile '${args.scanProfile}'. ` +
+        `Known profiles: ${Object.keys(SCAN_PROFILES).join(", ")}.`
+    );
   }
   return args;
 }
