@@ -65,14 +65,67 @@ function rotationFor(slotId, page) {
   return digest[1] % 2 === 0 ? magnitude : -magnitude;
 }
 
+// The scan-degradation parameters for one page, in the same shape and for the
+// same reason as `rotationFor` above: a pure function of slot and page, so a
+// re-render reproduces the tree exactly and no RNG or clock ever enters the
+// render.
+//
+// The digest is taken over a `scan:`-PREFIXED string, deliberately. Sharing
+// rotationFor's digest would correlate a page's skew with its blur and grain,
+// so the most-tilted pages would also be the least legible ones — the tree
+// would then sweep a narrower band of difficulty than its parameter ranges
+// suggest, while looking from the outside as though it swept the whole range.
+//
+// Ranges are the spec's §5 starting points, to be tuned against the
+// "actually degrades" test rather than taken as settled. They bound the
+// REALISTIC tier: a page a person would file without comment. Widening them
+// far enough to make OCR fail outright is the fax-quality tier, which is out
+// of scope and needs a real image pipeline.
+function degradationFor(slotId, page) {
+  const digest = createHash("sha256").update(`scan:${slotId}:${page}`).digest();
+  return {
+    // puppeteer requires an integer quality; the others are CSS numbers.
+    quality: Math.round(45 + (digest[0] / 255) * 35),
+    blurPx: 0.2 + (digest[1] / 255) * 0.5,
+    contrast: 0.85 + (digest[2] / 255) * 0.15,
+    brightness: 0.92 + (digest[3] / 255) * 0.13,
+    grain: 0.04 + (digest[4] / 255) * 0.08,
+  };
+}
+
+// The scan profiles. `none` is the default and is exactly today's behaviour:
+// PNG screenshots, rotation only, nothing else. `office` is the realistic
+// tier — see degradationFor above and applyScanProfile below.
+//
+// A table rather than a boolean because the fax-quality tier will want a
+// third entry, and because an unknown NAME can then be refused with the list
+// of real ones (see parseArgs). That matters more than it looks: a typo that
+// fell through to "no degradation" would produce a pristine tree sitting in a
+// directory named as though it were degraded, and every number measured
+// against it would be wrong rather than missing.
+const SCAN_PROFILES = {
+  none: { degrade: false },
+  office: { degrade: true },
+};
+
 function parseArgs(argv) {
-  const args = { src: null, out: null };
+  const args = { src: null, out: null, scanProfile: "none" };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--src") args.src = argv[++i];
     else if (argv[i] === "--out") args.out = argv[++i];
+    else if (argv[i] === "--scan-profile") args.scanProfile = argv[++i];
   }
   if (!args.src || !args.out) {
-    throw new Error("usage: node pdf.mjs --src <blind-tree> --out <out-tree>");
+    throw new Error(
+      "usage: node pdf.mjs --src <blind-tree> --out <out-tree> " +
+        "[--scan-profile <name>]"
+    );
+  }
+  if (!Object.prototype.hasOwnProperty.call(SCAN_PROFILES, args.scanProfile)) {
+    throw new Error(
+      `pdf.mjs: unknown --scan-profile '${args.scanProfile}'. ` +
+        `Known profiles: ${Object.keys(SCAN_PROFILES).join(", ")}.`
+    );
   }
   return args;
 }
@@ -456,7 +509,56 @@ async function writeNormalisedPdf(page, outPath) {
 const PAGE_WIDTH_PX = 794;
 const PAGE_HEIGHT_PX = 1123;
 
-async function renderScannedDocument(browser, html, slotId, outPath) {
+// Compose one scanned page's <img> and, when degrading, the grain layer over
+// it. Split out of renderScannedDocument so the per-page CSS is one readable
+// thing rather than a nested template literal inside a map inside a render.
+//
+// Grain is a separate absolutely-positioned div rather than an SVG filter on
+// the image itself: feTurbulence composited INTO an image needs an feComposite
+// chain whose arithmetic coefficients are their own small puzzle, whereas an
+// overlay with mix-blend-mode reads as what it is and degrades gracefully if a
+// future Chrome renders the turbulence slightly differently. The seed is
+// derived from the same digest as everything else, so the noise field is fixed
+// for a given slot and page.
+function applyScanProfile(shotB64, slotId, page, profile) {
+  const deg = rotationFor(slotId, page);
+  const box =
+    `width:${PAGE_WIDTH_PX}px;height:${PAGE_HEIGHT_PX}px;` +
+    `overflow:hidden;page-break-after:always;position:relative;`;
+  const mime = profile.degrade ? "jpeg" : "png";
+  const img =
+    `<img src="data:image/${mime};base64,${shotB64}" ` +
+    `style="width:100%;height:100%;object-fit:contain;` +
+    `transform:rotate(${deg}deg);transform-origin:center;`;
+
+  if (!profile.degrade) {
+    return `<div style="${box}">${img}"></div>`;
+  }
+
+  const d = degradationFor(slotId, page);
+  // A whole-byte seed keeps the data URI stable across JS number formatting.
+  const grainSeed = createHash("sha256")
+    .update(`grain:${slotId}:${page}`)
+    .digest()[0];
+  const noise =
+    `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E` +
+    `%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' ` +
+    `baseFrequency='0.8' numOctaves='2' seed='${grainSeed}'/%3E%3C/filter%3E` +
+    `%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`;
+  return (
+    `<div style="${box}">` +
+    img +
+    `filter:grayscale(1) contrast(${d.contrast.toFixed(4)}) ` +
+    `brightness(${d.brightness.toFixed(4)}) blur(${d.blurPx.toFixed(4)}px);">` +
+    `<div style="position:absolute;inset:0;background-image:${noise};` +
+    `mix-blend-mode:overlay;opacity:${d.grain.toFixed(4)};` +
+    `pointer-events:none;"></div>` +
+    `</div>`
+  );
+}
+
+async function renderScannedDocument(browser, html, slotId, outPath, profileName) {
+  const profile = SCAN_PROFILES[profileName];
   // An image-only PDF: lay the document out at A4, screenshot it one page at
   // a time, and rebuild it as one image per page — no selectable text is
   // left anywhere for a tool to read without OCR.
@@ -479,18 +581,25 @@ async function renderScannedDocument(browser, html, slotId, outPath) {
 
   const shots = [];
   for (let i = 0; i < pageCount; i += 1) {
-    shots.push(
-      await page.screenshot({
-        encoding: "base64",
-        captureBeyondViewport: true,
-        clip: {
-          x: 0,
-          y: i * PAGE_HEIGHT_PX,
-          width: PAGE_WIDTH_PX,
-          height: PAGE_HEIGHT_PX,
-        },
-      })
-    );
+    const shotOptions = {
+      encoding: "base64",
+      captureBeyondViewport: true,
+      type: profile.degrade ? "jpeg" : "png",
+      clip: {
+        x: 0,
+        y: i * PAGE_HEIGHT_PX,
+        width: PAGE_WIDTH_PX,
+        height: PAGE_HEIGHT_PX,
+      },
+    };
+    if (profile.degrade) {
+      // JPEG is the honest source of scanner artefacts: real scanners emit it,
+      // and its ringing around glyph edges is exactly what an OCR engine has
+      // to cope with. `quality` is meaningless for PNG and puppeteer rejects
+      // it, so it is set only on the degrading path.
+      shotOptions.quality = degradationFor(slotId, i + 1).quality;
+    }
+    shots.push(await page.screenshot(shotOptions));
   }
   await page.close();
 
@@ -509,17 +618,7 @@ async function renderScannedDocument(browser, html, slotId, outPath) {
   // millimetres at the margin is what a real scan looks like; a clip that
   // grows with page count is not.
   const pages = shots
-    .map((shot, i) => {
-      const deg = rotationFor(slotId, i + 1);
-      return (
-        `<div style="width:${PAGE_WIDTH_PX}px;height:${PAGE_HEIGHT_PX}px;` +
-        `overflow:hidden;page-break-after:always;">` +
-        `<img src="data:image/png;base64,${shot}" ` +
-        `style="width:100%;height:100%;object-fit:contain;` +
-        `transform:rotate(${deg}deg);transform-origin:center;">` +
-        `</div>`
-      );
-    })
+    .map((shot, i) => applyScanProfile(shot, slotId, i + 1, profile))
     .join("");
 
   const wrapper = await browser.newPage();
@@ -534,7 +633,7 @@ async function renderScannedDocument(browser, html, slotId, outPath) {
 }
 
 async function main() {
-  const { src, out } = parseArgs(process.argv.slice(2));
+  const { src, out, scanProfile } = parseArgs(process.argv.slice(2));
   const srcRoot = path.resolve(src);
   const outRoot = path.resolve(out);
 
@@ -574,7 +673,9 @@ async function main() {
 
       if (scannedSlots.has(slotId)) {
         matchedSlots.add(slotId);
-        scannedPages += await renderScannedDocument(browser, html, slotId, target);
+        scannedPages += await renderScannedDocument(
+          browser, html, slotId, target, scanProfile
+        );
         scanned += 1;
       } else {
         const page = await browser.newPage();
@@ -607,7 +708,7 @@ async function main() {
     }
 
     console.log(
-      `pdf.mjs: wrote ${written} PDF(s) to ${outRoot}` +
+      `pdf.mjs: wrote ${written} PDF(s) to ${outRoot} (--scan-profile ${scanProfile})` +
         (scanned
           ? `; ${scanned} rendered as scans (${scannedPages} image page(s))`
           : "; none scanned")

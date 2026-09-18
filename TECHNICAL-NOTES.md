@@ -321,6 +321,36 @@ which — drawn only from evidence documents, so OCR failure costs a planted fin
 than a filler document nobody is scored on. Its absence is not an error; the render simply
 produces live text throughout.
 
+`pdf.mjs` takes a `--scan-profile` flag, defaulting to `none`. `none` is exactly the
+behaviour above: a scanned slot's pages become PNG screenshots, rotated only, with no other
+degradation — this is the compatibility guarantee the existing test suite relies on.
+`office` additionally re-encodes each page as JPEG at a derived quality, applies a CSS filter
+chain (contrast, brightness, blur), and composites a derived-seed grain overlay, so the page
+carries the artefacts a real office scanner leaves and a tool under test has to OCR through
+rather than merely read past a rotation.
+
+Building the `office` tree is **a manual step, not yet wired into `/vdr-package`** — the skill
+invokes `pdf.mjs` once, with no `--scan-profile` flag, so a sanctioned build never produces it
+on its own. Whether to wire a second, degraded render into every future room's sanctioned
+build is a decision for a human, not something this renderer should default to. To build it by
+hand, run, from the room's own directory, after `_key/scanned.csv` exists and using the room's
+actual `BLIND_TREE` name in place of `data-room`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/synthvdr/render/pdf.mjs" \
+  --src data-room --out data-room-pdf-scanned --scan-profile office
+```
+
+That output directory name — `<blind-tree>-pdf-scanned/` (e.g. `data-room-pdf-scanned/`) —
+is not a free choice: it is the one name `gate_16_render_parity` (`synthvdr/qa/renders.py`)
+recognises, alongside `<blind-tree>-pdf/`. The gate checks whichever render trees it finds on
+disk and SKIPs any that are absent — so a room without the degraded tree passes gate 16 on the
+`-docx`/`-pdf` trees alone, and building `-pdf-scanned` afterwards brings it under the same
+both-directions parity check without any further wiring. Rendering into a sibling directory
+rather than overwriting `<blind-tree>-pdf/` also keeps the pristine `none` tree on disk
+alongside it — the pristine tree is kept because pristine-against-degraded is the only pairing
+that holds the extractor fixed while OCR quality is what varies (spec §6).
+
 **The unit is the document, not the page.** The manifest briefly carried a `slot,page`
 pair, and `pdf.mjs` read every row, stored it, and then honoured only page 1 — a row naming
 page 3 parsed cleanly and did nothing, silently. Since a real data room scans whole

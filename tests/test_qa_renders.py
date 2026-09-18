@@ -164,6 +164,45 @@ def test_case_only_mismatch_is_consistent_across_both_directions(room):
 # --- F5: both directions must identify files the same way -----------------
 
 
+# --- The degraded scan tree gets the same both-directions parity ----------
+
+
+def test_gate_16_checks_the_degraded_scan_tree():
+    """`-pdf-scanned` must be registered exactly like the other render
+    trees: same suffix-to-extension mapping the gate reads directly."""
+    from synthvdr.qa.renders import RENDER_SUFFIXES
+
+    assert RENDER_SUFFIXES["-pdf-scanned"] == ".pdf"
+
+
+def test_fails_when_a_scanned_render_is_missing(room):
+    """Mirrors test_fails_when_a_render_is_missing for the degraded tree:
+    a data-room-pdf-scanned/ with no render for the source document must
+    fail, naming that document."""
+    (room / "data-room-pdf-scanned").mkdir()
+    result = gate_16_render_parity(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "1.1.1_articles" in result.detail
+
+
+def test_fails_on_orphaned_scanned_render_with_no_missing_direction(room):
+    """Mirrors test_fails_on_orphaned_render_with_no_missing_direction for
+    the degraded tree: every real source has its render (no MISSING
+    problem) but a stale render whose source was removed must fail in the
+    ORPHANED direction, not the missing one."""
+    out = room / "data-room-pdf-scanned" / "01_corporate"
+    out.mkdir(parents=True)
+    (out / "1.1.1_articles.pdf").write_bytes(b"stub")
+    (out / "9.9.9_deleted-source.pdf").write_bytes(b"stale")
+
+    result = gate_16_render_parity(ctx_for(room))
+
+    assert result.status == "FAIL"
+    assert "render(s) with no source" in result.detail
+    assert "source(s) with no render" not in result.detail
+    assert "9.9.9_deleted-source" in result.detail
+
+
 def test_missing_direction_uses_full_relative_paths_not_bare_stems(room):
     """Two sources sharing a basename in different directories must not
     collapse to the same identifier in the message -- gate 16 must print

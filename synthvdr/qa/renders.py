@@ -23,7 +23,11 @@ from typing import Dict, List
 from .runner import fail, ok, skip, truncated
 
 # suffix appended to BLIND_TREE's name -> file extension the render tree uses.
-RENDER_SUFFIXES = {"-docx": ".docx", "-pdf": ".pdf"}
+# `-pdf-scanned` is the deliberately-degraded twin of `-pdf` (same 800
+# documents, the scanned slots rendered hard to OCR). It is listed here and
+# nowhere else: parity in both directions, and the orphan detection this
+# module's docstring explains is load-bearing, then apply to it unchanged.
+RENDER_SUFFIXES = {"-docx": ".docx", "-pdf": ".pdf", "-pdf-scanned": ".pdf"}
 
 
 def gate_16_render_parity(ctx):
