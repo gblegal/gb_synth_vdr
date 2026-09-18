@@ -1,9 +1,11 @@
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import zlib
 from pathlib import Path
 
 import pytest
@@ -18,7 +20,8 @@ from synthvdr.render.docx import (
     scanned_slots,
     write_scanned_csv,
 )
-from synthvdr.schema import Finding, FindingSet
+from synthvdr.roomconf import load_room_conf
+from synthvdr.schema import Finding, FindingSet, load_findings
 
 PDF_MJS = Path(__file__).resolve().parent.parent / "synthvdr" / "render" / "pdf.mjs"
 
@@ -1258,4 +1261,213 @@ def test_grain_seed_is_derived_not_random():
     assert "Math.random" not in source, "pdf.mjs must contain no RNG"
     assert "seed='${grainSeed}'" in source or 'seed=\\"${grainSeed}\\"' in source, (
         "feTurbulence's seed must be interpolated from a derived value"
+    )
+
+
+# --------------------------------------------------------------------------
+# The test the whole scan profile exists to satisfy: does the degraded tree
+# actually come out HARDER TO READ?
+#
+# Everything above this line asks whether the pipeline RAN — the right flag
+# parsed, the right filter string composed, the same numbers on both sides of
+# the language boundary. All of it passed against the profile that shipped,
+# whose "scans" were pristine screenshots tilted by under a degree and which
+# an OCR engine read at near-perfect confidence. Only a measurement of the
+# rendered bytes can tell the difference, so this test renders two real trees
+# and reads them with a real OCR engine.
+#
+# It SKIPs loudly rather than passing silently when Chrome, node or the OCR
+# engine is missing: a silent pass here is worse than no test at all.
+#
+# rapidocr_onnxruntime is deliberately NOT in pyproject.toml, not even in an
+# extra. It is a local measuring instrument for this one test, not part of
+# what synthvdr ships, and adding it would put an onnxruntime build into
+# every install to serve a test that most machines skip.
+
+CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+
+_TOKEN = re.compile(r"[a-z0-9]{3,}")
+
+# An image XObject header in a Chrome-written PDF. Every page of a scanned
+# render is one such image and nothing else, so pulling these out is reading
+# the pages — no PDF rasteriser needed, which matters because there is no
+# such library in this project's dependencies and this test must not add one.
+_PDF_IMAGE = re.compile(
+    rb"<<[^<>]*?/Subtype\s*/Image[^<>]*?/Length\s+(\d+)\s*>>\s*stream\r?\n", re.S
+)
+
+
+def _tokenise(text: str) -> set:
+    """Lowercase alphanumeric runs of three or more characters.
+
+    Three, not one: OCR noise is full of stray one- and two-character marks,
+    and counting those as words would let a page of speckle score as readable.
+    """
+    return set(_TOKEN.findall(text.lower()))
+
+
+def _pdf_page_images(pdf: Path):
+    """Every full-colour image in `pdf`, in page order, as HxWx3 arrays.
+
+    Chrome writes these as raw FlateDecode samples. Anything whose byte count
+    is not exactly one RGB triple per pixel is skipped — which is how the
+    degraded pages' DeviceGray /SMask companions are left out without this
+    having to parse the object graph to find out they are masks.
+    """
+    import numpy as np
+
+    blob = pdf.read_bytes()
+    images = []
+    for match in _PDF_IMAGE.finditer(blob):
+        head = blob[match.start() : match.end()]
+        width = int(re.search(rb"/Width\s+(\d+)", head).group(1))
+        height = int(re.search(rb"/Height\s+(\d+)", head).group(1))
+        raw = zlib.decompress(blob[match.end() : match.end() + int(match.group(1))])
+        if len(raw) != width * height * 3:
+            continue
+        images.append(np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3))
+    return images
+
+
+def _ocr_tokens(engine, pdf: Path) -> set:
+    """Read every page of `pdf` with the OCR engine and tokenise what it saw."""
+    tokens = set()
+    for image in _pdf_page_images(pdf):
+        result, _elapsed = engine(image)
+        for _box, text, _confidence in result or []:
+            tokens |= _tokenise(text)
+    return tokens
+
+
+def _render_pdf_tree(node: str, src: Path, out: Path, profile: str) -> None:
+    """Drive the real pdf.mjs, with the system Chrome puppeteer must not go
+    looking for on its own."""
+    env = {
+        **os.environ,
+        "PUPPETEER_EXECUTABLE_PATH": str(CHROME),
+    }
+    proc = subprocess.run(
+        [node, str(PDF_MJS), "--src", str(src), "--out", str(out),
+         "--scan-profile", profile],
+        capture_output=True, text=True, env=env,
+    )
+    if proc.returncode != 0 and "puppeteer is not installed" in proc.stderr:
+        pytest.skip("puppeteer is not installed; cannot render PDFs")
+    assert proc.returncode == 0, f"pdf.mjs --scan-profile {profile} failed: {proc.stderr}"
+
+
+def test_office_profile_measurably_degrades_extracted_text(tmp_path, build_xs_room):
+    """Render one small room twice, pristine and degraded, OCR both, and
+    require that the degraded tree loses text the pristine one keeps.
+
+    Needs Chrome and an OCR reader, so it SKIPs loudly rather than passing
+    silently — this is the test the whole profile exists to satisfy, and a
+    silent pass here is worse than no test.
+
+    The rendered tree is two documents, not the whole fixture room: the room
+    is built in full (so the scanned slot is a real evidence document with the
+    prose the generator really writes), and the two documents the measurement
+    needs are copied into a source tree of their own. Rendering all forty
+    takes three quarters of a minute per profile and measures nothing the two
+    do not.
+    """
+    node = shutil.which("node")
+    if node is None or not CHROME.exists():
+        pytest.skip("needs node and system Chrome to render PDFs")
+    rapidocr = pytest.importorskip("rapidocr_onnxruntime")
+
+    room = build_xs_room(tmp_path / "room")
+    blind = room / load_room_conf(room / "room.conf").get("BLIND_TREE")
+    findings = load_findings(room / "_key" / "findings.yaml")
+
+    # One scanned document, chosen by the real selector rather than by hand,
+    # and written with the real manifest writer — a fixture that picked its
+    # own slot could measure a document the shipped code would never scan.
+    src = tmp_path / "mini" / "data-room"
+    scanned_rel = write_scanned_csv(
+        findings, 1, tmp_path / "mini" / "_key" / "scanned.csv"
+    )[0]
+    # A born-digital control alongside it: the first document that is not the
+    # scanned one, so the byte comparisons below have something to compare.
+    digital_rel = next(
+        p.relative_to(blind).as_posix()
+        for p in sorted(blind.rglob("*.md"))
+        if p.relative_to(blind).as_posix() != scanned_rel
+    )
+    for rel in (scanned_rel, digital_rel):
+        (src / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(blind / rel, src / rel)
+
+    pristine_tree = tmp_path / "pdf-none"
+    degraded_tree = tmp_path / "pdf-office"
+    repeat_tree = tmp_path / "pdf-office-again"
+    _render_pdf_tree(node, src, pristine_tree, "none")
+    _render_pdf_tree(node, src, degraded_tree, "office")
+    _render_pdf_tree(node, src, repeat_tree, "office")
+
+    def pdf_for(tree, rel):
+        return tree / rel.replace(".md", ".pdf")
+
+    # Spec §9 test 2: the profile touches SCANNED slots and nothing else. A
+    # born-digital document is written by the same text path either way, so
+    # its bytes must not move; the scanned one must.
+    assert pdf_for(pristine_tree, digital_rel).read_bytes() == pdf_for(
+        degraded_tree, digital_rel
+    ).read_bytes(), (
+        f"{digital_rel} is born-digital and must render identically under both "
+        "profiles — the scan profile is leaking into unscanned documents"
+    )
+    assert pdf_for(pristine_tree, scanned_rel).read_bytes() != pdf_for(
+        degraded_tree, scanned_rel
+    ).read_bytes(), f"{scanned_rel} rendered identically under both profiles"
+
+    # Spec §9 test 3: two renders of the same tree agree byte for byte. This
+    # is what the derived grain seed and the hash-driven parameters are FOR —
+    # an RNG anywhere in the degradation would show up here and nowhere else.
+    assert pdf_for(degraded_tree, scanned_rel).read_bytes() == pdf_for(
+        repeat_tree, scanned_rel
+    ).read_bytes(), (
+        "two office renders of the same tree differ — something in the "
+        "degradation is not a pure function of (slot, page)"
+    )
+
+    engine = rapidocr.RapidOCR()
+    pristine_tokens = _ocr_tokens(engine, pdf_for(pristine_tree, scanned_rel))
+    degraded_tokens = _ocr_tokens(engine, pdf_for(degraded_tree, scanned_rel))
+    source_tokens = _tokenise((blind / scanned_rel).read_text())
+
+    pristine_survival = len(pristine_tokens & source_tokens) / len(source_tokens)
+    degraded_survival = len(degraded_tokens & source_tokens) / len(source_tokens)
+    print(
+        f"\n{scanned_rel}: pristine survival {pristine_survival:.4f}, "
+        f"degraded survival {degraded_survival:.4f}"
+    )
+
+    # The pristine tree is the control: OCR should read it nearly perfectly.
+    assert pristine_survival > 0.90, (
+        f"pristine scan only survived at {pristine_survival:.2f} — the control "
+        "is broken, so the comparison below means nothing"
+    )
+    # The degraded tree must be measurably worse, and still readable. Both
+    # bounds matter: no degradation measures nothing, and total destruction
+    # measures nothing either (spec §10).
+    #
+    # 0.20, NOT the 0.05 the plan suggested, and the number is measured rather
+    # than chosen. Stubbing degradationFor to quality 100 / no blur / no
+    # contrast or brightness shift / no grain — a profile that still re-encodes
+    # and re-composites the page but degrades NOTHING — still scores 0.86 here,
+    # because compositing the filter layer makes Chrome resample the page. A
+    # 0.05 margin passes that stub, which is precisely the profile this test
+    # exists to fail. The real parameters score 0.69, so the threshold sits
+    # between the two: the stub fails by 0.06 and the real profile passes by
+    # 0.11. If a future Chrome moves the resampling, re-measure with the stub
+    # before touching this number — it is the whole calibration.
+    assert degraded_survival < pristine_survival - 0.20, (
+        f"degraded scan survived at {degraded_survival:.2f} against pristine "
+        f"{pristine_survival:.2f} — the office profile is not degrading anything "
+        "beyond what re-encoding the page does on its own"
+    )
+    assert degraded_survival > 0.40, (
+        f"degraded scan survived at only {degraded_survival:.2f} — this is the "
+        "fax-quality tier, which is out of scope; loosen degradationFor's ranges"
     )
