@@ -2215,3 +2215,139 @@ def test_build_skill_hands_authors_the_cast_with_roles_not_bare_names():
         "Paste the fact sheet's `## Cast` table itself, name and role, alongside the name "
         "list" in body
     )
+
+
+# ---------------------------------------------------------------------------
+# Step 3's two renders — the degraded scan tree, wired into the sanctioned
+# build. These read the SHIPPED command lines out of the skill, in the same
+# spirit as test_package_skill_subset_script_executes_against_a_real_room
+# above: a step that drifts from the renderer it documents is caught in the
+# commit that drifts it.
+# ---------------------------------------------------------------------------
+
+PACKAGE_SKILL = ROOT / "skills" / "vdr-package" / "SKILL.md"
+
+# `node ... pdf.mjs ...`, across a fenced bash block, with backslash line
+# continuations folded away first so a wrapped invocation reads as one
+# command.
+PDF_MJS_INVOCATION = re.compile(r"^\s*node\s+.*?pdf\.mjs\b.*$", re.MULTILINE)
+
+
+def pdf_mjs_invocations(path: Path) -> List[List[str]]:
+    """Every `node ... pdf.mjs ...` command line in a skill file, as argv."""
+    argvs = []
+    for block in bash_examples(path):
+        folded = re.sub(r"\\\n\s*", " ", block)
+        for line in PDF_MJS_INVOCATION.findall(folded):
+            argvs.append(shlex.split(line.strip()))
+    return argvs
+
+
+def _flag(argv: Sequence[str], name: str) -> str:
+    assert name in argv, f"{' '.join(argv)}: no {name}"
+    return argv[argv.index(name) + 1]
+
+
+def test_package_skill_renders_the_room_twice_keeping_both_pdf_trees():
+    """Spec §6: a room that opts in renders twice, to two output directories —
+    pristine `none` and degraded `office` — and KEEPS BOTH.
+
+    Rendering only the degraded tree is the tempting simplification and it
+    destroys the measurement. Frithcombe's DOCX-against-PDF comparison is the
+    demonstration: of the eleven documents that changed pile, ten were not
+    scans at all, because the two trees differed in EXTRACTOR as well as in
+    scan quality. Pristine-PDF against degraded-PDF is the only pairing that
+    holds the extractor fixed, because both come out of the same renderer.
+    """
+    argvs = pdf_mjs_invocations(PACKAGE_SKILL)
+    assert len(argvs) == 2, (
+        f"{PACKAGE_SKILL}: expected exactly two pdf.mjs invocations (pristine "
+        f"and degraded), found {len(argvs)}"
+    )
+
+    plan = {(_flag(a, "--out"), _flag(a, "--scan-profile")) for a in argvs}
+    assert plan == {("data-room-pdf", "none"), ("data-room-pdf-scanned", "office")}, plan
+
+    # Both read the same source tree — same 800 documents, same slots, same
+    # answer key (spec §7). A second render of a different --src would be a
+    # different room and the comparison would mean nothing.
+    assert {_flag(a, "--src") for a in argvs} == {"data-room"}
+
+
+def test_package_skills_degraded_tree_name_is_the_one_gate_16_recognises():
+    """`-pdf-scanned` is not a free choice of directory name: it is the key
+    `RENDER_SUFFIXES` carries, and the only name under which the degraded tree
+    comes under gate 16's both-directions parity check. A tree rendered beside
+    it under any other name is invisible to every gate in the suite."""
+    from synthvdr.qa.renders import RENDER_SUFFIXES
+
+    blind = "data-room"
+    outs = {_flag(a, "--out") for a in pdf_mjs_invocations(PACKAGE_SKILL)}
+    assert outs == {f"{blind}{suffix}" for suffix in RENDER_SUFFIXES if suffix != "-docx"}
+
+
+def test_package_skill_only_names_scan_profiles_pdf_mjs_implements():
+    """A profile name in the skill that pdf.mjs does not implement fails at
+    the last moment, from Node, after the whole pristine render has already
+    run. Pinned against the same tuple room.conf validates against, which is
+    itself pinned against the shipped pdf.mjs by
+    test_pdf_mjs_scan_profiles_match_python_exactly."""
+    from synthvdr.roomconf import SCAN_PROFILES
+
+    for argv in pdf_mjs_invocations(PACKAGE_SKILL):
+        profile = _flag(argv, "--scan-profile")
+        assert profile in SCAN_PROFILES, (
+            f"{PACKAGE_SKILL}: --scan-profile {profile!r} is not one of "
+            f"{SCAN_PROFILES} — pdf.mjs would refuse it"
+        )
+
+
+def test_package_skill_writes_scanned_csv_before_every_render():
+    """The trap this feature already paid for once. `pdf.mjs` reads
+    `_key/scanned.csv` ONCE, at startup; a room whose manifest is written
+    afterwards renders every page as live text and reports no error at all.
+    Adding a second invocation is exactly the kind of edit that reorders a
+    step, so the ordering is pinned by character offset in the shipped file
+    rather than left to a reader's care.
+    """
+    text = PACKAGE_SKILL.read_text(encoding="utf-8")
+    csv_at = text.index("write_scanned_csv")
+    for match in PDF_MJS_INVOCATION.finditer(text):
+        assert csv_at < match.start(), (
+            "a pdf.mjs invocation precedes write_scanned_csv — the renderer "
+            "would read no manifest and silently produce a tree with no scans "
+            "in it, which is the exact failure this feature exists to prevent"
+        )
+
+
+def test_package_skill_states_the_degraded_trees_size_cost_where_it_is_read():
+    """Applying any CSS filter makes Chrome composite and resample the page
+    from 794px to 2488px wide and embed it as lossless Flate RGB plus a full
+    alpha mask: a 4-page scanned document measures 564KB under `none` and
+    9.05MB under `office`. That cost lands in a tree that gets frozen and
+    distributed, so whoever runs the skill must meet it BEFORE they run it —
+    not in TECHNICAL-NOTES, which they may never open.
+    """
+    text = PACKAGE_SKILL.read_text(encoding="utf-8")
+    step_3 = text[text.index("## 3."):text.index("## 4.")]
+    assert "SCAN_PROFILE" in step_3, "step 3 must name the opt-in key"
+    assert "16" in step_3 and "MB" in step_3, (
+        "step 3 must state the size multiple and a measured figure, not just "
+        "call the tree 'large'"
+    )
+    # The cost must be stated before the command that incurs it.
+    assert step_3.index("MB") < step_3.index("--scan-profile office")
+
+
+def test_package_skill_and_technical_notes_agree_on_the_opt_in():
+    """TECHNICAL-NOTES §5 described the degraded tree as "a manual step, not
+    yet wired into `/vdr-package`". Wiring it in makes that sentence untrue,
+    and a doc left asserting the opposite of the skill is worse than one that
+    says nothing: a reader who believes it will not look for the opt-in key
+    at all, and will conclude their room cannot produce the tree.
+    """
+    notes = (ROOT / "TECHNICAL-NOTES.md").read_text(encoding="utf-8")
+    assert "not yet wired into" not in notes
+    assert "SCAN_PROFILE" in notes, (
+        "TECHNICAL-NOTES must name the opt-in key the skill actually reads"
+    )
