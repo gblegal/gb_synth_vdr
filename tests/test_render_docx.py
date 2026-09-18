@@ -1224,3 +1224,38 @@ def test_unknown_scan_profile_is_refused_by_name():
     assert "error" in args
     assert "ofice" in args["error"]
     assert "none" in args["error"] and "office" in args["error"]
+
+
+def test_scanned_render_uses_png_and_no_filter_under_none():
+    """The default path must not move: PNG screenshots, no CSS filter, no
+    grain overlay. This reads the source rather than rendering, so it runs
+    without puppeteer."""
+    source = PDF_MJS.read_text(encoding="utf-8")
+    assert "applyScanProfile" in source, "renderScannedDocument must consult the profile"
+    assert 'profile.degrade ? "jpeg" : "png"' in source, (
+        "the screenshot encoding must be chosen by the profile, PNG under none"
+    )
+
+
+def test_scanned_render_composes_filter_and_grain_when_degrading():
+    """The three degradations the spec names must all reach the page: JPEG
+    quality, the CSS filter chain, and the grain overlay."""
+    source = PDF_MJS.read_text(encoding="utf-8")
+    for needle in (
+        "shotOptions.quality",
+        "degradationFor(slotId, i + 1).quality",
+        "filter:",
+        "feTurbulence",
+        "mix-blend-mode",
+    ):
+        assert needle in source, f"{needle!r} missing from pdf.mjs's scanned render"
+
+
+def test_grain_seed_is_derived_not_random():
+    """feTurbulence's seed must come from the hash, or the grain differs on
+    every render and the tree stops being reproducible."""
+    source = PDF_MJS.read_text(encoding="utf-8")
+    assert "Math.random" not in source, "pdf.mjs must contain no RNG"
+    assert "seed='${grainSeed}'" in source or 'seed=\\"${grainSeed}\\"' in source, (
+        "feTurbulence's seed must be interpolated from a derived value"
+    )

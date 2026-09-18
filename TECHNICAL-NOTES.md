@@ -251,6 +251,18 @@ which — drawn only from evidence documents, so OCR failure costs a planted fin
 than a filler document nobody is scored on. Its absence is not an error; the render simply
 produces live text throughout.
 
+`pdf.mjs` takes a `--scan-profile` flag, defaulting to `none`. `none` is exactly the
+behaviour above: a scanned slot's pages become PNG screenshots, rotated only, with no other
+degradation — this is the compatibility guarantee the existing test suite relies on.
+`office` additionally re-encodes each page as JPEG at a derived quality, applies a CSS filter
+chain (contrast, brightness, blur), and composites a derived-seed grain overlay, so the page
+carries the artefacts a real office scanner leaves and a tool under test has to OCR through
+rather than merely read past a rotation. The convention is to render `office` into a
+sibling directory named `<blind-tree>-pdf-scanned/` (e.g. `data-room-pdf-scanned/`) rather
+than overwriting `<blind-tree>-pdf/`, so the pristine `none` tree survives alongside it —
+the pristine tree is kept because pristine-against-degraded is the only pairing that holds
+the extractor fixed while OCR quality is what varies (spec §6).
+
 **The unit is the document, not the page.** The manifest briefly carried a `slot,page`
 pair, and `pdf.mjs` read every row, stored it, and then honoured only page 1 — a row naming
 page 3 parsed cleanly and did nothing, silently. Since a real data room scans whole
