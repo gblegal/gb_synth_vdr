@@ -708,7 +708,7 @@ async function main() {
     }
 
     console.log(
-      `pdf.mjs: wrote ${written} PDF(s) to ${outRoot}` +
+      `pdf.mjs: wrote ${written} PDF(s) to ${outRoot} (--scan-profile ${scanProfile})` +
         (scanned
           ? `; ${scanned} rendered as scans (${scannedPages} image page(s))`
           : "; none scanned")
