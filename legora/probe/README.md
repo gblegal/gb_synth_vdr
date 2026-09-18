@@ -191,8 +191,8 @@ zip-in-scratch shape with the base64 text as the project's copy.
 ## What run 2 established (18 September 2026, probe 0.2.1, project A)
 
 From the report, its checksum file and the project download, in Drive under
-`Legora Skills/Runs/2016-09-19 probe 0.2.1 Run 2` (the folder's date is a
-slip; the run is 18 September). Run `20260918-092034-e49c`, a new
+`Legora Skills/Runs/2026-09-18 synth-vdr probe 0.2.1 Run 2`. Run
+`20260918-092034-e49c`, a new
 conversation in the same project. Before it, run 1 of 0.2.1
 (`20260918-085959-f262`) had run in that project, its zip had been
 downloaded, encoded at home with `base64 -i … -o probe-room.b64.txt` and
