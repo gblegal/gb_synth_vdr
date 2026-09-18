@@ -289,6 +289,34 @@ files they are responsible for, and never delete a stale render — and neither 
 core build time, so a missing `python-docx` or missing Node/Chrome never blocks generating
 or QA-checking a room.
 
+**Both render trees are byte-reproducible: the same source tree rendered twice produces
+identical bytes, so a rendered tree can carry a meaningful `content_hash`.** That is not free,
+because `compute_content_hash` (§ the manifest) hashes raw file BYTES, and both renderers
+stamped something into their output that moved between runs. Chrome writes `/CreationDate` and
+`/ModDate` to the second, plus `/Producer` (the Skia build) and `/Creator` (the user-agent,
+which names the host OS) — 792 distinct timestamps across the 800 files of one real render, and
+different bytes again on a different Chrome or a different machine. python-docx's XML is
+already fully deterministic, but the zip member mtimes were the build's wall clock.
+
+Both are now pinned to 1980-01-01T00:00:00Z — the earliest instant a zip timestamp can carry,
+so the DOCX side has no choice and the PDF side is set to match. `/Producer` and `/Creator` are
+dropped rather than given fixed values: every Info dictionary entry is optional, and a document
+that declines to name its producer says something true where one naming a Chrome build it may
+not have been rendered by does not. puppeteer's `page.pdf()` exposes no metadata options, so
+`pdf.mjs` takes the bytes back and rewrites the Info dictionary itself — which, because that
+dictionary sits at the head of a Skia-written file, means rewriting every offset in the
+cross-reference table and the `startxref` pointer too. `tests/test_render_reproducible.py`
+renders twice into two directories and compares the hashes; it does not take the pinning on
+trust.
+
+Until this held, there was **no honest way to provenance-verify a run over a render tree**.
+Writing a `manifest.json` for a render tree after the fact hashes the very tree the run just
+read, so the check compares the tree against itself, can never fail, and prints "verified"
+while verifying nothing. Now a render tree can carry a real manifest written at render time —
+the way `synthvdr corrupt` already writes one per corrupted twin — and a run over it can
+genuinely verify. Writing that manifest is a `/vdr-package` change, not yet made; the
+renderers only make it possible.
+
 **`gate_16_render_parity` checks filename parity only, in both directions — it never opens a
 rendered file to compare content.** Whenever a render tree is present it confirms every
 blind-tree document has a same-named render and every render has a same-named source, and it
