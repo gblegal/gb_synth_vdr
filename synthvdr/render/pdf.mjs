@@ -55,8 +55,9 @@
 
 import { createHash } from "node:crypto";
 import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 function rotationFor(slotId, page) {
   const digest = createHash("sha256").update(`${slotId}:${page}`).digest();
@@ -217,6 +218,237 @@ async function loadPuppeteer() {
   }
 }
 
+// --- metadata normalisation ----------------------------------------------
+//
+// Everything above this point is deterministic by construction. Chrome is
+// not. Its PDF writer stamps four fields into the document Info dictionary
+// of every file it emits, and all four move on bytes this project depends
+// on not moving:
+//
+//   /CreationDate, /ModDate  the wall clock, to the second — 792 distinct
+//                            values across the 800 files of one real render
+//   /Producer                the Skia/Chrome build, e.g. `Skia/PDF m153`
+//   /Creator                 the full user-agent, which carries both the
+//                            Chrome version and the host OS string
+//
+// `synthvdr.manifest.compute_content_hash` hashes raw file BYTES, so each of
+// those lands in the room's fingerprint: the same source tree rendered a
+// second later, on a newer Chrome, or on another OS, hashed differently. A
+// render tree could therefore never carry a manifest that meant anything —
+// which is the whole reason a render tree had none, and why a run over one
+// could not be provenance-verified at all.
+//
+// puppeteer's `page.pdf()` exposes NO metadata options — there is no flag to
+// find and no point looking for one. The fix is to take the bytes back
+// (omitting `path` makes `page.pdf()` resolve to the buffer instead of
+// writing it) and rewrite the Info dictionary ourselves before they ever
+// reach disk.
+//
+// WHY THIS REWRITES THE xref TABLE RATHER THAN PADDING. The Info dictionary
+// is object 1, and Skia puts it at byte 15 — ahead of everything else in the
+// file. Shortening it shifts every later object, so every offset in the
+// cross-reference table and the `startxref` pointer have to move with it, or
+// the file is corrupt. The cheaper-looking alternative — overwrite the dict
+// in place and pad with spaces to its original length — keeps the offsets
+// valid but makes the padding width a function of the user-agent string's
+// length, so two renders on different Chrome builds would still differ. That
+// is precisely the variance being removed, reintroduced as whitespace.
+//
+// Skia emits a PDF 1.4 file with a classic 20-byte xref table, no
+// cross-reference streams and no object streams, which is what the parser
+// below assumes. Anything it cannot account for throws, and `main` reports
+// it and exits non-zero: a renderer that quietly emitted an unnormalised (or
+// worse, a corrupt) PDF would put us back where we started, with the damage
+// invisible until a fingerprint failed to match months later.
+
+// The pinned timestamp, in PDF's own date syntax. 1980-01-01 is chosen to
+// agree with the DOCX side, where `synthvdr.render.docx._FIXED_ZIP_DATE_TIME`
+// pins zip member mtimes to the same instant — zip cannot represent anything
+// earlier, so that side has no choice, and there is no reason for the two
+// render trees to disagree about what "no meaningful date" looks like.
+const PINNED_PDF_DATE = "D:19800101000000+00'00'";
+
+// /Producer and /Creator are not pinned to a fixed string, they are dropped:
+// every entry of the Info dictionary is optional under the spec, and a
+// document that declines to name its producer says something true, where one
+// naming a Chrome build it may not have been rendered by does not.
+const PINNED_INFO_DICT =
+  `<</CreationDate (${PINNED_PDF_DATE})\n/ModDate (${PINNED_PDF_DATE})>>`;
+
+// The end of the dictionary opening at `start`, one past its closing `>>`.
+//
+// A plain indexOf(">>") is not enough: the /Creator value Chrome writes is a
+// literal string containing escaped parentheses — `(Macintosh; Intel Mac OS
+// X 10_15_7)` arrives as `\(Macintosh; ...\)` — and a literal string may
+// contain any byte at all, `>` included. So strings are skipped rather than
+// scanned, hex strings (`<...>`) along with literal ones, and nested
+// dictionaries are counted.
+function dictEnd(pdf, start) {
+  let depth = 0;
+  let i = start;
+  while (i < pdf.length) {
+    const c = pdf[i];
+    if (c === "(") {
+      // A literal string. Balanced parens nest inside one without escaping,
+      // and a backslash escapes the next byte whatever it is.
+      let nesting = 1;
+      i += 1;
+      while (i < pdf.length && nesting > 0) {
+        if (pdf[i] === "\\") i += 2;
+        else {
+          if (pdf[i] === "(") nesting += 1;
+          else if (pdf[i] === ")") nesting -= 1;
+          i += 1;
+        }
+      }
+      continue;
+    }
+    if (c === "<" && pdf[i + 1] === "<") {
+      depth += 1;
+      i += 2;
+      continue;
+    }
+    if (c === "<") {
+      // A hex string: skip it whole, so its closing `>` can never pair with
+      // a following `>` to look like the end of the dictionary.
+      const close = pdf.indexOf(">", i);
+      if (close < 0) break;
+      i = close + 1;
+      continue;
+    }
+    if (c === ">" && pdf[i + 1] === ">") {
+      depth -= 1;
+      i += 2;
+      if (depth === 0) return i;
+      continue;
+    }
+    i += 1;
+  }
+  throw new Error("unterminated dictionary in the rendered PDF");
+}
+
+// Every entry of the classic cross-reference table the `startxref` at the end
+// of `pdf` points at: { num, at, offset, type }, where `at` is the byte index
+// of the entry's own 10-digit offset field, so it can be rewritten in place.
+function parseXrefTable(pdf) {
+  const startxrefAt = pdf.lastIndexOf("startxref");
+  if (startxrefAt < 0) throw new Error("no startxref in the rendered PDF");
+  const pointer = /^startxref\s+(\d+)/.exec(pdf.slice(startxrefAt));
+  if (!pointer) throw new Error("unreadable startxref in the rendered PDF");
+  const tableAt = Number(pointer[1]);
+  if (pdf.slice(tableAt, tableAt + 4) !== "xref") {
+    throw new Error(
+      "startxref does not point at a classic `xref` table — this renderer " +
+        "cannot normalise a cross-reference stream"
+    );
+  }
+
+  const entries = [];
+  let cursor = tableAt + 4;
+  for (;;) {
+    const header = /^[\r\n\s]*(\d+)[ \t]+(\d+)[ \t]*\r?\n/.exec(
+      pdf.slice(cursor, cursor + 64)
+    );
+    if (!header) break;
+    cursor += header[0].length;
+    const first = Number(header[1]);
+    const count = Number(header[2]);
+    for (let i = 0; i < count; i += 1) {
+      // Fixed 20 bytes per entry, per the spec: 10 offset digits, space,
+      // 5 generation digits, space, one type byte, two bytes of EOL.
+      const record = /^(\d{10}) (\d{5}) ([nf])/.exec(pdf.slice(cursor, cursor + 20));
+      if (!record) {
+        throw new Error(
+          `malformed xref entry for object ${first + i} in the rendered PDF`
+        );
+      }
+      entries.push({
+        num: first + i,
+        at: cursor,
+        offset: Number(record[1]),
+        type: record[3],
+      });
+      cursor += 20;
+    }
+  }
+  if (!entries.length) throw new Error("empty xref table in the rendered PDF");
+  return { entries, startxrefAt, tableAt };
+}
+
+// Replace the Info dictionary of `bytes` with PINNED_INFO_DICT, moving every
+// xref offset and the startxref pointer to match. Returns a Buffer.
+//
+// latin1 is a byte-exact round trip for arbitrary binary — every byte maps to
+// exactly one code unit and back — so the compressed streams this walks past
+// are untouched, and indices into the string are byte offsets, which is what
+// the xref table's numbers are.
+export function normalisePdfMetadata(bytes) {
+  const pdf = Buffer.from(bytes).toString("latin1");
+
+  const trailerAt = pdf.lastIndexOf("trailer");
+  if (trailerAt < 0) throw new Error("no trailer in the rendered PDF");
+  const infoRef = /\/Info\s+(\d+)\s+(\d+)\s+R/.exec(pdf.slice(trailerAt));
+  // No /Info at all means nothing was stamped and there is nothing to pin —
+  // not an error, just a file that is already reproducible.
+  if (!infoRef) return Buffer.from(pdf, "latin1");
+  const infoNum = Number(infoRef[1]);
+
+  const { entries, tableAt } = parseXrefTable(pdf);
+  const info = entries.find((e) => e.num === infoNum && e.type === "n");
+  if (!info) {
+    throw new Error(`the trailer's /Info object ${infoNum} is not in the xref table`);
+  }
+
+  const header = /^(\d+)\s+(\d+)\s+obj/.exec(pdf.slice(info.offset, info.offset + 64));
+  if (!header || Number(header[1]) !== infoNum) {
+    throw new Error(`xref offset for object ${infoNum} does not point at it`);
+  }
+  const start = pdf.indexOf("<<", info.offset);
+  if (start < 0 || start > info.offset + 64) {
+    throw new Error(`the /Info object ${infoNum} is not a dictionary`);
+  }
+  const end = dictEnd(pdf, start);
+  const delta = PINNED_INFO_DICT.length - (end - start);
+
+  // The rewrite itself, then the two sets of pointers that have to follow it.
+  // Order matters: startxref is rewritten first, on the string, because its
+  // digit count may change and that would move every later byte — but it sits
+  // AFTER the xref table, so nothing the table occupies moves with it. The
+  // table's own entries are then patched in place, at fixed width, in the
+  // buffer.
+  let out = pdf.slice(0, start) + PINNED_INFO_DICT + pdf.slice(end);
+
+  const shift = (offset) => (offset >= end ? offset + delta : offset);
+
+  const startxrefAt = out.lastIndexOf("startxref");
+  const pointer = /^startxref(\s+)(\d+)/.exec(out.slice(startxrefAt));
+  out =
+    out.slice(0, startxrefAt) +
+    `startxref${pointer[1]}${shift(tableAt)}` +
+    out.slice(startxrefAt + pointer[0].length);
+
+  const buffer = Buffer.from(out, "latin1");
+  for (const entry of entries) {
+    if (entry.type !== "n") continue;
+    const field = String(shift(entry.offset)).padStart(10, "0");
+    if (field.length !== 10) {
+      throw new Error("a rendered PDF grew past the 10-digit xref offset limit");
+    }
+    buffer.write(field, shift(entry.at), "latin1");
+  }
+  return buffer;
+}
+
+// One writer for both render paths, so the live-text and scanned branches
+// cannot drift into pinning different metadata (or one of them pinning none).
+// Omitting `path` is what makes this possible: page.pdf() then resolves to
+// the bytes rather than writing them itself, and nothing unnormalised is ever
+// on disk, not even briefly.
+async function writeNormalisedPdf(page, outPath) {
+  const bytes = await page.pdf({ format: "A4", printBackground: true });
+  await writeFile(outPath, normalisePdfMetadata(bytes));
+}
+
 // A4 at 96 CSS px/in, the density Chrome lays out at. The viewport is set to
 // exactly these dimensions so the browser paginates the content the same way
 // the text render does, and each screenshot below lines up with one real
@@ -296,7 +528,7 @@ async function renderScannedDocument(browser, html, slotId, outPath) {
     `<!doctype html><html><body style="margin:0">${pages}</body></html>`,
     { waitUntil: "networkidle0" }
   );
-  await wrapper.pdf({ path: outPath, format: "A4", printBackground: true });
+  await writeNormalisedPdf(wrapper, outPath);
   await wrapper.close();
   return pageCount;
 }
@@ -347,7 +579,7 @@ async function main() {
       } else {
         const page = await browser.newPage();
         await page.setContent(html, { waitUntil: "networkidle0" });
-        await page.pdf({ path: target, format: "A4", printBackground: true });
+        await writeNormalisedPdf(page, target);
         await page.close();
       }
       written += 1;
@@ -385,7 +617,31 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(`pdf.mjs: ${err.message}`);
-  process.exitCode = 1;
-});
+// Run only when this file IS the command, so that importing it does not
+// launch a browser. `normalisePdfMetadata` above is the reason: it is the
+// riskiest code in this file — it rewrites cross-reference offsets, and a
+// mistake there produces a PDF no reader will open — and it needs neither
+// Chrome nor puppeteer to exercise. With this guard a test can import it and
+// run it over a PDF of its own wherever `node` exists, which is a great many
+// more machines than have a Chrome for puppeteer to drive.
+//
+// realpath on both sides, because Node resolves an ESM specifier through the
+// real path while argv[1] keeps whatever symlink the caller typed; comparing
+// them unresolved would make this file silently do nothing when invoked
+// through a link. argv[1] is absent under `node -e`, and realpathSync throws
+// on a path that is not a file, so both are handled rather than assumed.
+function invokedDirectly() {
+  if (!process.argv[1]) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+  } catch {
+    return false;
+  }
+}
+
+if (invokedDirectly()) {
+  main().catch((err) => {
+    console.error(`pdf.mjs: ${err.message}`);
+    process.exitCode = 1;
+  });
+}

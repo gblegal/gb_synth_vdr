@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import io
 import re
+import zipfile
 from pathlib import Path
 from typing import List, Optional
 
@@ -167,6 +169,61 @@ def write_scanned_csv(findings: FindingSet, count: int, path: Path) -> List[str]
     return slots
 
 
+# The one instant a zip archive can be stamped with that carries no
+# information: 1980-01-01 00:00:00 is the earliest the MS-DOS timestamp in a
+# zip local header can represent, and is the conventional choice wherever
+# reproducible archives are built. `PINNED_PDF_DATE` in
+# `synthvdr/render/pdf.mjs` pins the PDF trees to the same instant, so the
+# two render trees agree about what "no meaningful date" looks like.
+_FIXED_ZIP_DATE_TIME = (1980, 1, 1, 0, 0, 0)
+
+
+def _normalise_zip_mtimes(path: Path) -> None:
+    """Rewrite the .docx at `path` with every member's mtime pinned.
+
+    A .docx is a zip, and everything python-docx puts INSIDE one is already
+    deterministic: `dcterms:created` is a fixed template constant
+    (2013-12-23T23:15:00Z, identical across all 1,600 entries of one real
+    800-file render) and `app.xml` comes out byte-identical every time. The
+    zip container is not. `ZipFile.writestr` stamps each member with
+    `time.localtime()`, so a render's archives carry the build's wall clock —
+    six distinct values spanning about ten seconds in one real render, in the
+    order the files happened to be written.
+
+    Those bytes are in the file, and `synthvdr.manifest.compute_content_hash`
+    hashes raw file BYTES, so they land in the room's fingerprint: the same
+    source tree rendered twice hashed differently, and a render tree could
+    never carry a manifest that meant anything. Pinning the mtimes is the
+    whole fix on this side — it is the ONLY clock in the DOCX path.
+
+    Every other field is copied from the archive python-docx produced rather
+    than reconstructed, so this changes the timestamps and nothing else: the
+    member order, the compression method, and the permission and platform
+    bits all survive. Reading the whole archive into memory first is
+    deliberate — the alternative is writing the replacement beside the
+    original and renaming, and this module's contract (see the module
+    docstring) is that it never deletes a file it did not just write.
+    """
+    with zipfile.ZipFile(path) as source:
+        members = [(info, source.read(info.filename)) for info in source.infolist()]
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as target:
+        for info, data in members:
+            pinned = zipfile.ZipInfo(info.filename, _FIXED_ZIP_DATE_TIME)
+            pinned.compress_type = info.compress_type
+            pinned.comment = info.comment
+            pinned.extra = info.extra
+            pinned.create_system = info.create_system
+            pinned.create_version = info.create_version
+            pinned.extract_version = info.extract_version
+            pinned.internal_attr = info.internal_attr
+            pinned.external_attr = info.external_attr
+            target.writestr(pinned, data)
+
+    path.write_bytes(buffer.getvalue())
+
+
 def render_tree_docx(src: Path, out: Path) -> int:
     """Render every markdown file under `src` to a `.docx` twin under `out`,
     mirroring `src`'s relative layout. Returns the number of files written.
@@ -223,5 +280,9 @@ def render_tree_docx(src: Path, out: Path) -> int:
             elif stripped:
                 document.add_paragraph(stripped)
         document.save(str(target))
+        # Immediately, not in a pass at the end: a half-normalised tree left
+        # behind by an interrupted render is indistinguishable from a
+        # normalised one until something hashes it.
+        _normalise_zip_mtimes(target)
         written += 1
     return written
