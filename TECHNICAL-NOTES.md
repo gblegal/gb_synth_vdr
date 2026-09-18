@@ -151,6 +151,76 @@ provenance against `corrupted-heavy/manifest.json`, the manifest beside the key 
 given. Before the twin had one, every twin run scored `UNVERIFIED` — the one provenance
 state that cannot be checked, and so the state a mismatched run hides in.
 
+### Render trees: recorded in the room's manifest, never in one of their own
+
+A render tree — `data-room-docx/`, `data-room-pdf/` — is a real tree of bytes with a stable
+fingerprint as of 0.13.0, so a run over one *should* be verifiable. It is not, yet: the run
+stamps the render tree's fingerprint and `check_provenance` compares it against the blind
+markdown tree's `content_hash`, so the scorecard reads `UNVERIFIED`.
+
+The obvious fix is to copy the twin: give the render tree its own `manifest.json` with its own
+`content_hash` and a `derived_from`. **That is the wrong shape, and `derived_from` does not
+apply to a render tree at all.** The fingerprints belong in the room's existing
+`_key/manifest.json`, under a `renders` key, with `check_provenance` accepting a `room_hash`
+that matches `content_hash` **or** any recorded render — and saying which it matched.
+
+```json
+"renders": {
+  "data-room-docx": {"content_hash": "…", "synthvdr": "0.13.0"},
+  "data-room-pdf":  {"content_hash": "…", "synthvdr": "0.13.0",
+                     "chrome": "HeadlessChrome/153.0.0.0", "scanned": 37}
+}
+```
+
+Once a render's fingerprint is recorded in the room's own manifest, "which room is this a render
+of" is answered by where the record lives, and `derived_from` has nothing left to say.
+
+**A manifest cannot live inside a render tree, because it cannot be true of the tree containing
+it.** `compute_content_hash` hashes every file under the root, so a manifest written into the
+tree is hashed by the very number it carries. Measured on an 800-document PDF render: the tree
+hashes `0b754e72…9657f3` without it and `bfb69832…5432bbab` with it, so the recorded hash
+describes a tree that stopped existing the moment it was written. The twin escapes this only by
+layout — `corrupted-light/manifest.json` sits *beside* `corrupted-light/data-room/`, outside the
+hashed root. A render tree has no wrapper: `data-room-pdf/` **is** the tree, mirroring
+`data-room/` exactly, which gate 16 checks in both directions.
+
+A skip rule would work — `room_fingerprint` already takes a `skip` callback, and skipping
+`manifest.json` reproduces the original hash — and is rejected anyway. It holds only while every
+implementation, in every language, agrees to skip the same filename forever; a reader who did not
+know the rule would compute a different and equally sincere hash. The construction is documented
+above as load-bearing across every released room, and a silent exemption to it is the wrong
+direction.
+
+**A set of accepted hashes is not a weakening of the check.** It stays a string equality against
+a list written at *render* time. That timing is the whole point: a manifest generated when a run
+is scored would hash the tree the run had just read — a comparison of the tree against itself,
+which can never fail, reporting "verified" while verifying nothing. Entries are content-derived,
+so nothing matches by accident, and a run over another room's render still matches neither
+`content_hash` nor any entry and is refused exactly as today. What it stops is the scorer being
+wrong about the set of trees a room legitimately ships.
+
+**Each entry records what produced it**, because render bytes depend on the renderer.
+`normalisePdfMetadata` normalises metadata, not page composition, so a different Skia can still
+lay pages out differently and produce a different but entirely legitimate fingerprint. Without
+the renderer recorded, a mismatch after a browser upgrade is indistinguishable from a real
+provenance failure — which is the confusion this whole mechanism exists to prevent.
+
+**Nothing changes for released rooms.** A manifest with no `renders` key behaves exactly as
+today, and a room whose trees came from a pre-0.13.0 renderer stays correctly `UNVERIFIED`: those
+bytes carried per-file wall-clock and are not reproducible, so there is nothing honest to record.
+No migration should paper over that.
+
+Two consequences worth taking with it. Because the scorer can then tell from `room_hash` that an
+output came from a named render, it can normalise the `.pdf`/`.docx` extension back to `.md`
+itself — the render's slots are the room's slots, which gate 16 guarantees — which retires the
+hand-written scoring copy a render run currently needs, and with it the practice of editing a
+manifest before scoring it. And `read_content_hash` stays untouched: it answers the twin's
+`derived_from` question, which is a different one.
+
+Left open: whether `/vdr-package` should refuse to record a render fingerprint on a pre-0.13.0
+renderer, or record it with a warning. It decides only how loud a stale install is, not any of
+the above.
+
 ### `_key/adjudications.yaml`
 
 Scoring is two-stage. Stage one is deterministic: a tool that cites a finding's source or
