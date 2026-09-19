@@ -1743,3 +1743,43 @@ def test_a_document_shorter_than_one_page_is_a_single_cut():
         pytest.skip("node not available — page-cut arithmetic unverified")
 
     assert _run_node_page_cuts(node, [[0, 10]], 40, 100) == [[0, 40]]
+
+
+def test_line_boxes_are_measured_per_visual_line_not_per_block():
+    """A wrapped paragraph must yield one box per VISUAL line. Measuring per
+    block instead would return one tall box for the whole paragraph, and the
+    cut chooser would then treat a 40-line paragraph as an indivisible unit
+    taller than a page — falling back to the hard clip every time and fixing
+    nothing at all."""
+    node = shutil.which("node")
+    if node is None or not CHROME.exists():
+        pytest.skip("needs node and system Chrome to measure line boxes")
+
+    mjs = PDF_MJS.read_text(encoding="utf-8")
+    match = re.search(r"async function lineBoxesFor\([^)]*\)\s*\{.*?\n\}", mjs, re.DOTALL)
+    assert match, (
+        "could not find `async function lineBoxesFor(...)` in "
+        "synthvdr/render/pdf.mjs — update the extraction regex"
+    )
+
+    body = "<p style='font:16px/20px serif;margin:0;width:200px'>" + ("word " * 40) + "</p>"
+    script = (
+        "import puppeteer from 'puppeteer';\n"
+        f"{match.group(0)}\n"
+        f"const browser = await puppeteer.launch({{executablePath: {json.dumps(str(CHROME))}}});\n"
+        "const page = await browser.newPage();\n"
+        "await page.setViewport({width: 400, height: 600});\n"
+        f"await page.setContent({json.dumps(body)});\n"
+        "console.log(JSON.stringify(await lineBoxesFor(page)));\n"
+        "await browser.close();\n"
+    )
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", script], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    boxes = json.loads(proc.stdout.strip())
+
+    assert len(boxes) > 3, f"expected one box per wrapped line, got {len(boxes)}"
+    for top, bottom in boxes:
+        assert 0 < bottom - top < 40, f"box {top}..{bottom} is not one line tall"
+    assert boxes == sorted(boxes), "boxes must be sorted by top"

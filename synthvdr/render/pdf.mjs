@@ -601,6 +601,36 @@ function applyScanProfile(shotB64, slotId, page, profile) {
   );
 }
 
+// Every text line's [top, bottom] in DOCUMENT coordinates, sorted by top.
+//
+// Ranges rather than element boxes, deliberately. `Range.getClientRects()`
+// returns one rect PER LINE BOX, so a wrapped paragraph yields one rect per
+// visual line. `getBoundingClientRect()` on the <p> would return one tall box
+// for the whole paragraph, and pageCutsFrom would then treat a 40-line
+// paragraph as an indivisible unit taller than a page — falling back to the
+// hard clip every time and fixing nothing.
+//
+// Coordinates are viewport-relative, so scrollY is added back: this page is
+// never scrolled, but reading the rects without it would break silently if it
+// ever were.
+async function lineBoxesFor(page) {
+  return page.evaluate(() => {
+    const boxes = [];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!node.nodeValue || !node.nodeValue.trim()) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      for (const rect of range.getClientRects()) {
+        if (rect.height > 0) {
+          boxes.push([rect.top + window.scrollY, rect.bottom + window.scrollY]);
+        }
+      }
+    }
+    return boxes.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  });
+}
+
 async function renderScannedDocument(browser, html, slotId, outPath, profileName) {
   const profile = SCAN_PROFILES[profileName];
   // An image-only PDF: lay the document out at A4, screenshot it one page at
