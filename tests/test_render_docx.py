@@ -1612,8 +1612,20 @@ def test_office_profile_measurably_degrades_extracted_text(tmp_path, build_xs_ro
         f"degraded survival {degraded_survival:.4f}"
     )
 
-    # The pristine tree is the control: OCR should read it nearly perfectly.
-    assert pristine_survival > 0.90, (
+    # The pristine tree is the control: OCR should read it nearly perfectly,
+    # and since the page-seam fix (known-issues §1, now retired) it genuinely
+    # does — 1.0000 on this slot, where it was also 1.0000 before, and
+    # 0.8824 -> 1.0000 on the multi-page contracts slot the seam loss actually
+    # bit.
+    #
+    # 0.95, RAISED FROM 0.90, and the number is measured rather than chosen.
+    # An intermediate version of the seam fix truncated the last page to where
+    # the content stopped instead of padding it to a full page; RapidOCR then
+    # dropped the spaces between words on the short page and this slot scored
+    # 0.9138. THE 0.90 FLOOR PASSED THAT. A floor a real regression clears is
+    # not a floor, so it now sits above the one regression this code has
+    # actually produced, with room for ordinary OCR jitter below 1.0.
+    assert pristine_survival > 0.95, (
         f"pristine scan only survived at {pristine_survival:.2f} — the control "
         "is broken, so the comparison below means nothing"
     )
@@ -1624,13 +1636,19 @@ def test_office_profile_measurably_degrades_extracted_text(tmp_path, build_xs_ro
     # 0.20, NOT the 0.05 the plan suggested, and the number is measured rather
     # than chosen. Stubbing degradationFor to quality 100 / no blur / no
     # contrast or brightness shift / no grain — a profile that still re-encodes
-    # and re-composites the page but degrades NOTHING — still scores 0.86 here,
-    # because compositing the filter layer makes Chrome resample the page. A
-    # 0.05 margin passes that stub, which is precisely the profile this test
-    # exists to fail. The real parameters score 0.69, so the threshold sits
-    # between the two: the stub fails by 0.06 and the real profile passes by
-    # 0.11. If a future Chrome moves the resampling, re-measure with the stub
-    # before touching this number — it is the whole calibration.
+    # and re-composites the page but degrades NOTHING — is precisely the
+    # profile this test exists to fail, and a 0.05 margin would pass it.
+    #
+    # Re-measured after the page-seam fix, because the original calibration was
+    # taken with seams present and they cost BOTH sides. The stub now scores
+    # 1.0000 against 0.86 before: with seams gone, re-compositing alone loses
+    # nothing measurable on this slot. The real parameters score 0.7069 against
+    # 0.6897 before. So the threshold sits further from both ends than it did —
+    # the stub fails by the full 0.20 where it used to fail by 0.06, and the
+    # real profile passes by 0.09 where it used to pass by 0.11. The number
+    # itself needed no change; if a future Chrome moves the resampling,
+    # re-measure with the stub before touching it, because that is the whole
+    # calibration.
     assert degraded_survival < pristine_survival - 0.20, (
         f"degraded scan survived at {degraded_survival:.2f} against pristine "
         f"{pristine_survival:.2f} — the office profile is not degrading anything "
