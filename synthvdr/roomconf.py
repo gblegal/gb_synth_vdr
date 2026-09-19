@@ -56,6 +56,33 @@ REQUIRED_KEYS = (
 # rejected at load, by name, while the author is still editing the file.
 ROOM_ROLES = ("exemplar", "eval")
 
+# The scan profiles `synthvdr/render/pdf.mjs` implements, and so the only
+# legitimate values of the optional SCAN_PROFILE key. A room that declares
+# SCAN_PROFILE="office" is asking /vdr-package to render a SECOND PDF tree,
+# `<BLIND_TREE>-pdf-scanned/`, in which the slots listed in _key/scanned.csv
+# are degraded the way an office scanner degrades them — the pristine tree is
+# still built and kept, because pristine-against-degraded is the only pairing
+# that holds the extractor fixed.
+#
+# Optional for the same reason ROOM_ROLE is, plus one of its own: the degraded
+# tree costs roughly 16x the pristine tree on disk, in a tree that gets frozen
+# and distributed, so it must be something a room opts INTO. An absent key
+# means `none`, which means one render and no second tree — exactly today's
+# behaviour, with no gate affected.
+#
+# A value that IS present and is not one of these is rejected at load, by
+# name, while the author is still editing the file. That rejection is the
+# whole point of validating here rather than letting pdf.mjs refuse it later:
+# a typo fell through to "no degradation" would produce a PRISTINE tree
+# sitting in a directory named as though it were degraded, and every number
+# measured against it would be wrong rather than missing.
+#
+# Kept in step with pdf.mjs's own SCAN_PROFILES table by
+# tests/test_render_docx.py::test_pdf_mjs_scan_profiles_match_python_exactly,
+# which reads the shipped .mjs and runs it under node — the same discipline
+# rotation_for and _ATX_HEADING are held to across the same language boundary.
+SCAN_PROFILES = ("none", "office")
+
 # Keys whose values are relative filesystem paths under the room root. Tools
 # that turn these into real paths (e.g. synthvdr.twin.build_flagged_tree)
 # call shutil.rmtree on the result, so a bad value here is a destructive-path
@@ -503,6 +530,15 @@ def load_room_conf(path: Path) -> RoomConf:
             f"{path}: ROOM_ROLE is {values['ROOM_ROLE']!r} — it must be one of "
             f"{', '.join(ROOM_ROLES)}. An exemplar room may teach the "
             "classifier; an eval room only ever scores it."
+        )
+
+    if "SCAN_PROFILE" in values and values["SCAN_PROFILE"] not in SCAN_PROFILES:
+        raise RoomConfError(
+            f"{path}: SCAN_PROFILE is {values['SCAN_PROFILE']!r} — it must be "
+            f"one of {', '.join(SCAN_PROFILES)}, or omitted entirely (which "
+            "means 'none'). Only these are implemented by "
+            "synthvdr/render/pdf.mjs, and a name it does not know would fail "
+            "at render time, after the pristine tree had already been built."
         )
 
     # Property 1 + Property 2 over every path-valued key at once. The room

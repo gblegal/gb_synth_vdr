@@ -360,6 +360,17 @@ values step 2 just printed, plus:
   room may do both — that is the train/test split, and gate 18 refuses a room that has
   not declared its side. Ask the user which this room is for; when in doubt say
   `"eval"`, the side that can never contaminate a measurement.
+- `SCAN_PROFILE` — **optional; omit it unless you already know you want it.** `"office"` asks
+  `/vdr-package` for a second, deliberately degraded PDF render (`<BLIND_TREE>-pdf-scanned/`)
+  beside the pristine one, so a tool under test has to OCR through real scanner artefacts
+  rather than read past a sub-degree rotation. It costs roughly **16x** the pristine tree on
+  disk — a 4-page scanned document measures 564KB against 9.05MB — in a tree that gets frozen
+  and distributed, so it earns its place only in a room that will actually run a
+  pristine-against-degraded comparison. Omitting it is the norm and leaves the room exactly as
+  it would be if the key did not exist: one render, no extra bytes, no gate affected. Nothing
+  reads it until `/vdr-package`, so a room can add it later without rebuilding anything —
+  which is why this is not a decision Gate A needs to hold anyone up for. `"none"` says the
+  default out loud; anything else is refused by name at load.
 - `EXPECTED_KDP_CARRIERS=0` — no findings exist yet; `/vdr-findings` sets the real number.
 - `INDEX_TOTAL`, `BLIND_TOTAL`, `FLAGGED_TOTAL` — all equal to `len(slots)` from step 2.
 - `SECTION_DIRS` — the space-separated `room_pack.section_dirs()` string from step 2. This one

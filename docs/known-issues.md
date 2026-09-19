@@ -68,4 +68,6 @@ files and the fax tier at once.
 
 **What it costs to leave.** Any room building a degraded tree needs the disk for it, and whoever
 distributes that room needs to know before they build rather than after. This is the reason the
-degraded render should be opt-in rather than always-on.
+degraded render is opt-in rather than always-on: `/vdr-package` builds it only for a room whose
+`room.conf` declares `SCAN_PROFILE="office"`, and the figures above are stated in the skill's own
+Step 3, where whoever runs it meets them before they run it.

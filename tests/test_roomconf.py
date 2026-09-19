@@ -8,6 +8,7 @@ from synthvdr.roomconf import (
     PATH_KEYS,
     ROOM_ROOT_LABEL,
     RoomConfError,
+    SCAN_PROFILES,
     _casefolded_parts,
     load_room_conf,
     resolve_tree_map,
@@ -578,3 +579,47 @@ def test_room_role_is_not_required_at_load_time(tmp_path):
     # cleanly IS the test.
     conf = load_room_conf(write(tmp_path))
     assert "ROOM_ROLE" not in conf.values
+
+
+# ---------------------------------------------------------------------------
+# SCAN_PROFILE — the degraded-scan-tree opt-in. Shaped exactly like ROOM_ROLE
+# above and for the same reasons: optional at load, never silently wrong when
+# present. The failure it exists to prevent is specific — a typo falling
+# through to "no degradation" would leave a PRISTINE tree sitting in a
+# directory named `-pdf-scanned`, and every OCR number measured against it
+# would be wrong rather than missing.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("profile", ["none", "office"])
+def test_scan_profile_accepts_the_profiles_pdf_mjs_implements(tmp_path, profile):
+    conf = load_room_conf(write(tmp_path, SAMPLE + f'SCAN_PROFILE="{profile}"\n'))
+    assert conf.get("SCAN_PROFILE") == profile
+
+
+def test_scan_profile_rejects_anything_else(tmp_path):
+    with pytest.raises(RoomConfError, match="SCAN_PROFILE") as excinfo:
+        load_room_conf(write(tmp_path, SAMPLE + 'SCAN_PROFILE="ofice"\n'))
+    message = str(excinfo.value)
+    assert "ofice" in message, "the rejected value must be named"
+    for known in SCAN_PROFILES:
+        assert known in message, (
+            "the message must list every profile pdf.mjs implements, or the "
+            "author is left guessing at the vocabulary"
+        )
+
+
+def test_scan_profile_is_not_required_at_load_time(tmp_path):
+    # A room that never opts in must be completely unaffected, and the
+    # loader runs on part-built rooms all day. SAMPLE has no SCAN_PROFILE
+    # line, so this loading cleanly IS the test.
+    conf = load_room_conf(write(tmp_path))
+    assert "SCAN_PROFILE" not in conf.values
+
+
+def test_scan_profiles_lists_none_first_as_the_default(tmp_path):
+    """`none` is what an absent key means, and `office` is the only tier
+    implemented — the fax-quality tier is explicitly out of scope (spec §3).
+    Pinned so that adding a profile to the tuple without implementing it in
+    pdf.mjs fails here as well as in the cross-language check."""
+    assert SCAN_PROFILES == ("none", "office")

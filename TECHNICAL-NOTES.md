@@ -329,17 +329,40 @@ chain (contrast, brightness, blur), and composites a derived-seed grain overlay,
 carries the artefacts a real office scanner leaves and a tool under test has to OCR through
 rather than merely read past a rotation.
 
-Building the `office` tree is **a manual step, not yet wired into `/vdr-package`** — the skill
-invokes `pdf.mjs` once, with no `--scan-profile` flag, so a sanctioned build never produces it
-on its own. Whether to wire a second, degraded render into every future room's sanctioned
-build is a decision for a human, not something this renderer should default to. To build it by
-hand, run, from the room's own directory, after `_key/scanned.csv` exists and using the room's
-actual `BLIND_TREE` name in place of `data-room`:
+Building the `office` tree is **wired into `/vdr-package`, and opt-in**. A room declares
+
+```
+SCAN_PROFILE="office"
+```
+
+in its own `room.conf`, and Step 3 of the skill then invokes `pdf.mjs` twice — once with
+`--scan-profile none` into `<blind-tree>-pdf/`, once with `--scan-profile office` into
+`<blind-tree>-pdf-scanned/` — from the room's own directory, after `_key/scanned.csv` exists
+and using the room's actual `BLIND_TREE` name in place of `data-room`:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/synthvdr/render/pdf.mjs" \
   --src data-room --out data-room-pdf-scanned --scan-profile office
 ```
+
+`SCAN_PROFILE` is optional and deliberately not in `REQUIRED_KEYS`, exactly like `ROOM_ROLE`:
+a room that omits it renders once and is completely unaffected — no second tree, no extra
+bytes, and gate 16 checks the `-docx`/`-pdf` trees alone. `load_room_conf` accepts only the
+names `pdf.mjs` itself implements (`synthvdr.roomconf.SCAN_PROFILES`, held in step with the
+renderer's own table by `test_pdf_mjs_scan_profiles_match_python_exactly`) and rejects
+anything else **by name at load**, rather than leaving the renderer to refuse it after the
+pristine tree has already been built. That rejection is the load-bearing half: a typo falling
+through to "no degradation" would leave a pristine tree sitting in a directory named as though
+it were degraded, and every number measured against it would be wrong rather than missing.
+
+**The opt-in exists because of disk, and the figure is measured rather than estimated.**
+Applying any CSS filter makes Chrome composite and resample the page from 794px to 2488px wide
+and embed it as lossless Flate RGB plus a full alpha mask, so the degraded tree runs about
+**16x** the pristine one: a 4-page scanned document is 564KB under `none` and 9.05MB under
+`office`, which on an 800-document room with 37 scans projects to roughly 460MB of degraded
+scans against ~29MB pristine — in a tree that gets frozen and distributed. Always rendering
+both would impose that on every room, including the ones that will never run an OCR
+comparison, so the room says whether it wants it.
 
 That output directory name — `<blind-tree>-pdf-scanned/` (e.g. `data-room-pdf-scanned/`) —
 is not a free choice: it is the one name `gate_16_render_parity` (`synthvdr/qa/renders.py`)

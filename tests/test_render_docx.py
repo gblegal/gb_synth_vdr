@@ -20,7 +20,7 @@ from synthvdr.render.docx import (
     scanned_slots,
     write_scanned_csv,
 )
-from synthvdr.roomconf import load_room_conf
+from synthvdr.roomconf import SCAN_PROFILES, load_room_conf
 from synthvdr.schema import Finding, FindingSet, load_findings
 
 PDF_MJS = Path(__file__).resolve().parent.parent / "synthvdr" / "render" / "pdf.mjs"
@@ -375,6 +375,62 @@ def test_pdf_mjs_headings_match_python_exactly():
     assert py_results[5] is None and py_results[7] is None, (
         "a missing or non-ASCII separator must not make a heading"
     )
+
+
+# --- the scan-profile vocabulary: declared in pdf.mjs, opted into in room.conf
+
+
+def _extract_scan_profiles_source(mjs_text: str) -> str:
+    """Pull the real SCAN_PROFILES table out of pdf.mjs, for the same reason
+    _extract_rotation_for_source pulls the real rotationFor: a test carrying
+    its own copy of the list proves the two authors agree, not that the
+    shipped file does."""
+    match = re.search(r"^const SCAN_PROFILES = \{.*?^\};$", mjs_text, re.MULTILINE | re.DOTALL)
+    if not match:
+        raise AssertionError(
+            "could not find `const SCAN_PROFILES = {...};` in synthvdr/render/pdf.mjs "
+            "— has it been renamed or restructured? update the extraction regex"
+        )
+    return match.group(0)
+
+
+def _run_node_scan_profiles(node: str):
+    script = (
+        f"{_extract_scan_profiles_source(PDF_MJS.read_text(encoding='utf-8'))}\n"
+        "console.log(JSON.stringify(Object.keys(SCAN_PROFILES)));\n"
+    )
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", script],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(f"node failed to run pdf.mjs's SCAN_PROFILES: {proc.stderr}")
+    return json.loads(proc.stdout.strip())
+
+
+def test_pdf_mjs_scan_profiles_match_python_exactly():
+    """`synthvdr.roomconf.SCAN_PROFILES` is the list room.conf's SCAN_PROFILE
+    key is validated against, and `pdf.mjs`'s own SCAN_PROFILES table is the
+    list the renderer actually implements. They are two hand-maintained lists
+    in two languages, exactly like rotationFor and ATX_HEADING above, and the
+    drift between them is not cosmetic in either direction:
+
+      * a name Python accepts that pdf.mjs does not means a room opts in, the
+        loader is happy, and the render step dies at the last moment with an
+        `unknown --scan-profile` from Node;
+      * a name pdf.mjs implements that Python does not means room.conf refuses
+        a profile the renderer can actually produce, so the tier is
+        unreachable through the sanctioned build.
+
+    Needs `node`, so it SKIPs (never silently passes) when node is
+    unavailable — the same SKIP discipline as every gate in this project.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available — cross-language scan-profile parity unverified")
+
+    assert _run_node_scan_profiles(node) == list(SCAN_PROFILES)
+
 
 
 # --- F1: ATX heading detection must require whitespace (round 2, fix 1) ----

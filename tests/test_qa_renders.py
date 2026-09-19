@@ -219,3 +219,30 @@ def test_missing_direction_uses_full_relative_paths_not_bare_stems(room):
     assert result.status == "FAIL"
     assert "01_corporate/1.1.1_articles.docx" in result.detail
     assert "02_other/1.1.1_articles.docx" in result.detail
+
+
+def test_a_room_that_does_not_opt_in_is_completely_unaffected(room):
+    """The degraded tree is opt-in (room.conf's SCAN_PROFILE), and the whole
+    opt-in rests on this: a room that renders only the pristine trees must
+    pass gate 16 unchanged, in strict mode, with nothing said about a tree
+    it never asked for.
+
+    Registering `-pdf-scanned` in RENDER_SUFFIXES makes that fall out of the
+    filter in gate_16_render_parity — but "falls out naturally" is exactly
+    the kind of claim that is cheap to assert and cheaper to break, and the
+    existing two-tree test asserts `"data-room-pdf" in result.detail`, which
+    a `data-room-pdf-scanned` substring would satisfy too. So this pins the
+    absence rather than the presence.
+    """
+    for suffix, ext in (("-docx", ".docx"), ("-pdf", ".pdf")):
+        out = room / f"data-room{suffix}" / "01_corporate"
+        out.mkdir(parents=True)
+        (out / f"1.1.1_articles{ext}").write_bytes(b"stub")
+
+    result = gate_16_render_parity(ctx_for(room, strict=True))
+    assert result.status == "PASS", result.detail
+    assert "scanned" not in result.detail.lower(), (
+        "a room that never opted in must not be told anything about the "
+        f"degraded tree: {result.detail}"
+    )
+    assert not (room / "data-room-pdf-scanned").exists()

@@ -77,11 +77,17 @@ print(str(len(slots)) + ' document(s) will render as scans:')
 for slot in slots:
     print('  ' + slot)
 "
-node "${CLAUDE_PLUGIN_ROOT}/synthvdr/render/pdf.mjs" --src data-room --out data-room-pdf
+node "${CLAUDE_PLUGIN_ROOT}/synthvdr/render/pdf.mjs" \
+  --src data-room --out data-room-pdf --scan-profile none
 ```
 
 (Use the room's actual `BLIND_TREE` name from `room.conf` in place of `data-room` above if it
 differs.)
+
+`--scan-profile none` is the default and is spelled out rather than left implicit, because
+the next sub-step adds a second render at a different profile and the pair only reads as a
+pair if both say which one they are. It is the behaviour this renderer has always had: PNG
+screenshots, a sub-degree rotation per page, nothing else.
 
 **Write `_key/scanned.csv` before running `pdf.mjs`, not after** — the renderer reads it once,
 at startup, and a room whose manifest arrives later just renders every page as live text with
@@ -105,6 +111,61 @@ other. Read its final line: it names how many documents were scanned and how man
 pages that produced, and it exits non-zero naming any slot in the manifest that matched no
 document — a slot that matches nothing renders that document as live text while the answer
 key believes it is a scan.
+
+### The degraded scan tree — opt in with `SCAN_PROFILE`
+
+A pristine scan is a clean render, tilted, and OCR reads it at very nearly the confidence it
+reads live text — measured on Project Frithcombe, where the 37 scans came through the PDF
+tree *better* than the 763 born-digital documents beside them. A room that wants to measure
+what a tool does when a scan is genuinely hard declares this in its own `room.conf`:
+
+```
+SCAN_PROFILE="office"
+```
+
+and `/vdr-package` then renders the room a **second** time, keeping both trees:
+
+| tree | profile | what it is |
+| --- | --- | --- |
+| `data-room-pdf/` | `none` | pristine scans, as above |
+| `data-room-pdf-scanned/` | `office` | the same documents, the scanned slots degraded |
+
+**Budget for it first: the degraded tree is roughly 16x the size of the pristine one.**
+Applying any CSS filter makes Chrome composite and resample each page from 794px to 2488px
+wide and embed it as lossless Flate RGB plus a full alpha mask, so a 4-page scanned document
+measures 564KB under `none` and 9.05MB under `office`. An 800-document room with 37 scans
+projects to roughly 460MB of degraded scans against ~29MB pristine — in a tree that is about
+to be frozen and distributed. That is the whole reason this is opt-in rather than automatic:
+a room that says nothing renders once, exactly as before, and gains no tree, no bytes and no
+gate.
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/synthvdr/render/pdf.mjs" \
+  --src data-room --out data-room-pdf-scanned --scan-profile office
+```
+
+**Do not render only the degraded tree, and do not overwrite the pristine one with it.**
+Pristine-against-degraded is the only comparison that holds the extractor fixed, and that is
+demonstrated rather than argued: Frithcombe's DOCX tree was compared against its PDF tree on
+the reasoning that only the scans differ, and of the eleven documents that changed pile, ten
+were not scans at all — the two trees differed in extractor as well. Both PDF trees come out
+of the same renderer, so a difference between them is degradation and nothing else. One tree
+alone cannot separate "the scan was hard" from "the extractor is different".
+
+`_key/scanned.csv` decides which slots degrade, and it is written once, above, before either
+render — do not move it, and do not re-write it between the two. Both invocations must read
+the same manifest or the two trees are not the same room, and the renderer reads it only at
+startup (see the warning above): a second invocation that ran before the manifest existed
+would produce a `-pdf-scanned/` tree with no scans in it at all, which fails nothing.
+
+`data-room-pdf-scanned` is not a free choice of directory name. It is the one name
+`gate_16_render_parity` recognises alongside `data-room-pdf`, so rendering there brings the
+degraded tree under the same both-directions parity check with no further wiring; rendered
+under any other name it is invisible to every gate in the suite. `SCAN_PROFILE` accepts only
+`none` and `office` — `room.conf` refuses anything else by name at load, because a typo that
+fell through to "no degradation" would leave a pristine tree sitting in a directory named as
+though it were degraded, and every number measured against it would be wrong rather than
+missing.
 
 Both are optional in the sense that you choose which toolchain(s) to use — DOCX needs only the
 `docx` extra (`pip install -e ".[docx]"`), PDF needs Node, puppeteer and a local Chrome. But
