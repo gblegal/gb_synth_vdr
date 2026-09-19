@@ -374,6 +374,22 @@ rather than overwriting `<blind-tree>-pdf/` also keeps the pristine `none` tree 
 alongside it — the pristine tree is kept because pristine-against-degraded is the only pairing
 that holds the extractor fixed while OCR quality is what varies (spec §6).
 
+**Scanned pages are clipped between lines, not on a fixed grid.** `renderScannedDocument`
+measures every text line's box (`Range.getClientRects`, one rect per visual line) and takes each
+page's clip boundary from `pageCutsFrom` — the foot of the last line that fits entirely — so a
+line straddling a boundary moves whole onto the next page instead of being sliced through its
+glyphs. A page that ends early to avoid a slice carries whitespace at its foot, and the last page
+runs to a full page height past where the content stops, both of which is what a real sheet
+scanner produces. CSS cannot do this job: `break-inside: avoid` applies to paged media, while this
+path screenshots a scrolling viewport and slices it by pixel offset, so the declaration is inert.
+
+Measured with the test suite's own OCR instrument: pristine token survival on
+`05_commercial/5.1_customer-contracts/5.1.1_customer-contracts-01` went from **0.8824 to 1.0000**,
+the six lost tokens having been one sliced line. **Adopting it means a deliberate re-render** —
+every scanned page's bytes change, so a room already frozen at a tag will not reproduce its
+published `content_hash` from this renderer. Rooms take the fix when they are next built; nothing
+re-renders an existing room automatically.
+
 **The unit is the document, not the page.** The manifest briefly carried a `slot,page`
 pair, and `pdf.mjs` read every row, stored it, and then honoured only page 1 — a row naming
 page 3 parsed cleanly and did nothing, silently. Since a real data room scans whole

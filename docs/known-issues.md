@@ -8,38 +8,7 @@ An entry leaves this file when it is fixed, or when a decision is taken that it 
 
 ---
 
-## 1. The scanned render drops a line at every page seam
-
-**Found:** 18 September 2026, while measuring the `office` scan profile against a pristine control.
-
-`renderScannedDocument` in `synthvdr/render/pdf.mjs` lays a document out at A4, then screenshots it
-one page at a time by clipping a fixed `1123px` window. There is no CSS pagination, so the clip
-falls wherever it falls — and a line of text straddling the boundary is cut through its glyphs,
-leaving the top half on one page and the bottom half on the next. OCR reads neither.
-
-**Measured.** On slot `05_commercial/5.1_customer-contracts/5.1.1_customer-contracts-01`, the
-**pristine** scan — no degradation at all, just the existing sub-degree rotation — scores 0.8824
-token survival against its own source markdown. The missing 0.12 is entirely page seams.
-
-**Why it was left.** It affects both scan profiles equally, so it cancels out of any
-pristine-against-degraded comparison, which is what the profile exists to support. It also predates
-the profile work by some margin. Most importantly, fixing it changes the pixel layout of every
-scanned page, so **every existing rendered tree's bytes change** — including rooms already frozen
-at a tag with a `content_hash` published against them.
-
-**What fixing it looks like.** Paginate the source properly — `page-break-inside: avoid` on block
-elements, or lay the document out with real CSS paged media — so the clip lands between lines
-rather than through them. Then re-render, and accept that any room wanting the fix must be
-re-rendered and re-frozen deliberately.
-
-**What it costs to leave.** A scanned document is slightly harder to read than a real scan of the
-same document would be, in a way that has nothing to do with scan quality. Any absolute claim about
-OCR accuracy on a scanned tree is therefore pessimistic by roughly this much. Relative claims —
-profile A against profile B — are unaffected.
-
----
-
-## 2. A degraded scan tree is roughly 16× the size of a pristine one
+## 1. A degraded scan tree is roughly 16× the size of a pristine one
 
 **Found:** 18 September 2026, in the final review of the `office` scan profile.
 
