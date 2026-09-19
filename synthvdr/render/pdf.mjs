@@ -132,7 +132,15 @@ function pageCutsFrom(lineBoxes, contentHeight, pageHeight) {
   while (start < contentHeight) {
     const limit = start + pageHeight;
     if (limit >= contentHeight) {
-      cuts.push([start, contentHeight]);
+      // A FULL page, not one truncated to where the content stops. The old
+      // fixed-grid code padded the last page for free — its clip simply ran
+      // past the content into white — and truncating it here turned out to
+      // change what OCR reads: on a 230px-tall final page RapidOCR dropped
+      // the spaces between words ("31December2025", "Limitedrecord"), losing
+      // five tokens from a document whose text was entirely present and
+      // legible. A real scanner emits a full sheet with whitespace at the
+      // foot; it does not emit a 230px page.
+      cuts.push([start, limit]);
       break;
     }
     // The foot of the last line that fits entirely. A line straddling `limit`
@@ -564,15 +572,23 @@ const PAGE_HEIGHT_PX = 1123;
 // future Chrome renders the turbulence slightly differently. The seed is
 // derived from the same digest as everything else, so the noise field is fixed
 // for a given slot and page.
-function applyScanProfile(shotB64, slotId, page, profile) {
+function applyScanProfile(shotB64, slotId, page, profile, clipHeight) {
   const deg = rotationFor(slotId, page);
   const box =
     `width:${PAGE_WIDTH_PX}px;height:${PAGE_HEIGHT_PX}px;` +
     `overflow:hidden;page-break-after:always;position:relative;`;
   const mime = profile.degrade ? "jpeg" : "png";
+  // NATURAL PROPORTION, TOP-ALIGNED — not `object-fit:contain` with
+  // `height:100%`, which is what this was before pagination existed and every
+  // clip was a full page tall. A cut that ends early to avoid slicing a line
+  // produces a SHORT clip, and `contain` would scale it up to fill the A4
+  // box, changing the type size on that page alone. Whitespace at the foot of
+  // a page is what a real page break looks like; a page whose text is 8%
+  // larger than its neighbours is not, and it is worse for OCR than the seam
+  // this replaced.
   const img =
     `<img src="data:image/${mime};base64,${shotB64}" ` +
-    `style="width:100%;height:100%;object-fit:contain;` +
+    `style="display:block;width:${PAGE_WIDTH_PX}px;height:${clipHeight}px;` +
     `transform:rotate(${deg}deg);transform-origin:center;`;
 
   if (!profile.degrade) {
@@ -651,20 +667,21 @@ async function renderScannedDocument(browser, html, slotId, outPath, profileName
   const contentHeight = await page.evaluate(
     () => document.documentElement.scrollHeight
   );
-  const pageCount = Math.max(1, Math.ceil(contentHeight / PAGE_HEIGHT_PX));
+  // Line-aligned cuts, not a fixed grid — see pageCutsFrom. The page count
+  // now falls OUT of the cuts rather than being computed by division: a page
+  // that ends early to avoid slicing a line makes the two disagree, and the
+  // division was the thing that cut through glyphs.
+  const cuts = pageCutsFrom(await lineBoxesFor(page), contentHeight, PAGE_HEIGHT_PX);
 
   const shots = [];
-  for (let i = 0; i < pageCount; i += 1) {
+  for (let i = 0; i < cuts.length; i += 1) {
+    const [top, bottom] = cuts[i];
+    const clipHeight = bottom - top;
     const shotOptions = {
       encoding: "base64",
       captureBeyondViewport: true,
       type: profile.degrade ? "jpeg" : "png",
-      clip: {
-        x: 0,
-        y: i * PAGE_HEIGHT_PX,
-        width: PAGE_WIDTH_PX,
-        height: PAGE_HEIGHT_PX,
-      },
+      clip: { x: 0, y: top, width: PAGE_WIDTH_PX, height: clipHeight },
     };
     if (profile.degrade) {
       // JPEG is the honest source of scanner artefacts: real scanners emit it,
@@ -673,7 +690,7 @@ async function renderScannedDocument(browser, html, slotId, outPath, profileName
       // it, so it is set only on the degrading path.
       shotOptions.quality = degradationFor(slotId, i + 1).quality;
     }
-    shots.push(await page.screenshot(shotOptions));
+    shots.push([await page.screenshot(shotOptions), clipHeight]);
   }
   await page.close();
 
@@ -692,7 +709,9 @@ async function renderScannedDocument(browser, html, slotId, outPath, profileName
   // millimetres at the margin is what a real scan looks like; a clip that
   // grows with page count is not.
   const pages = shots
-    .map((shot, i) => applyScanProfile(shot, slotId, i + 1, profile))
+    .map(([shot, clipHeight], i) =>
+      applyScanProfile(shot, slotId, i + 1, profile, clipHeight)
+    )
     .join("");
 
   const wrapper = await browser.newPage();
@@ -703,7 +722,7 @@ async function renderScannedDocument(browser, html, slotId, outPath, profileName
   );
   await writeNormalisedPdf(wrapper, outPath);
   await wrapper.close();
-  return pageCount;
+  return cuts.length;
 }
 
 async function main() {

@@ -1046,29 +1046,33 @@ def test_pdf_mjs_page_box_is_a4_at_96dpi():
     ],
 )
 def test_pdf_mjs_page_count_arithmetic(content_height, expected_pages):
-    """Runs the real `const pageCount = ...` line out of the shipped pdf.mjs,
-    so a change to the tiling rule cannot pass by agreeing with a copy kept
-    here. The 5-page row is the case that matters: the old code called
-    rotationFor exactly once no matter how long the document was."""
+    """Runs the real tiling rule out of the shipped pdf.mjs, so a change to it
+    cannot pass by agreeing with a copy kept here. The 5-page row is the case
+    that matters: the old code called rotationFor exactly once no matter how
+    long the document was.
+
+    The rule used to be a `const pageCount = Math.ceil(...)` division and now
+    lives in `pageCutsFrom`, which chooses line-aligned cuts. The CASES and the
+    EXPECTATIONS are unchanged and still binding: with no line boxes to align
+    to — an empty or image-only document — pageCutsFrom must fall back to
+    exactly the old fixed grid, and the page count is now `cuts.length`. A
+    fallback that tiled differently from the division it replaced would be a
+    silent change to every document with no measurable text in it."""
     node = shutil.which("node")
     if node is None:
         pytest.skip("node not available — page-count arithmetic unverified")
 
     height_const = _extract_pdf_mjs(r"^const PAGE_HEIGHT_PX = \d+;$", "PAGE_HEIGHT_PX")
-    count_expr = _extract_pdf_mjs(
-        r"^  const pageCount = .*$", "the `const pageCount = ...` line"
-    )
     script = (
         f"{height_const}\n"
-        f"const contentHeight = {content_height};\n"
-        f"{count_expr.strip()}\n"
-        "console.log(pageCount);\n"
+        f"{_extract_page_cuts_source(PDF_MJS.read_text(encoding='utf-8'))}\n"
+        f"console.log(pageCutsFrom([], {content_height}, PAGE_HEIGHT_PX).length);\n"
     )
     proc = subprocess.run(
         [node, "--input-type=module", "-e", script], capture_output=True, text=True
     )
     if proc.returncode != 0:
-        raise AssertionError(f"node failed to run pdf.mjs's pageCount: {proc.stderr}")
+        raise AssertionError(f"node failed to run pdf.mjs's pageCutsFrom: {proc.stderr}")
     assert int(proc.stdout.strip()) == expected_pages
 
 
@@ -1707,6 +1711,8 @@ def test_page_cuts_cover_the_whole_document_without_gaps_or_overlap():
     lines = [[i * 25, i * 25 + 15] for i in range(12)]
     cuts = _run_node_page_cuts(node, lines, 300, 100)
     assert cuts[0][0] == 0
+    # >= rather than ==: the final cut runs to a full page height, which may
+    # extend past where the content stops (see the full-page test below).
     assert cuts[-1][1] >= 300
     for (_, previous_end), (next_start, _) in zip(cuts, cuts[1:]):
         assert previous_end == next_start, f"gap or overlap at {previous_end}/{next_start}"
@@ -1734,15 +1740,33 @@ def test_a_document_with_no_text_lines_still_paginates():
     if node is None:
         pytest.skip("node not available — page-cut arithmetic unverified")
 
-    assert _run_node_page_cuts(node, [], 250, 100) == [[0, 100], [100, 200], [200, 250]]
+    assert _run_node_page_cuts(node, [], 250, 100) == [[0, 100], [100, 200], [200, 300]]
 
 
-def test_a_document_shorter_than_one_page_is_a_single_cut():
+def test_every_page_is_a_full_page_tall_including_the_last():
+    """The last cut runs to a full page height, PAST where the content stops,
+    rather than being truncated to it.
+
+    Measured, not assumed. Truncating it — which the first version of this did
+    — left a 230px-tall final page, and RapidOCR then dropped the spaces
+    between words on it: "31December2025", "Limitedrecord". Five tokens
+    vanished from a document whose text was entirely present and legible,
+    taking that slot from 1.0000 survival to 0.9138. The old fixed-grid code
+    padded the last page for free, because its clip simply ran past the
+    content into white, so truncating here would have been a REGRESSION
+    introduced by the seam fix.
+
+    It is also what a real scanner does: it emits a full sheet with whitespace
+    at the foot, never a 230px page."""
     node = shutil.which("node")
     if node is None:
         pytest.skip("node not available — page-cut arithmetic unverified")
 
-    assert _run_node_page_cuts(node, [[0, 10]], 40, 100) == [[0, 40]]
+    assert _run_node_page_cuts(node, [[0, 10]], 40, 100) == [[0, 100]]
+    for _start, end in _run_node_page_cuts(node, [[i * 25, i * 25 + 15] for i in range(12)], 300, 100):
+        assert end - _start == 100 or end - _start < 100, (end, _start)
+    last_start, last_end = _run_node_page_cuts(node, [], 250, 100)[-1]
+    assert last_end - last_start == 100, "the final page must be a full page tall"
 
 
 def test_line_boxes_are_measured_per_visual_line_not_per_block():
@@ -1783,3 +1807,76 @@ def test_line_boxes_are_measured_per_visual_line_not_per_block():
     for top, bottom in boxes:
         assert 0 < bottom - top < 40, f"box {top}..{bottom} is not one line tall"
     assert boxes == sorted(boxes), "boxes must be sorted by top"
+
+
+def test_no_page_cut_falls_through_a_line_in_a_real_render():
+    """The end-to-end property, checkable WITHOUT OCR: render a real document
+    and confirm every boundary the renderer chose lands in a gap between
+    measured lines.
+
+    This is the assertion that would have caught the original defect, and it
+    runs on any machine with node and Chrome. The shipped OCR test could not
+    have caught it: its slot scores 1.0000 pristine, because token survival is
+    a SET intersection and a word sliced at the seam usually appears again
+    elsewhere in the document."""
+    node = shutil.which("node")
+    if node is None or not CHROME.exists():
+        pytest.skip("needs node and system Chrome to render PDFs")
+
+    mjs = PDF_MJS.read_text(encoding="utf-8")
+    line_fn = re.search(r"async function lineBoxesFor\([^)]*\)\s*\{.*?\n\}", mjs, re.DOTALL)
+    cut_fn = re.search(r"function pageCutsFrom\([^)]*\)\s*\{.*?\n\}", mjs, re.DOTALL)
+    assert line_fn and cut_fn, "extraction regexes are stale — update them"
+
+    body = "<p style='font:16px/24px serif'>" + ("word " * 2000) + "</p>"
+    script = (
+        "import puppeteer from 'puppeteer';\n"
+        f"{line_fn.group(0)}\n{cut_fn.group(0)}\n"
+        f"const browser = await puppeteer.launch({{executablePath: {json.dumps(str(CHROME))}}});\n"
+        "const page = await browser.newPage();\n"
+        "await page.setViewport({width: 794, height: 1123});\n"
+        f"await page.setContent({json.dumps(body)});\n"
+        "const boxes = await lineBoxesFor(page);\n"
+        "const h = await page.evaluate(() => document.documentElement.scrollHeight);\n"
+        "console.log(JSON.stringify({boxes, cuts: pageCutsFrom(boxes, h, 1123)}));\n"
+        "await browser.close();\n"
+    )
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", script], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    data = json.loads(proc.stdout.strip())
+
+    assert len(data["cuts"]) > 2, "the fixture must be long enough to paginate"
+    boundaries = {end for _start, end in data["cuts"][:-1]}
+    straddled = [
+        (top, bottom)
+        for top, bottom in data["boxes"]
+        for boundary in boundaries
+        if top < boundary < bottom
+    ]
+    assert not straddled, f"{len(straddled)} line(s) cut through: {straddled[:5]}"
+
+
+def test_a_short_final_page_is_not_stretched_to_fill_the_page_box():
+    """applyScanProfile must place a short clip at its natural proportion,
+    top-aligned. `object-fit: contain` with `height:100%` would scale a
+    half-height page up to full height, changing the type size on that page
+    alone — visible, wrong, and worse for OCR than the seam it replaced."""
+    mjs = PDF_MJS.read_text(encoding="utf-8")
+    match = re.search(r"function applyScanProfile\([^)]*\)", mjs)
+    assert match and "clipHeight" in match.group(0), (
+        "applyScanProfile must take the clip height — without it the page box "
+        "cannot tell a full page from a short one"
+    )
+    img_style = re.search(r"const img =\n(.*?);\n", mjs, re.DOTALL)
+    assert img_style, "could not find the `const img = ...` template in pdf.mjs"
+    # Grepping the whole FILE would match the comment that names the rejected
+    # rule — which is exactly what this assertion did on its first run. Check
+    # the constructed style string.
+    assert "object-fit" not in img_style.group(1), (
+        "object-fit stretches a short final page to fill the A4 box"
+    )
+    assert "height:${clipHeight}px" in img_style.group(1), (
+        "the image must be placed at the clip's own height, top-aligned"
+    )
