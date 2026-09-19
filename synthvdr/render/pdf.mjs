@@ -108,6 +108,50 @@ const SCAN_PROFILES = {
   office: { degrade: true },
 };
 
+// Choose where to clip each page so the cut lands BETWEEN lines rather than
+// through one.
+//
+// The defect this replaces: renderScannedDocument screenshotted at fixed
+// `y = i * PAGE_HEIGHT_PX` offsets with no pagination anywhere, so a line of
+// text straddling a boundary was cut through its glyphs — top half on one
+// page, bottom half on the next, and OCR read neither. Measured at 0.12 of
+// token survival on a PRISTINE scan, with no degradation applied at all.
+//
+// CSS cannot do this. `break-inside: avoid` applies to PAGED media; this path
+// screenshots a scrolling viewport and slices it by pixel offset, so Chrome
+// has no page boxes to avoid breaking inside and the declaration is inert.
+// That is worth stating because it is the cheapest-looking fix and it does
+// not work.
+//
+// Pure, and deliberately separate from the measurement: the arithmetic is the
+// whole algorithm, and keeping it free of the browser is what lets it be
+// tested on its own under bare node.
+function pageCutsFrom(lineBoxes, contentHeight, pageHeight) {
+  const cuts = [];
+  let start = 0;
+  while (start < contentHeight) {
+    const limit = start + pageHeight;
+    if (limit >= contentHeight) {
+      cuts.push([start, contentHeight]);
+      break;
+    }
+    // The foot of the last line that fits entirely. A line straddling `limit`
+    // is excluded by `bottom <= limit`, so it begins the next page whole.
+    let cut = 0;
+    for (const [, bottom] of lineBoxes) {
+      if (bottom <= limit && bottom > start && bottom > cut) cut = bottom;
+    }
+    // No line qualifies: a blank stretch, or a single line taller than a whole
+    // page. Fall back to the hard clip. THIS IS THE PROGRESS GUARANTEE — with
+    // `cut` left at or below `start` the loop would never advance, and one bad
+    // cut on a pathological input beats hanging the render.
+    if (cut <= start) cut = limit;
+    cuts.push([start, cut]);
+    start = cut;
+  }
+  return cuts.length ? cuts : [[0, contentHeight]];
+}
+
 function parseArgs(argv) {
   const args = { src: null, out: null, scanProfile: "none" };
   for (let i = 0; i < argv.length; i += 1) {

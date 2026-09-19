@@ -1636,3 +1636,110 @@ def test_office_profile_measurably_degrades_extracted_text(tmp_path, build_xs_ro
         f"degraded scan survived at only {degraded_survival:.2f} — this is the "
         "fax-quality tier, which is out of scope; loosen degradationFor's ranges"
     )
+
+
+# --- page seams: the clip must land BETWEEN lines, not through one ---------
+#
+# known-issues §1. renderScannedDocument laid a document out at A4 and
+# screenshotted it at fixed `y = i * 1123` offsets with no pagination
+# anywhere, so a line straddling a boundary was cut through its glyphs — top
+# half on one page, bottom half on the next, and OCR read neither. Measured at
+# 0.12 of token survival on a PRISTINE scan, with no degradation applied.
+
+
+def _extract_page_cuts_source(mjs_text: str) -> str:
+    """Pull the real pageCutsFrom out of pdf.mjs, for the same reason
+    _extract_rotation_for_source pulls the real rotationFor: a test carrying
+    its own copy of the algorithm proves the two authors agree, not that the
+    shipped file does."""
+    match = re.search(r"function pageCutsFrom\([^)]*\)\s*\{.*?\n\}", mjs_text, re.DOTALL)
+    if not match:
+        raise AssertionError(
+            "could not find `function pageCutsFrom(...)` in "
+            "synthvdr/render/pdf.mjs — has it been renamed or inlined back "
+            "into renderScannedDocument? update the extraction regex"
+        )
+    return match.group(0)
+
+
+def _run_node_page_cuts(node: str, line_boxes, content_height, page_height):
+    script = (
+        f"{_extract_page_cuts_source(PDF_MJS.read_text(encoding='utf-8'))}\n"
+        f"console.log(JSON.stringify(pageCutsFrom("
+        f"{json.dumps(line_boxes)}, {content_height}, {page_height})));\n"
+    )
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", script], capture_output=True, text=True
+    )
+    if proc.returncode != 0:
+        raise AssertionError(f"node failed to run pdf.mjs's pageCutsFrom: {proc.stderr}")
+    return json.loads(proc.stdout.strip())
+
+
+def test_page_cuts_never_fall_through_a_line():
+    """The defect this exists to fix. With a line spanning 95..105 and a page
+    height of 100, the old code clipped at exactly 100 — through the glyphs,
+    leaving the top half on one page and the bottom half on the next, and OCR
+    read neither. The cut must land at 90, the foot of the last line that
+    fits, so the straddling line moves whole onto page 2."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available — page-cut arithmetic unverified")
+
+    lines = [[0, 10], [20, 30], [50, 60], [80, 90], [95, 105], [120, 130]]
+    cuts = _run_node_page_cuts(node, lines, 200, 100)
+    boundaries = {end for _start, end in cuts}
+    for top, bottom in lines:
+        assert not any(top < b < bottom for b in boundaries), (
+            f"a cut falls through the line {top}..{bottom}: {sorted(boundaries)}"
+        )
+    assert cuts[0] == [0, 90]
+
+
+def test_page_cuts_cover_the_whole_document_without_gaps_or_overlap():
+    """Every pixel of content must appear on exactly one page. A gap silently
+    drops text (the bug being fixed); an overlap duplicates it, which inflates
+    token survival and is dishonest in the other direction."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available — page-cut arithmetic unverified")
+
+    lines = [[i * 25, i * 25 + 15] for i in range(12)]
+    cuts = _run_node_page_cuts(node, lines, 300, 100)
+    assert cuts[0][0] == 0
+    assert cuts[-1][1] >= 300
+    for (_, previous_end), (next_start, _) in zip(cuts, cuts[1:]):
+        assert previous_end == next_start, f"gap or overlap at {previous_end}/{next_start}"
+
+
+def test_a_line_taller_than_a_page_still_makes_progress():
+    """The infinite-loop guard. No line bottom fits inside the first page, so
+    the chooser must fall back to the hard limit rather than failing to
+    advance. Accepting one bad cut on a pathological input beats hanging the
+    render."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available — page-cut arithmetic unverified")
+
+    cuts = _run_node_page_cuts(node, [[0, 250]], 250, 100)
+    assert len(cuts) >= 2
+    assert cuts[0] == [0, 100]
+
+
+def test_a_document_with_no_text_lines_still_paginates():
+    """An image-only or empty document measures no line boxes at all. It must
+    fall back to the fixed grid, not return zero pages and silently render
+    nothing."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available — page-cut arithmetic unverified")
+
+    assert _run_node_page_cuts(node, [], 250, 100) == [[0, 100], [100, 200], [200, 250]]
+
+
+def test_a_document_shorter_than_one_page_is_a_single_cut():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available — page-cut arithmetic unverified")
+
+    assert _run_node_page_cuts(node, [[0, 10]], 40, 100) == [[0, 40]]
