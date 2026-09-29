@@ -85,13 +85,69 @@ documents.
 
 ## Getting started
 
-Install the plugin's Python package from a checkout of this repository. Then make an empty
-folder for the room, open a Claude Code session in that folder, and run `/vdr-scope`.
-Everything after that follows the six steps above.
+You need Claude Code and Python 3.9 or later. The plugin comes in two halves, and both must
+be the same version: the skills, which Claude Code installs from this repository, and the
+`synthvdr` Python package those skills run, which you install yourself. A skill running
+against an older package fails on an import it cannot find.
 
-The room is written into whatever folder you happen to be in, and can run to thousands of
-files, so the empty folder matters. The exact commands are in
-[TECHNICAL-NOTES.md](TECHNICAL-NOTES.md).
+**1. Install the plugin.** This repository is its own plugin marketplace:
+
+```bash
+claude plugin marketplace add gblegal/gb_synth_vdr
+claude plugin install synth-vdr@synth-vdr
+claude plugin list
+```
+
+The last command shows the version you now have: 0.19.0 at the time of writing.
+
+**2. Install the Python package at the same version.** Every release is tagged
+`synth-vdr--v<version>`. Give the package an environment of its own:
+
+```bash
+python3 -m venv ~/.venvs/synth-vdr
+source ~/.venvs/synth-vdr/bin/activate
+python -m pip install --upgrade pip
+pip install -e "git+https://github.com/gblegal/gb_synth_vdr@synth-vdr--v0.19.0#egg=synthvdr"
+python -c "import synthvdr; print(synthvdr.__version__)"
+```
+
+The last command should print the version `claude plugin list` showed. Do not drop the `-e`.
+The package reads its domain pack from the repository folder it sits in, and only an editable
+install keeps that folder. Without it, every import works and the first skill fails on a
+missing `domain/ma/sections.yaml`. The pip upgrade is there for the Python 3.9 that ships with
+macOS, whose pip is too old for this kind of install.
+
+**3. Start a room.** Make an empty folder, start Claude Code in it with the environment
+active, and run `/vdr-scope`:
+
+```bash
+mkdir my-room && cd my-room
+source ~/.venvs/synth-vdr/bin/activate
+claude
+```
+
+The skills call `python3` by name, so it has to be the environment's; that is what the
+`source` line is for. The room is written into the folder Claude Code starts in and can run
+to thousands of files, so the empty folder matters. Everything after `/vdr-scope` follows the
+six steps above.
+
+### Updating to a new release
+
+Refresh the marketplace, update the plugin, then move the package to the matching tag. Put
+the version `claude plugin list` now shows in place of `<version>`:
+
+```bash
+claude plugin marketplace update synth-vdr
+claude plugin update synth-vdr@synth-vdr
+claude plugin list
+source ~/.venvs/synth-vdr/bin/activate
+pip install -e "git+https://github.com/gblegal/gb_synth_vdr@synth-vdr--v<version>#egg=synthvdr"
+```
+
+Restart Claude Code afterwards: a running session keeps the skills it started with.
+
+Working on the plugin itself, from a checkout? See
+[TECHNICAL-NOTES.md](TECHNICAL-NOTES.md) §1.
 
 ## Further reading
 

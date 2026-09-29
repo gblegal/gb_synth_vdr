@@ -8,6 +8,47 @@ the limits of what this project actually checks. For what synth-vdr is, see
 
 ## 1. Install and requirements
 
+Python 3.9 or later. `PyYAML` is the only hard dependency; `python-docx` and the Node/PDF
+toolchain are optional extras.
+
+synth-vdr installs in two halves, and they must be the same version. The skills and agents
+are a Claude Code plugin, served from this repository's own marketplace (`claude plugin
+marketplace add gblegal/gb_synth_vdr`, then `claude plugin install synth-vdr@synth-vdr`).
+The `synthvdr` Python package is installed separately, because every `/vdr-*` skill shells
+out to `python3 -c "from synthvdr..."` or `python3 -m synthvdr...` and none of them work
+until it is importable. The README's "Getting started" has the commands for using the
+plugin; this section says why they are shaped that way, and how to install from a checkout
+to work on it.
+
+**Pinned to a release tag.** This is not a package on PyPI; `pip install synthvdr` installs
+nothing of ours. Each release is tagged `synth-vdr--v<version>` (`make tag` makes and pushes
+the tag), and the package is installed from GitHub at the tag matching the plugin version
+`claude plugin list` reports. Not every release before 0.19.0 was tagged.
+
+**Editable, always.** Only the Python package goes into the wheel. The domain pack is read
+from the repository folder the package sits in (`DEFAULT_DOMAIN_ROOT` in
+`synthvdr/domain.py` is `<package>/../domain/ma`). A plain `pip install
+"git+https://…@<tag>"` therefore imports cleanly, answers every `--help`, and then fails on
+the first skill with `domain pack file missing: …/site-packages/domain/ma/sections.yaml`.
+`pip install -e "git+https://github.com/gblegal/gb_synth_vdr@synth-vdr--v<version>#egg=synthvdr"`
+clones the whole repository into the environment's `src/synthvdr` and installs from there,
+so the domain pack is where the package expects it. Running the same command with a newer tag
+moves that clone forward in place. For DOCX renders, add the extra from the same clone:
+`pip install -e "$VIRTUAL_ENV/src/synthvdr[docx]"`.
+
+**A current pip.** The Python 3.9 that ships with macOS brings pip 21.2, which cannot do an
+editable install of a project with no `setup.py` and fails with a `setup.py develop` error
+that names neither cause. `python -m pip install --upgrade pip` in the new environment,
+before anything else, fixes it.
+
+**The environment has to be active where Claude Code starts.** The skills call `python3` by
+name, so they get whichever one is first on the PATH of the shell `claude` was launched
+from. Activate the environment, then start `claude` in the room folder. `tools/check.sh`
+alone can be pointed at an interpreter explicitly, with `SYNTHVDR_PYTHON`; the skills'
+inline Python cannot.
+
+**From a checkout, to work on the plugin:**
+
 ```bash
 pip install -e .              # the plugin's Python package (synthvdr) — required before any /vdr-* skill runs
 pip install -e ".[dev]"       # adds pytest and ruff, for the test suite and the lint gate
@@ -19,14 +60,6 @@ install *to*. On a system Python that marks itself externally managed they fail 
 you would rather not think about it, `make test` creates `.venv`, installs the package with
 both extras into it, and runs the suite — see §4. `make venv` stops after the install, for
 driving the CLIs by hand afterwards, and `make clean` removes the environment again.
-
-Python 3.9 or later. `PyYAML` is the only hard dependency; `python-docx` and the Node/PDF
-toolchain are optional extras.
-
-Every `/vdr-*` skill shells out to `python3 -c "from synthvdr..."` or `python3 -m
-synthvdr...` — none of them work until `synthvdr` is importable. This is a Claude Code
-plugin, not a package on PyPI: install it from a checkout of this repository, not
-`pip install synthvdr`.
 
 **Create and `cd` into an empty directory for the room before you start.** `/vdr-scope` is
 the first skill and writes into the **current working directory** — `room.conf`, `_key/`,
