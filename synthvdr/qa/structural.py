@@ -49,6 +49,42 @@ def gate_02_counts(ctx):
 
 SLOT_REF = re.compile(r"\b(\d{1,2}\.\d{1,2}\.\d{1,3})\b")
 
+# Words that, immediately before a slot-shaped token, make it a clause number
+# rather than a reference to another document in the room. A CLOSED list, for
+# the reason depth.py gives for PLACEHOLDER_TOKENS: the target set — the
+# drafting words English-law agreements put before a clause number — is small
+# and enumerable, and no shape-based rule could tell "clause 14.2.3" from
+# "see 14.2.3". "section" is deliberately absent: it is ambiguous between a
+# statute and a data-room section, so "section 6.4.2" is still checked.
+CLAUSE_WORDS = (
+    "clause", "sub-clause", "subclause", "paragraph", "sub-paragraph", "subparagraph",
+    "schedule", "part", "article", "rule", "regulation", "condition",
+)
+_CLAUSE_CONTEXT = re.compile(
+    r"\b(?:" + "|".join(re.escape(word) for word in CLAUSE_WORDS) + r")s?\s+"
+    r"(?:\d[\d.]*(?:\([a-z0-9]+\))*\s*(?:,|and|or|to|–|-)\s*)*$",
+    re.IGNORECASE,
+)
+# A clause number opening its line: bare, after heading hashes, or directly
+# inside bold/italic markup. Deliberately NOT after a list bullet or a table
+# pipe — "- 6.1.1 the IP register" and "| 6.1.1 |" are how rooms list related
+# documents, and those must still be checked.
+_LINE_START_NUMBER = re.compile(r"[ \t]*(?:#{1,6}[ \t]+)?(?:\*\*|__|\*|_)?")
+
+
+def is_clause_number(text: str, start: int) -> bool:
+    """Whether the slot-shaped token at `text[start:]` is clause numbering.
+
+    Long-form agreements number clauses three levels deep (1, 1.1, 1.1.1), which
+    is SLOT_REF's shape exactly; without this, a 25-page agreement fails gate 9
+    hundreds of times. Only ever excuses a token — never makes one fail.
+    """
+    line_start = text.rfind("\n", 0, start) + 1
+    if _LINE_START_NUMBER.fullmatch(text, line_start, start):
+        return True
+    return _CLAUSE_CONTEXT.search(text, max(0, start - 120), start) is not None
+
+
 # The exact shape twin.annotation_block() writes a finding's ID in:
 # "- **{id} ({severity})** — {substance}". Matching on "**ID (" rather than
 # trusting FINDING_PREFIXES keeps this prefix-agnostic — the check below is
@@ -366,6 +402,12 @@ def gate_09_xrefs(ctx):
     documentation gap — treating the allowlist as if it existed solely for
     deliberate gaps would mislead whoever has to maintain it when a false
     match shows up there instead.
+
+    CLAUSE NUMBERING IS NOT A REFERENCE. A token at the start of a line, or
+    straight after a drafting word on CLAUSE_WORDS ("clause 14.2.3",
+    "Schedule 2.1.1"), is the document numbering its own clauses and is not
+    checked — see `is_clause_number`. Residual: a genuine slot reference
+    written as "paragraph 6.1.1" now goes unchecked. Accepted (spec §10.1).
     """
     files = ctx.blind_files()
     if not files:
@@ -392,7 +434,11 @@ def gate_09_xrefs(ctx):
         if path.suffix != ".md":
             continue
         own = path.stem.split("_", 1)[0]
-        for ref in SLOT_REF.findall(path.read_text(encoding="utf-8")):
+        text = path.read_text(encoding="utf-8")
+        for match in SLOT_REF.finditer(text):
+            if is_clause_number(text, match.start()):
+                continue
+            ref = match.group(1)
             section = ref.split(".", 1)[0]
             if not section.isdigit() or int(section) not in valid_sections:
                 # No section in THIS room could own it — a date or a gross
