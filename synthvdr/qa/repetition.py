@@ -17,10 +17,15 @@ Measured on 29 September 2026 it could not tell padding from drafting: real
 merger agreements (MAUD) scored a median 0.17 and up to 0.42, ll_vdr_09
 already held documents at 0.34-0.42, and a paragraph pasted five times moved
 an SPA by 0.037. The duplicate-paragraph share, on the same material: MAUD max
-0.026, the Model Commercial Lease and NVCA forms max 0.004, ll_vdr_08 max
-0.008, ll_vdr_09 max 0.081 — and 0.353 for an SPA with its second half
-repeated, 0.167 for one paragraph pasted five times. THRESHOLD sits between.
-Record of the measurement: TECHNICAL-NOTES.md, "Long-form documents".
+0.020, the Model Commercial Lease and NVCA forms max 0.004, ll_vdr_08 max
+0.000 (n=127) and ll_vdr_09 max 0.068 (n=512) — the rooms' populations being
+documents of 2,000+ words by wordcount — against 0.331 for an SPA with its
+second half repeated and 0.167 for one paragraph pasted five times. THRESHOLD
+sits between. The floor is 30 tokens, not 15: at 15 a compilation of six
+conformed J30 stock transfer forms in ll_vdr_09 (1.4.7, 2,343 words) scored
+0.350 on its 19-26-token boilerplate — legitimate form repetition — while
+clause-length padding is unaffected. Record of the measurement:
+TECHNICAL-NOTES.md, "Long-form documents".
 
 It measures repetition WITHIN a document only. Similarity ACROSS documents is
 expected — house forms produce it, and real rooms contain it. A paraphrased
@@ -36,7 +41,7 @@ from .depth import strip_annotation, wordcount
 from .runner import fail, ok, skip, truncated
 
 MIN_WORDS = 2000
-MIN_PARAGRAPH_TOKENS = 15
+MIN_PARAGRAPH_TOKENS = 30
 THRESHOLD = 0.10
 
 _TOKEN = re.compile(r"[a-z0-9]+")

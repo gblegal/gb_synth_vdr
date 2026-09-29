@@ -59,18 +59,23 @@ def test_table_blocks_and_short_paragraphs_are_ignored():
 
 
 def test_a_repeated_long_table_block_is_ignored():
-    # Create a table with enough tokens (16) that it would count as a duplicate
-    # if the table-skip line were removed. Tests that table-block skipping is not
-    # redundant with the MIN_PARAGRAPH_TOKENS filter.
-    table = (
-        "| Column1 | Column2 | Column3 | Column4 |\n"
-        "|---|---|---|---|\n"
-        "| DataA1 | DataA2 | DataA3 | DataA4 |\n"
-        "| DataB1 | DataB2 | DataB3 | DataB4 |\n"
-        "| DataC1 | DataC2 | DataC3 | DataC4 |"
-    )
+    # 36 alphanumeric tokens, so it clears the MIN_PARAGRAPH_TOKENS floor and would
+    # count as a duplicate if the table-skip line were removed. Tests that table-block
+    # skipping is not redundant with the token floor.
+    rows = "\n".join(f"| Data{r}A | Data{r}B | Data{r}C | Data{r}D |" for r in range(8))
+    table = "| Column1 | Column2 | Column3 | Column4 |\n|---|---|---|---|\n" + rows
+    assert len([t for t in table.lower().replace("|", " ").replace("-", " ").split() if t]) >= 32
     text = "\n\n".join([para(i) for i in range(10)] + [table, table])
     # If table-skipping is active, share should be 0.0 (tables not counted at all)
+    assert duplicate_paragraph_share(text) == 0.0
+
+
+def test_a_compilation_of_short_form_paragraphs_is_not_padding():
+    # Six conformed copies of one form: five boilerplate paragraphs of 24 tokens each, as
+    # in ll_vdr_09's stock transfer form compilation. Under the 30-token floor they are
+    # form text, not drafting the author could have written afresh.
+    form = [para(100 + k, words=24) for k in range(5)]
+    text = "\n\n".join(form * 6 + [para(i) for i in range(10)])
     assert duplicate_paragraph_share(text) == 0.0
 
 
