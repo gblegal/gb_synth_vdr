@@ -566,6 +566,11 @@ Two metric caveats apply to any band quoted against it — markdown table pipes 
 words, so table-heavy documents read 15–25% longer than their prose, and CJK characters are
 counted at half weight rather than as a single token.
 
+Gate 21 (§7) now catches one kind of padding — it fails when more than 10% of a 2,000+-word
+document's words sit in repeated paragraphs of 30+ tokens (verbatim repeats of an earlier
+paragraph) — and nothing else: a paraphrased restatement, front matter and long cross-reference
+lists still pass.
+
 **Gate 20 reads form, never meaning, and so it only warns.** It was calibrated on one room,
 Project Frithcombe, by scoring its flags on the pre-fix room against the lines the fix
 (ll_vdr_08, `fix/section-05-tells`) actually took bold off: 123 lines flagged, 60% of them
@@ -592,3 +597,52 @@ text passes. A forward pointer to a document at least half the section's notes c
 IP register, the draft SPA — is the section's habit and is not counted either, which costs a
 note that singles out a hub the section also cites by habit: only the rest of that note, if
 it has any, is still counted.
+
+---
+
+## 7. Long-form documents
+
+`DOC_LENGTH="long"` in `room.conf` (fixed at Gate A) writes every agreement-bearing slot at its real
+length. Spec: `docs/superpowers/specs/2026-09-29-long-form-documents-design.md`.
+
+**Bands** (`domain/ma/lengths.yaml`), at 500 words per page — the conservative end of the 450–525
+measured on this renderer's agreement prose in Project Frithcombe (`ll_vdr_08`):
+
+| Band | Pages | Floor | Target | Subfolders |
+|---|---|---|---|---|
+| heavy | 35–45 | 17,500 | 20,000 | draft SPA, facilities, pension trust deed, leases |
+| principal | 20–30 | 10,000 | 12,000 | commercial contracts, licences, hosting, constitutional, JV, share schemes, security, hedging, W&I, insurance policies |
+| mid | 10–15 | 5,000 | 6,000 | employment contracts, processor agreements, settlements, guarantees |
+| short | 4–8 | 2,000 | 2,500 | NDAs, IP assignments |
+
+**Where the numbers came from.** Length by type: CUAD v1 (510 EDGAR commercial contracts), the
+Stanford Material Contracts Corpus, ContractNLI (NDAs), MAUD (152 merger agreements, median ~51k
+words), the Model Commercial Lease (16.7k–22.8k words, 54–74 pages) and the Companies Act model
+articles (~7.2k words); UK practitioner ranges where no corpus exists, which are estimates. EDGAR
+omits schedules and redacts terms, so CUAD's medians are floors on real length, not targets.
+
+**Anatomy** (`domain/ma/anatomy.yaml`): the clause checklists are CUAD's 41 categories restated as
+English-law headings; the SPA's part shares follow MAUD's measured split (definitions 10–17%, target
+warranties 15–26%, covenants 20–29%, boilerplate 9–13%), adapted to a UK warranties schedule, tax
+covenant and limitations schedule. No corpus text is in this repository.
+
+**Gate 21's threshold (0.10) and paragraph floor (30 tokens).** Duplicate-paragraph share, measured
+29 September 2026 at the 30-token floor: MAUD max 0.020 (5 agreements), Model Commercial Lease and
+NVCA forms max 0.004 (4), Frithcombe max 0.000 (127 documents of 2,000+ words by `wordcount`),
+`ll_vdr_09` max 0.068 (512); an SPA with its second half repeated 0.331, one paragraph pasted five
+times 0.167. The floor is 30 tokens, not 15: at 15, `ll_vdr_09`'s 1.4.7 — a compilation of six
+conformed J30 stock transfer forms, 2,343 words — scored 0.350 on its 19–26-token boilerplate, which
+is legitimate form repetition, not padding, and raising the threshold past it would have blinded the
+gate; form boilerplate in the material measured runs under 30 tokens; drafted clauses mostly run
+longer, so padding is still caught. Re-run with
+`tools/calibrate_repetition.py DIR...`; the shipped gate, both rooms read-only, on 2026-09-29:
+
+```text
+~/Dev/ll_vdr_08/data-room: n=127 median=0.000 max=0.000 above 0.1: 0
+~/Dev/ll_vdr_09/data-room: n=512 median=0.000 max=0.068 above 0.1: 0
+```
+
+**Cost.** Simulated waves at 40,000 weighted words per author and five authors per wave: about 2, 5
+and 19 waves for S, M and L (simulated; more if the findings registry pulls agreements forward). A
+long M room is ~790k words of target text against ~235k in a short one. House forms save ~12% at M
+and ~18% at L, nothing at XS or S.

@@ -532,9 +532,9 @@ def test_tells_warn_and_never_fail_the_run(tmp_path, capsys):
     assert "1 warned" in capsys.readouterr().out
 
 
-def test_gate_20_is_registered_last():
-    assert ALL_GATES[-1] is gate_20_tells
-    assert len(ALL_GATES) == 20
+def test_gate_20_is_registered_twentieth():
+    assert ALL_GATES.index(gate_20_tells) == 19
+    assert len(ALL_GATES) == 22
 
 
 def test_the_xs_fixture_room_carries_no_tells(xs_room):

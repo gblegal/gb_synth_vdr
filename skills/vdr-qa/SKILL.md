@@ -1,6 +1,6 @@
 ---
 name: vdr-qa
-description: Run the twenty room QA gates — index regeneration, leakage sweeps, twin invariants, carrier census, cross-references, depth lint, subset, fact-sheet and answer-key reconciliation, unchecked-name sweep, discoverability, render parity, the room's exemplar/eval role declaration, the eval room's classification answer key, and the evidence-tells warning (bold, pointer notes and note asymmetry that give away which documents carry findings). Use --strict before any release.
+description: Run the twenty-two room QA gates — index regeneration, leakage sweeps, twin invariants, carrier census, cross-references, depth lint, subset, fact-sheet and answer-key reconciliation, unchecked-name sweep, discoverability, render parity, the room's exemplar/eval role declaration, the eval room's classification answer key, the evidence-tells warning (gate 20 — bold, pointer notes and note asymmetry that give away which documents carry findings), repetition in long documents (gate 21) and house forms (gate 22). Use --strict before any release.
 ---
 
 # Run the QA gates
@@ -12,7 +12,7 @@ python3 -m synthvdr.qa --room . --strict   # release mode
 
 `tools/check.sh` is a thin wrapper around the same command (`bash tools/check.sh .` and
 `bash tools/check.sh . --strict`) — use whichever is at hand, they run the identical
-twenty gates.
+twenty-two gates.
 
 If either form reports that it cannot import `synthvdr`, the room's `python3` is not the
 interpreter the package was installed into — which is the normal case, since a room is a
@@ -44,7 +44,7 @@ could not even be loaded (missing or malformed `room.conf`, or a malformed answe
 distinct from `1` so you can tell "the checks found a problem" apart from "the checks
 never ran."
 
-## The twenty gates, briefly
+## The twenty-two gates, briefly
 
 | # | Gate | Checks |
 |---|---|---|
@@ -68,6 +68,8 @@ never ran."
 | 18 | Room role declared | `room.conf` says whether this is an `exemplar` room (may teach the downstream classifier) or an `eval` room (only ever scores it) — the train/test split, enforced |
 | 19 | Eval answer key | An `eval` room carries `_key/answer-key.jsonl`, and the file matches a fresh rebuild from `_key/labels.yaml` — an eval room without a complete, current classification key cannot score the classifier, which is the one thing it exists to do. Exemplar rooms pass: the key does not apply to them |
 | 20 | Evidence tells | Form that gives away which documents carry findings or distractors: bold on some comparable items of an evidence document and not all, landing on the finding's words; italic notes pointing forward from one document of a chain to a later one; a section whose evidence documents carry index-citing notes and whose other documents do not, or the reverse. **WARN only** — never fails a run, including `--strict` |
+| 21 | Repetition | No document of 2,000+ words has more than 10% of its words in paragraphs that repeat an earlier paragraph — padding, which gate 10's floor cannot see |
+| 22 | House forms | Long rooms: no answer-key evidence on a house form, every house form has blanks, every derived contract fills them and differs by at least two negotiated changes. Short rooms pass: it does not apply |
 
 ## Common failures and what they mean
 
@@ -129,6 +131,11 @@ never ran."
   notes to benign siblings rather than deleting notes from the other, because removing
   notes outright makes their absence the tell. Thresholds live in
   `synthvdr.qa.tells.THRESHOLDS`; the calibration behind them is in its docstring.
+- **Gate 21** — an author padded to reach a floor. Re-dispatch the document naming the repeated
+  paragraphs; never raise the threshold to let it through.
+- **Gate 22** — usually a derived contract an interrupted wave seeded and nobody edited. Resuming
+  `/vdr-build` re-dispatches it.
+
 ## Before release
 
 Run `python3 -m synthvdr.qa --room . --strict` yourself before handing a room to

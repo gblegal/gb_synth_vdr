@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Set
+from typing import AbstractSet, Dict, Iterable, List, Mapping, Sequence, Set
 
 from .domain import DomainPack, Section
 
@@ -161,7 +161,9 @@ def read_slot_manifest(path: Path) -> List[Slot]:
     return slots
 
 
-def authoring_order(slots: Iterable[Slot], load_bearing: Set[str]) -> List[Slot]:
+def authoring_order(
+    slots: Iterable[Slot], load_bearing: Set[str], house_forms: AbstractSet[str] = frozenset()
+) -> List[Slot]:
     """The order `/vdr-build` authors a room in: load-bearing slots first, tier
     order after, manifest order within each group.
 
@@ -193,11 +195,49 @@ def authoring_order(slots: Iterable[Slot], load_bearing: Set[str]) -> List[Slot]
     after /vdr-findings was the alternative considered; it was rejected because
     tier drives gate 10's depth floors, so promoting a slot silently changes
     what an existing room is required to meet.
+
+    HOUSE FORMS FIRST, in a long room (`house_forms` is
+    `synthvdr.houseforms.house_form_paths(...)`): a derived contract is seeded
+    from its house form, so the house form must exist before any derived
+    slot — including a load-bearing one — can be authored. Empty by default,
+    which leaves the order exactly what it was before house forms existed.
     """
     return sorted(
         slots,
         key=lambda slot: (
+            slot.rel_path not in house_forms,
             slot.rel_path not in load_bearing,
             slot.tier != TIER_ANCHOR,
         ),
     )
+
+
+def batch_by_budget(
+    order: Sequence[Slot], weights: Mapping[str, int], budget: int, max_batches: int
+) -> List[List[Slot]]:
+    """One wave's author batches: `order` packed greedily into at most
+    `max_batches` batches of at most `budget` weighted words each.
+
+    Long mode's replacement for "40-50 slots per author", which is ~50,000
+    words of short documents but would be ~500,000 of long ones. Never
+    reorders and never splits a document; a slot heavier than the budget
+    travels alone. Whatever is left once `max_batches` is reached is the next
+    wave's. `weights` is `Lengths.weight_for` per rel_path.
+    """
+    if budget <= 0 or max_batches <= 0:
+        raise ValueError(f"budget ({budget}) and max_batches ({max_batches}) must both be positive")
+    batches: List[List[Slot]] = []
+    current: List[Slot] = []
+    load = 0
+    for slot in order:
+        weight = weights[slot.rel_path]
+        if current and load + weight > budget:
+            batches.append(current)
+            if len(batches) == max_batches:
+                return batches
+            current, load = [], 0
+        current.append(slot)
+        load += weight
+    if current:
+        batches.append(current)
+    return batches

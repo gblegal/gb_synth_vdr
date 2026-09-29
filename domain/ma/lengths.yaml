@@ -1,0 +1,43 @@
+# Long-mode length bands. Read only when room.conf says DOC_LENGTH="long"; a
+# short room never opens this file.
+# Spec: docs/superpowers/specs/2026-09-29-long-form-documents-design.md §5.
+# A band's floor is the bottom of its page range at words_per_page, and the
+# loader refuses one that disagrees. Where the ranges came from:
+# TECHNICAL-NOTES.md, "Long-form documents".
+words_per_page: 500
+bands:
+  heavy:     {pages: [35, 45], floor: 17500, target: 20000}
+  principal: {pages: [20, 30], floor: 10000, target: 12000}
+  mid:       {pages: [10, 15], floor: 5000,  target: 6000}
+  short:     {pages: [4, 8],   floor: 2000,  target: 2500}
+
+# One row per agreement-bearing subfolder, keyed by section AND subsection:
+# subsection names repeat across sections ("policies" is 9.2, 12.2 and 19.1,
+# and only 12.2 holds agreements). paper: target marks the subfolders where the
+# target holds the pen — the only ones that get house forms (spec §7).
+subsections:
+  - {section: 01_corporate,              subsection: constitutional,       band: principal, paper: counterparty, anatomy: articles-sha,     hint: "Articles of association or shareholders' agreement"}
+  - {section: 04_financing-banking,      subsection: facilities,           band: heavy,     paper: counterparty, anatomy: facility,         hint: "Senior facilities agreement"}
+  - {section: 04_financing-banking,      subsection: security,             band: principal, paper: counterparty, anatomy: debenture,        hint: "Debenture"}
+  - {section: 04_financing-banking,      subsection: guarantees,           band: mid,       paper: counterparty, anatomy: guarantee,        hint: "Guarantee and indemnity"}
+  - {section: 04_financing-banking,      subsection: hedging,              band: principal, paper: counterparty, anatomy: hedging,          hint: "ISDA Master Agreement schedule and confirmations"}
+  - {section: 05_commercial,             subsection: customer-contracts,   band: principal, paper: target,       anatomy: commercial-supply, hint: "Customer supply agreement on the target's terms"}
+  - {section: 05_commercial,             subsection: supplier-contracts,   band: principal, paper: counterparty, anatomy: commercial-supply, hint: "Supply agreement on the supplier's terms"}
+  - {section: 05_commercial,             subsection: distribution,         band: principal, paper: target,       anatomy: distribution,     hint: "Distribution agreement"}
+  - {section: 05_commercial,             subsection: framework-agreements, band: principal, paper: target,       anatomy: framework,        hint: "Framework agreement"}
+  - {section: 05_commercial,             subsection: ndas,                 band: short,     paper: target,       anatomy: nda,              hint: "Non-disclosure agreement"}
+  - {section: 06_intellectual-property,  subsection: assignments,          band: short,     paper: counterparty, anatomy: ip-assignment,    hint: "Deed of assignment of intellectual property"}
+  - {section: 06_intellectual-property,  subsection: licences-in,          band: principal, paper: counterparty, anatomy: licence,          hint: "Licence agreement (in-licence)"}
+  - {section: 06_intellectual-property,  subsection: licences-out,         band: principal, paper: target,       anatomy: licence,          hint: "Licence agreement (out-licence)"}
+  - {section: 07_information-technology, subsection: software-licences,    band: principal, paper: counterparty, anatomy: licence,          hint: "Software licence agreement"}
+  - {section: 07_information-technology, subsection: hosting,              band: principal, paper: counterparty, anatomy: commercial-supply, hint: "Hosting services agreement"}
+  - {section: 08_property,               subsection: leases,               band: heavy,     paper: counterparty, anatomy: lease,            hint: "Lease"}
+  - {section: 09_employment,             subsection: contracts,            band: mid,       paper: target,       anatomy: employment,       hint: "Contract of employment"}
+  - {section: 09_employment,             subsection: share-schemes,        band: principal, paper: counterparty, anatomy: scheme-rules,     hint: "Share option scheme rules"}
+  - {section: 12_insurance,              subsection: policies,             band: principal, paper: counterparty, anatomy: insurance-policy, hint: "Insurance policy wording"}
+  - {section: 13_pensions,               subsection: trust-deed,           band: heavy,     paper: counterparty, anatomy: trust-deed,       hint: "Definitive trust deed and rules"}
+  - {section: 14_data-protection,        subsection: processor-agreements, band: mid,       paper: target,       anatomy: dpa,              hint: "Data processing agreement"}
+  - {section: 15_litigation,             subsection: settlements,          band: mid,       paper: counterparty, anatomy: settlement,       hint: "Settlement agreement"}
+  - {section: 18_transaction,            subsection: draft-spa,            band: heavy,     paper: counterparty, anatomy: spa,              hint: "Share purchase agreement (draft)"}
+  - {section: 18_transaction,            subsection: w-and-i,              band: principal, paper: counterparty, anatomy: insurance-policy, hint: "Warranty and indemnity insurance policy"}
+  - {section: 20_jv-minority-interests,  subsection: jv-agreements,        band: principal, paper: counterparty, anatomy: jv,               hint: "Joint venture agreement"}

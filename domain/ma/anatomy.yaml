@@ -1,0 +1,284 @@
+# Agreement anatomy for long mode: the parts an author outlines, in order,
+# each with its share of the band target, and the clauses the agreement must
+# contain — almost all in ordinary, benign form. The list says what is
+# PRESENT, never what it says.
+# Spec §6. Provenance (CUAD's 41 categories restated as English-law headings;
+# MAUD's section shares for the SPA; the Model Commercial Lease and the
+# Companies Act model articles as UK anchors): TECHNICAL-NOTES.md,
+# "Long-form documents". Shares are integers summing to 100 — the loader
+# refuses anything else.
+families:
+  commercial-supply:
+    title: "Supply or services agreement"
+    parts:
+      - {name: "Parties and background", share: 3}
+      - {name: "Definitions and interpretation", share: 12}
+      - {name: "Supply, services and service levels", share: 25}
+      - {name: "Charges, invoicing and payment", share: 10}
+      - {name: "Intellectual property and confidentiality", share: 10}
+      - {name: "Liability, indemnities and insurance", share: 9}
+      - {name: "Term, termination and consequences", share: 7}
+      - {name: "General provisions", share: 11}
+      - {name: "Schedules", share: 13}
+    clauses: ["Term and renewal", "Exclusivity", "Minimum commitment", "Most favoured customer", "Price review and indexation", "Service levels and service credits", "Change control", "Change of control", "Assignment and subcontracting", "Ownership of intellectual property", "Licence of background intellectual property", "Confidentiality", "Data protection", "Audit rights", "Insurance", "Limitation of liability", "Exclusions of liability", "Indemnities", "Termination for convenience", "Termination for cause", "Post-termination assistance", "Non-solicitation of staff", "Force majeure", "Dispute resolution", "Third party rights", "Governing law and jurisdiction"]
+  distribution:
+    title: "Distribution agreement"
+    parts:
+      - {name: "Parties and background", share: 3}
+      - {name: "Definitions and interpretation", share: 12}
+      - {name: "Appointment, territory and exclusivity", share: 12}
+      - {name: "Supply of products, ordering and delivery", share: 14}
+      - {name: "Prices, payment and minimum purchase targets", share: 10}
+      - {name: "Distributor's undertakings, marketing and trade marks", share: 12}
+      - {name: "Product warranties, recalls and liability", share: 9}
+      - {name: "Term, termination and consequences", share: 8}
+      - {name: "General provisions", share: 10}
+      - {name: "Schedules", share: 10}
+    clauses: ["Exclusivity", "Territory", "Non-compete", "Exceptions to the competitive restrictions", "Minimum purchase commitment", "Price restrictions", "Most favoured customer", "Trade mark licence", "Change of control", "Assignment", "Right of first refusal", "Audit rights", "Product liability and recall", "Limitation of liability", "Insurance", "Termination for convenience", "Post-termination sell-off", "Non-solicitation", "Governing law and jurisdiction"]
+  framework:
+    title: "Framework agreement"
+    parts:
+      - {name: "Parties and background", share: 3}
+      - {name: "Definitions and interpretation", share: 12}
+      - {name: "Framework structure and call-off procedure", share: 14}
+      - {name: "Call-off terms, performance and service levels", share: 18}
+      - {name: "Charges, invoicing and payment", share: 9}
+      - {name: "Intellectual property, confidentiality and data protection", share: 10}
+      - {name: "Liability, indemnities and insurance", share: 9}
+      - {name: "Term, suspension and termination", share: 8}
+      - {name: "General provisions", share: 9}
+      - {name: "Schedules", share: 8}
+    clauses: ["Non-exclusivity", "Volume commitment", "Price review and benchmarking", "Most favoured customer", "Service credits", "Change of control", "Assignment", "Audit rights", "Ownership of intellectual property", "Limitation of liability", "Termination for convenience", "Step-in rights", "Exit management", "Governing law and jurisdiction"]
+  licence:
+    title: "Licence agreement"
+    parts:
+      - {name: "Parties and background", share: 3}
+      - {name: "Definitions and interpretation", share: 12}
+      - {name: "Grant of licence and restrictions", share: 15}
+      - {name: "Delivery, acceptance and support", share: 12}
+      - {name: "Fees, royalties, reporting and audit", share: 12}
+      - {name: "Ownership, improvements and protection of intellectual property", share: 10}
+      - {name: "Warranties, indemnities and liability", share: 10}
+      - {name: "Term, termination and consequences", share: 8}
+      - {name: "General provisions", share: 10}
+      - {name: "Schedules", share: 8}
+    clauses: ["Licence grant", "Exclusivity", "Territory and field of use", "Non-transferable licence", "Sub-licensing", "Licence to affiliates", "Irrevocable or perpetual licence", "Unlimited usage", "Royalties and minimum royalties", "Audit rights", "Ownership of improvements", "Joint ownership of intellectual property", "Source code escrow", "Covenant not to sue", "Change of control", "Assignment", "Cap on liability", "Uncapped liability", "Intellectual property infringement indemnity", "Post-termination rights", "Governing law and jurisdiction"]
+  lease:
+    title: "Lease"
+    parts:
+      - {name: "Particulars and parties", share: 4}
+      - {name: "Definitions and interpretation", share: 10}
+      - {name: "Demise, rights granted and rights excepted", share: 7}
+      - {name: "Rent, rent review and other payments", share: 12}
+      - {name: "Service charge and insurance", share: 12}
+      - {name: "Tenant's covenants", share: 22}
+      - {name: "Landlord's covenants", share: 4}
+      - {name: "Forfeiture, break options and end of term", share: 8}
+      - {name: "General provisions", share: 7}
+      - {name: "Schedules", share: 14}
+    clauses: ["Contractual term", "Exclusion of security of tenure", "Break clause", "Rent review", "Service charge cap", "Repair and dilapidations", "Alterations", "Assignment and underletting", "Change of control treated as assignment", "Guarantor", "Rent deposit", "Insurance and reinstatement", "Uninsured risks", "Forfeiture", "Yielding up", "Governing law and jurisdiction"]
+  facility:
+    title: "Facilities agreement"
+    parts:
+      - {name: "Parties", share: 2}
+      - {name: "Definitions and interpretation", share: 16}
+      - {name: "The facilities, purpose and conditions of utilisation", share: 8}
+      - {name: "Utilisation, repayment and prepayment", share: 10}
+      - {name: "Interest, fees and tax gross-up", share: 10}
+      - {name: "Representations", share: 9}
+      - {name: "Information undertakings and financial covenants", share: 12}
+      - {name: "General undertakings", share: 10}
+      - {name: "Events of default", share: 8}
+      - {name: "Agency, transfers and administration", share: 9}
+      - {name: "Schedules", share: 6}
+    clauses: ["Mandatory prepayment on change of control", "Financial covenants", "Equity cure", "Negative pledge", "Restrictions on disposals", "Restrictions on acquisitions", "Permitted distributions", "Guarantor coverage", "Events of default", "Cross-default", "Material adverse change", "Assignments and transfers by lenders", "Sanctions and anti-corruption", "Governing law and jurisdiction"]
+  debenture:
+    title: "Debenture"
+    parts:
+      - {name: "Parties", share: 3}
+      - {name: "Definitions and interpretation", share: 14}
+      - {name: "Covenant to pay", share: 3}
+      - {name: "Fixed and floating charges and assignments", share: 18}
+      - {name: "Crystallisation and further assurance", share: 8}
+      - {name: "Representations and undertakings", share: 16}
+      - {name: "Enforcement, receivers and their powers", share: 16}
+      - {name: "Application of proceeds and protection of third parties", share: 8}
+      - {name: "General provisions", share: 7}
+      - {name: "Schedules", share: 7}
+    clauses: ["Qualifying floating charge", "Negative pledge", "Restrictions on disposals", "Charged accounts", "Notices of assignment", "Power of attorney", "Appointment of a receiver or administrator", "Continuing security", "Governing law and jurisdiction"]
+  guarantee:
+    title: "Guarantee and indemnity"
+    parts:
+      - {name: "Parties and background", share: 5}
+      - {name: "Definitions and interpretation", share: 12}
+      - {name: "Guarantee and indemnity", share: 18}
+      - {name: "Preservation of rights and waiver of defences", share: 16}
+      - {name: "Representations", share: 10}
+      - {name: "Undertakings", share: 10}
+      - {name: "Payments, set-off and tax", share: 10}
+      - {name: "Limits, release and termination", share: 9}
+      - {name: "General provisions", share: 10}
+    clauses: ["Guarantee cap", "Continuing guarantee", "Waiver of defences", "Subordination of the guarantor's claims", "Release", "Assignment", "Governing law and jurisdiction"]
+  hedging:
+    title: "ISDA Master Agreement schedule and confirmations"
+    parts:
+      - {name: "Parties and recitals", share: 3}
+      - {name: "Part 1: termination provisions", share: 16}
+      - {name: "Part 2: tax representations", share: 8}
+      - {name: "Part 3: documents to be delivered", share: 6}
+      - {name: "Part 4: miscellaneous", share: 12}
+      - {name: "Part 5: other provisions", share: 25}
+      - {name: "Credit support provisions", share: 14}
+      - {name: "Confirmations and trade terms", share: 16}
+    clauses: ["Additional termination events", "Cross-default threshold", "Credit event upon merger", "Automatic early termination", "Set-off", "Change of control", "Transfer", "Governing law and jurisdiction"]
+  spa:
+    title: "Share purchase agreement"
+    parts:
+      - {name: "Parties and background", share: 2}
+      - {name: "Definitions and interpretation", share: 12}
+      - {name: "Sale and purchase, consideration and adjustments", share: 9}
+      - {name: "Conditions and pre-completion undertakings", share: 7}
+      - {name: "Completion", share: 5}
+      - {name: "Warranties, disclosure and remedies", share: 6}
+      - {name: "Limitations on claims", share: 6}
+      - {name: "Restrictive covenants and other undertakings", share: 5}
+      - {name: "General provisions", share: 8}
+      - {name: "Schedule: warranties", share: 22}
+      - {name: "Schedule: tax covenant", share: 10}
+      - {name: "Other schedules", share: 8}
+    clauses: ["Locked box or completion accounts", "Leakage", "Earn-out", "Retention and escrow", "Regulatory conditions", "Conduct of business before completion", "Material adverse change", "Warranties and disclosure", "Knowledge qualifier", "De minimis and basket", "Cap on liability", "Time limits for claims", "Specific indemnities", "Warranty and indemnity insurance", "Tax covenant", "Restrictive covenants", "Change of control consents", "Entire agreement and non-reliance", "Assignment", "Governing law and jurisdiction"]
+  articles-sha:
+    title: "Articles of association or shareholders' agreement"
+    parts:
+      - {name: "Preliminary and interpretation", share: 12}
+      - {name: "Share capital and share rights", share: 14}
+      - {name: "Issue of shares and pre-emption", share: 8}
+      - {name: "Transfers of shares", share: 18}
+      - {name: "Drag-along, tag-along and exit", share: 10}
+      - {name: "Directors, the board and decision-making", share: 14}
+      - {name: "Reserved matters and investor consents", share: 10}
+      - {name: "Information rights, dividends and general meetings", share: 8}
+      - {name: "Miscellaneous", share: 6}
+    clauses: ["Pre-emption on issue", "Pre-emption on transfer", "Right of first refusal", "Permitted transfers", "Good and bad leaver", "Drag-along", "Tag-along", "Anti-dilution", "Liquidation preference", "Board appointment rights", "Reserved matters", "Deadlock", "Non-compete", "Information rights", "Change of control", "Governing law"]
+  jv:
+    title: "Joint venture agreement"
+    parts:
+      - {name: "Parties and background", share: 3}
+      - {name: "Definitions and interpretation", share: 12}
+      - {name: "Establishment, business and funding of the joint venture", share: 12}
+      - {name: "Share capital, further funding and dilution", share: 8}
+      - {name: "Board, management and reserved matters", share: 14}
+      - {name: "Business plan, information and accounts", share: 7}
+      - {name: "Transfers, pre-emption, tag-along and drag-along", share: 12}
+      - {name: "Deadlock and exit", share: 12}
+      - {name: "Restrictive covenants and confidentiality", share: 7}
+      - {name: "General provisions", share: 8}
+      - {name: "Schedules", share: 5}
+    clauses: ["Exclusivity", "Non-compete", "Funding obligations", "Reserved matters", "Deadlock resolution", "Put and call options", "Change of control of a shareholder", "Right of first refusal", "Tag-along", "Drag-along", "Default events", "Ownership and licensing of intellectual property", "Governing law and jurisdiction"]
+  employment:
+    title: "Contract of employment"
+    parts:
+      - {name: "Parties and commencement", share: 4}
+      - {name: "Definitions and interpretation", share: 7}
+      - {name: "Appointment, duties and place of work", share: 10}
+      - {name: "Hours, remuneration, bonus and benefits", share: 14}
+      - {name: "Holidays, sickness and other leave", share: 8}
+      - {name: "Confidentiality and intellectual property", share: 12}
+      - {name: "Termination, notice and garden leave", share: 12}
+      - {name: "Post-termination restrictions", share: 13}
+      - {name: "Data protection, policies and general provisions", share: 10}
+      - {name: "Schedules", share: 10}
+    clauses: ["Notice period", "Garden leave", "Payment in lieu of notice", "Bonus and incentive terms", "Change of control payment", "Assignment of intellectual property", "Waiver of moral rights", "Confidentiality", "Non-compete", "Non-solicitation of customers", "Non-solicitation of employees", "Non-dealing", "Governing law and jurisdiction"]
+  scheme-rules:
+    title: "Share option scheme rules"
+    parts:
+      - {name: "Purpose and interpretation", share: 12}
+      - {name: "Eligibility and grant of options", share: 12}
+      - {name: "Individual and scheme limits", share: 6}
+      - {name: "Exercise conditions and performance targets", share: 10}
+      - {name: "Exercise of options", share: 10}
+      - {name: "Leavers", share: 12}
+      - {name: "Corporate events", share: 14}
+      - {name: "Variation of share capital and adjustments", share: 7}
+      - {name: "Tax, withholding and qualifying status", share: 8}
+      - {name: "Administration, amendment and termination", share: 9}
+    clauses: ["Qualifying status", "Individual and scheme limits", "Performance conditions", "Good and bad leaver", "Vesting on change of control", "Rollover", "Malus and clawback", "Tax indemnity", "Amendment powers", "Governing law"]
+  nda:
+    title: "Non-disclosure agreement"
+    parts:
+      - {name: "Parties and background", share: 5}
+      - {name: "Definitions", share: 15}
+      - {name: "Confidentiality obligations and permitted disclosure", share: 25}
+      - {name: "Exceptions", share: 10}
+      - {name: "Return and destruction", share: 8}
+      - {name: "No licence, no warranty and no obligation to proceed", share: 10}
+      - {name: "Term, remedies and non-solicitation", share: 12}
+      - {name: "General provisions", share: 15}
+    clauses: ["Permitted purpose", "Permitted recipients", "Standstill", "Non-solicitation of employees", "Term of confidentiality", "Return or destruction", "Injunctive relief", "Governing law and jurisdiction"]
+  dpa:
+    title: "Data processing agreement"
+    parts:
+      - {name: "Parties and background", share: 4}
+      - {name: "Definitions and interpretation", share: 12}
+      - {name: "Processing instructions and scope", share: 14}
+      - {name: "Security measures", share: 12}
+      - {name: "Sub-processors", share: 10}
+      - {name: "International transfers", share: 10}
+      - {name: "Data subject rights, assistance and breach notification", share: 12}
+      - {name: "Audit and records", share: 8}
+      - {name: "Liability, term, deletion and return", share: 8}
+      - {name: "Schedules", share: 10}
+    clauses: ["Approval of sub-processors", "International transfer mechanism", "Breach notification period", "Audit rights", "Cap on liability", "Deletion or return of data", "Governing law and jurisdiction"]
+  ip-assignment:
+    title: "Deed of assignment of intellectual property"
+    parts:
+      - {name: "Parties and background", share: 8}
+      - {name: "Definitions and interpretation", share: 14}
+      - {name: "Assignment", share: 18}
+      - {name: "Consideration", share: 6}
+      - {name: "Waiver of moral rights", share: 6}
+      - {name: "Further assurance and power of attorney", share: 12}
+      - {name: "Warranties", share: 16}
+      - {name: "General provisions", share: 12}
+      - {name: "Schedule of assigned rights", share: 8}
+    clauses: ["Assignment of present and future rights", "Waiver of moral rights", "Further assurance", "Power of attorney", "Warranties of title", "Governing law and jurisdiction"]
+  settlement:
+    title: "Settlement agreement"
+    parts:
+      - {name: "Parties and background", share: 8}
+      - {name: "Definitions and interpretation", share: 10}
+      - {name: "Settlement payment and timing", share: 14}
+      - {name: "Release and waiver of claims", share: 18}
+      - {name: "Discontinuance of proceedings", share: 8}
+      - {name: "Warranties", share: 10}
+      - {name: "Confidentiality and non-disparagement", share: 12}
+      - {name: "Costs", share: 6}
+      - {name: "General provisions", share: 14}
+    clauses: ["Settlement sum", "Full and final release", "Claims carved out of the release", "Discontinuance", "No admission of liability", "Confidentiality", "Non-disparagement", "Costs", "Governing law and jurisdiction"]
+  insurance-policy:
+    title: "Insurance policy wording"
+    parts:
+      - {name: "Schedule", share: 8}
+      - {name: "Definitions", share: 14}
+      - {name: "Insuring clauses", share: 12}
+      - {name: "Extensions", share: 12}
+      - {name: "Exclusions", share: 16}
+      - {name: "Conditions", share: 14}
+      - {name: "Claims conditions and notification", share: 10}
+      - {name: "Cancellation and general provisions", share: 6}
+      - {name: "Endorsements", share: 8}
+    clauses: ["Limit of indemnity", "Deductible or retention", "Change of control", "Claims notification", "Known matters exclusion", "Waiver of subrogation", "Cancellation", "Governing law and jurisdiction"]
+  trust-deed:
+    title: "Definitive trust deed and rules"
+    parts:
+      - {name: "Parties and recitals", share: 3}
+      - {name: "Definitions and interpretation", share: 14}
+      - {name: "Constitution, trustees and administration", share: 12}
+      - {name: "Contributions and funding", share: 10}
+      - {name: "Membership and eligibility", share: 8}
+      - {name: "Benefits on retirement", share: 14}
+      - {name: "Benefits on death and on leaving service", share: 12}
+      - {name: "Transfers, augmentation and pension increases", share: 8}
+      - {name: "Amendment, winding-up and employer powers", share: 12}
+      - {name: "Schedules", share: 7}
+    clauses: ["Balance of powers over amendment and contributions", "Section 75 debt", "Priority order on winding-up", "Discretionary increases", "Cessation of a participating employer", "Employer covenant", "Governing law"]

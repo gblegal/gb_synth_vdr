@@ -5,11 +5,13 @@ import unicodedata
 import pytest
 
 from synthvdr.roomconf import (
+    DOC_LENGTHS,
     PATH_KEYS,
     ROOM_ROOT_LABEL,
     RoomConfError,
     SCAN_PROFILES,
     _casefolded_parts,
+    doc_length,
     load_room_conf,
     resolve_tree_map,
 )
@@ -623,3 +625,30 @@ def test_scan_profiles_lists_none_first_as_the_default(tmp_path):
     Pinned so that adding a profile to the tuple without implementing it in
     pdf.mjs fails here as well as in the cross-language check."""
     assert SCAN_PROFILES == ("none", "office")
+
+
+# ---------------------------------------------------------------------------
+# DOC_LENGTH — long-form agreements. Shaped exactly like SCAN_PROFILE: optional,
+# absent means the behaviour every room had before the key existed, and a value
+# that is present must be one this project implements.
+
+
+def test_doc_lengths_are_exactly_short_and_long():
+    assert DOC_LENGTHS == ("short", "long")
+
+
+@pytest.mark.parametrize("value", ["short", "long"])
+def test_doc_length_accepts_every_known_value(tmp_path, value):
+    conf = load_room_conf(write(tmp_path, SAMPLE + f'DOC_LENGTH="{value}"\n'))
+    assert doc_length(conf) == value
+
+
+def test_doc_length_reads_an_absent_key_as_short(tmp_path):
+    assert doc_length(load_room_conf(write(tmp_path, SAMPLE))) == "short"
+
+
+def test_doc_length_refuses_an_unknown_value_by_name(tmp_path):
+    with pytest.raises(RoomConfError, match="DOC_LENGTH") as excinfo:
+        load_room_conf(write(tmp_path, SAMPLE + 'DOC_LENGTH="longer"\n'))
+    message = str(excinfo.value)
+    assert "'longer'" in message and "short" in message and "long" in message

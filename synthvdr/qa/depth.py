@@ -19,9 +19,11 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from ..domain import DEFAULT_DOMAIN_ROOT, DomainPack, load_domain
+from ..lengths import Lengths, load_lengths
+from ..roomconf import doc_length
 from ..slots import read_anchors_csv
 from .runner import fail, ok, skip, truncated
 
@@ -118,8 +120,55 @@ def floor_for(slot_id: str, filename: str, tier: str, pack: DomainPack) -> int:
     return pack.archetypes[classify_archetype(filename, pack)].floor
 
 
+def slot_floor(
+    slot_id: str, rel_path: str, tier: str, pack: DomainPack, lengths: Optional[Lengths] = None
+) -> int:
+    """The depth floor for one slot, in either length mode.
+
+    Short mode (`lengths is None`) is `floor_for`, untouched — kept as its own
+    function with its own signature so every short-mode caller is untouched too.
+    Long mode holds an agreement-bearing slot to its band's floor whatever its
+    tier (spec §5: every agreement slot goes long), and every other slot to
+    exactly what short mode would.
+    """
+    if lengths is not None:
+        row = lengths.row_for_rel_path(rel_path)
+        if row is not None:
+            if tier not in ("A", "F"):
+                raise DepthLintError(f"{slot_id}: invalid tier {tier!r} in anchors.csv, expected 'A' or 'F'")
+            return lengths.bands[row.band].floor
+    return floor_for(slot_id, Path(rel_path).name, tier, pack)
+
+
+_PART_HEADING = re.compile(r"^##(?!#)[ \t]+(.+?)[ \t]*$")
+PREAMBLE = "(before the first part)"
+
+
+def part_counts(text: str) -> List[Tuple[str, int]]:
+    """Words under each level-2 (`## `) heading, in order.
+
+    A long-form agreement's anatomy parts are its level-2 headings (see
+    agents/vdr-author.md), so this is what a shortfall re-dispatch quotes: which
+    parts are thin, not just the total. Text before the first part is reported
+    as PREAMBLE when it has any words.
+    """
+    parts: List[Tuple[str, List[str]]] = [(PREAMBLE, [])]
+    for line in text.splitlines():
+        match = _PART_HEADING.match(line)
+        if match:
+            parts.append((match.group(1), []))
+        else:
+            parts[-1][1].append(line)
+    counted = [(heading, wordcount("\n".join(lines))) for heading, lines in parts]
+    return [(h, n) for h, n in counted if not (h == PREAMBLE and n == 0)]
+
+
 def depth_problems(
-    paths: Iterable[Path], tiers: Dict[str, str], pack: DomainPack, flag_string: str
+    paths: Iterable[Path],
+    tiers: Dict[str, str],
+    pack: DomainPack,
+    flag_string: str,
+    lengths: Optional[Lengths] = None,
 ) -> List[str]:
     """What gate 10 would say about `paths`, as a list of problem strings.
 
@@ -139,7 +188,8 @@ def depth_problems(
 
     `tiers` is `read_anchors_csv`'s mapping. `flag_string` is `FLAG_STRING_1`,
     used to strip a flagged twin's annotation block so it cannot pad a document
-    over a floor its blind twin does not clear.
+    over a floor its blind twin does not clear. `lengths` is
+    `load_lengths(...)` in a long room and None in a short one; see `slot_floor`.
     """
     problems: List[str] = []
     for path in paths:
@@ -149,7 +199,7 @@ def depth_problems(
             problems.append(f"{slot_id}: absent from anchors.csv")
             continue
         try:
-            floor = floor_for(slot_id, path.name, tier, pack)
+            floor = slot_floor(slot_id, "/".join(path.parts[-3:]), tier, pack, lengths)
         except DepthLintError as exc:
             problems.append(str(exc))
             continue
@@ -172,14 +222,19 @@ def gate_10_depth(ctx):
     if not files:
         return skip("10", "depth lint", f"{ctx.blind_root} absent or empty")
 
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    long_mode = doc_length(ctx.conf) == "long"
     problems = depth_problems(
         files,
         read_anchors_csv(anchors_path),
-        load_domain(DEFAULT_DOMAIN_ROOT),
+        pack,
         ctx.conf.get("FLAG_STRING_1"),
+        load_lengths(DEFAULT_DOMAIN_ROOT, pack) if long_mode else None,
     )
 
     metric_note = "(metric: whitespace tokens, table pipes counted, CJK at half weight)"
+    if long_mode:
+        metric_note += " (DOC_LENGTH long: agreement slots held to their band floors)"
     if problems:
         return fail("10", "depth lint", truncated(problems) + " " + metric_note)
     return ok("10", "depth lint", f"{len(files)} documents above their floors {metric_note}")

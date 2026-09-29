@@ -1673,7 +1673,7 @@ def test_build_skill_excepts_every_gate_that_cannot_pass_before_the_audit():
         "gate 19 is not in the named mid-build exception list — an eval room's key is "
         "written at package time, so every build wave necessarily fails it"
     )
-    assert "four of the twenty gates" in excepted, (
+    assert "four of the twenty-two gates" in excepted, (
         "the exception list says how many gates it names; that count has drifted"
     )
 
@@ -2455,8 +2455,382 @@ def test_scope_skill_names_every_room_conf_key_an_author_must_decide():
     text = _read(ROOT / "skills" / "vdr-scope" / "SKILL.md")
     step_5 = text[text.index("## 5. Write `room.conf`"):text.index("## Gate A")]
 
-    missing = [key for key in REQUIRED_KEYS + ("ROOM_ROLE", "SCAN_PROFILE") if key not in step_5]
+    missing = [key for key in REQUIRED_KEYS + ("ROOM_ROLE", "SCAN_PROFILE", "DOC_LENGTH") if key not in step_5]
     assert not missing, (
         f"/vdr-scope step 5 never names {missing} — an author following it "
         "writes a room.conf without them"
     )
+
+
+def test_scope_skill_offers_doc_length_beside_the_size_default():
+    body = _scope_body()
+    step_1 = body[body.index("## 1. One question"):body.index("## 2. Generate the structure")]
+    assert "DOC_LENGTH" in step_1 and "long" in step_1
+    assert "3.4" in step_1, "step 1 must state the cost multiple before the user opts in"
+
+
+def test_scope_skill_profile_print_uses_slot_floor_so_long_floors_show():
+    body = _scope_body()
+    step_2 = body[body.index("## 2. Generate the structure"):body.index("## 3. Invent the deal")]
+    assert "slot_floor" in step_2 and "load_lengths" in step_2
+
+
+def test_scope_skill_invents_supporting_counterparties_in_long_mode():
+    body = _scope_body()
+    step_3 = body[body.index("## 3. Invent the deal"):body.index("## 4. Check every invented name")]
+    for role in ("account bank", "escrow agent", "security agent", "insurer"):
+        assert role in step_3, f"step 3 does not name the {role} a long room's boilerplate needs"
+
+
+def test_findings_skill_checks_no_evidence_lands_on_a_house_form():
+    text = _read(ROOT / "skills" / "vdr-findings" / "SKILL.md")
+    step_5 = text[text.index("## 5. Validate"):text.index("## 6.")]
+    assert "house_form_paths" in step_5 and "load_bearing_paths" in step_5
+
+
+def test_package_skill_estimates_scan_size_before_any_render_in_a_long_room():
+    text = PACKAGE_SKILL.read_text(encoding="utf-8")
+    estimate_at = text.index("synthvdr pages --room . --estimate")
+    for match in PDF_MJS_INVOCATION.finditer(text):
+        assert estimate_at < match.start(), "the scan-size estimate must come before the render it prices"
+    # "synthvdr pages --room ." is a substring of the --estimate command, so it cannot
+    # pin the post-render report on its own: some line must BE that command, and it must
+    # come after the last render it reports on.
+    report_lines = [
+        offset
+        for offset in (m.start() for m in re.finditer(r"^python3 -m synthvdr pages --room \.\s*$", text, re.MULTILINE))
+    ]
+    assert report_lines, "step 3 never runs the bare `python3 -m synthvdr pages --room .` report"
+    last_render = max(match.start() for match in PDF_MJS_INVOCATION.finditer(text))
+    assert report_lines[-1] > last_render, "the rendered-page report must come after the last render"
+    assert report_lines[-1] < text.index("## 4."), "the rendered-page report belongs in step 3"
+
+
+def test_qa_skill_lists_twenty_two_gates():
+    text = _read(ROOT / "skills" / "vdr-qa" / "SKILL.md")
+    assert "twenty-two" in text and "nineteen" not in text
+    assert "| 20 | Evidence tells |" in text
+    assert "| 21 | Repetition |" in text and "| 22 | House forms |" in text
+
+
+def test_findings_skill_lists_long_slots_and_house_forms_before_evidence_is_placed():
+    text = _read(ROOT / "skills" / "vdr-findings" / "SKILL.md")
+    step_2 = text[text.index("## 2. Draft the registry"):text.index("## 3.")]
+    assert "house_form_paths" in step_2 and "row_for_rel_path" in step_2
+
+
+def test_findings_skill_step_2_listing_fence_prints_each_band_and_the_house_forms(
+    tmp_path, monkeypatch, capsys
+):
+    """Spec §9: /vdr-findings must SHOW the author which slots are long and which are
+    house forms where the registry is drafted, not merely count them afterwards. Runs the
+    shipped fence against a real M-size room in long mode."""
+    from synthvdr.slots import SIZE_PRESETS, build_slot_manifest, write_anchors_csv
+
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    slots = build_slot_manifest(pack, SIZE_PRESETS["M"])
+    (tmp_path / "_key").mkdir()
+    write_anchors_csv(slots, tmp_path / "_key" / "anchors.csv")
+    conf = _SEMANTIC_ROOM_CONF.replace('SECTION_DIRS="."', f'SECTION_DIRS="{" ".join(pack.section_dirs())}"')
+    (tmp_path / "room.conf").write_text(conf + 'DOC_LENGTH="long"\n', encoding="utf-8")
+
+    path = ROOT / "skills" / "vdr-findings" / "SKILL.md"
+    text = _read(path)
+    step_2 = text[text.index("## 2. Draft the registry"):text.index("## 3.")]
+    fences = FENCED_PYTHON.findall(step_2)
+    assert len(fences) == 1, f"expected exactly one python fence in step 2, found {len(fences)}"
+    monkeypatch.chdir(tmp_path)
+    exec(compile(fences[0], str(path), "exec"), {})
+
+    out = capsys.readouterr().out
+    assert "heavy (10):" in out
+    assert "house forms — benign by rule:" in out
+    house_forms = out[out.index("house forms — benign by rule:"):].splitlines()[1:]
+    assert any(line.strip().endswith("5.1.1_customer-contracts-01.md") for line in house_forms), house_forms
+
+
+def test_scope_skill_says_doc_length_is_fixed_at_gate_a():
+    body = _scope_body()
+    step_1 = body[body.index("## 1. One question"):body.index("## 2. Generate the structure")]
+    step_5 = body[body.index("## 5. Write `room.conf`"):body.index("## Gate A")]
+    assert "fixed at Gate A" in step_1 and "wave 1" in step_1
+    assert "once `/vdr-build` starts" not in step_1
+    assert "wave 1" in step_5
+
+
+BUILD_SKILL = ROOT / "skills" / "vdr-build" / "SKILL.md"
+
+
+def _fence_containing(text: str, marker: str) -> str:
+    at = text.index(marker)
+    start = text.rindex("```python", 0, at) + len("```python")
+    return text[start:text.index("```", at)]
+
+
+def _long_m_room(tmp_path):
+    from synthvdr.slots import SIZE_PRESETS, build_slot_manifest, write_anchors_csv
+
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    (tmp_path / "room.conf").write_text(
+        _SEMANTIC_ROOM_CONF.replace(
+            _SEMANTIC_ROOM_CONF.split("SECTION_DIRS=")[1].split("\n")[0],
+            '"' + " ".join(pack.section_dirs()) + '"',
+        )
+        + 'DOC_LENGTH="long"\n'
+    )
+    write_anchors_csv(build_slot_manifest(pack, SIZE_PRESETS["M"]), tmp_path / "_key" / "anchors.csv")
+    (tmp_path / "_key" / "findings.yaml").write_text("findings: []\n")
+    (tmp_path / "_key" / "distractors.yaml").write_text("distractors: []\n")
+    (tmp_path / "data-room").mkdir()
+    return tmp_path
+
+
+def _write_finished_house_forms(room, fams, lengths):
+    """Every family's house form, written as `authored_paths` counts one finished: blanks, no
+    placeholder token, and at least its band's floor."""
+    sentence = "The Supplier shall supply the Goods in accordance with these standard terms. "
+    for fam in fams:
+        floor = lengths.bands[lengths.row_for_rel_path(fam.house_form.rel_path).band].floor
+        path = room / "data-room" / fam.house_form.rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "# Standard terms\n\n[Template — not for signature]\n\n[Customer name]\n\n"
+            + sentence * (floor // len(sentence.split()) + 1)
+            + "\n"
+        )
+
+
+def test_build_skill_long_wave_selection_puts_house_forms_first_then_seeds(tmp_path, monkeypatch, capsys):
+    from synthvdr.houseforms import families, house_form_paths
+    from synthvdr.lengths import load_lengths
+    from synthvdr.slots import read_slot_manifest
+
+    room = _long_m_room(tmp_path)
+    monkeypatch.chdir(room)
+    fence = _fence_containing(_read(BUILD_SKILL), "# long mode: select, seed and brief this wave")
+
+    exec(compile(fence, "vdr-build long wave selection", "exec"), {})
+    first = capsys.readouterr().out
+    assert "## Author 1" in first and "seeded 0 derived" in first
+
+    # The canonical home of a fact-sheet figure is load-bearing in a long room too (gate 13
+    # needs it early): after the house forms, it is the first slot batched.
+    assert "figure_homes" in fence
+    spa = "18_transaction/18.2_draft-spa/18.2.1_draft-spa-01.md"
+    lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
+    house = house_form_paths(families(read_slot_manifest(room / "_key" / "anchors.csv"), lengths))
+    batched = [line[2:].split(" (tier")[0] for line in first.splitlines() if line.startswith("- ")]
+    assert spa in batched, "the SPA (a canonical figure home) is not in the first wave"
+    assert [path for path in batched if path not in house][0] == spa
+
+    # Each batch is headed with the model it runs on, by the same load-bearing rule Step 2
+    # states (Sonnet only when nothing in the batch is load-bearing; figure homes count, house
+    # forms do not), so the operator does not have to work it out. Here the SPA is the room's
+    # only load-bearing slot, so exactly the batch that holds it is Opus.
+    headers = [line for line in first.splitlines() if line.startswith("## Author")]
+    assert headers and all(h.endswith(("model: opus", "model: sonnet")) for h in headers), headers
+    models = {}
+    current = None
+    for line in first.splitlines():
+        if line.startswith("## Author"):
+            current = line
+            models[current] = []
+        elif line.startswith("- ") and current is not None:
+            models[current].append(line[2:].split(" (tier")[0])
+    for header, paths in models.items():
+        expected = "opus" if spa in paths else "sonnet"
+        assert header.endswith(f"model: {expected}"), (header, spa in paths)
+    assert any(spa in paths and header.endswith("model: opus") for header, paths in models.items())
+
+    lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
+    fams = families(read_slot_manifest(room / "_key" / "anchors.csv"), lengths)
+    for fam in fams:
+        path = room / "data-room" / fam.house_form.rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Standard terms\n\n[Template — not for signature]\n\n[Customer name]\n")
+    exec(compile(fence, "vdr-build long wave selection", "exec"), {})
+    second = capsys.readouterr().out
+    # Final review Important 2: a house form under its band floor is not finished, so nothing
+    # is dispatched or seeded from it yet.
+    assert "Derived contract" not in second and "seeded 0 derived" in second
+
+    _write_finished_house_forms(room, fams, lengths)
+    exec(compile(fence, "vdr-build long wave selection", "exec"), {})
+    third = capsys.readouterr().out
+    assert "Derived contract" in third and "seeded 0 derived" not in third
+
+
+def test_build_skill_long_wave_selection_says_when_anchors_are_complete(tmp_path, monkeypatch, capsys):
+    """Final review Important 1: a load-bearing derived contract waits for its house form while
+    filler fills the rest of the wave, so "the wave that first reaches past the load-bearing
+    block" is not anchors-complete in a long room. Recording `## Anchors` then runs Step 6 and
+    `build_flagged_tree` raises TwinError. The fence must say, and mark the load-bearing slots
+    Step 2 hands registry rows for."""
+    from synthvdr.houseforms import families
+    from synthvdr.lengths import load_lengths
+    from synthvdr.slots import read_slot_manifest
+
+    room = _long_m_room(tmp_path)
+    derived = "05_commercial/5.1_customer-contracts/5.1.2_customer-contracts-02.md"
+    (room / "_key" / "findings.yaml").write_text(
+        "findings:\n"
+        "  - id: COMM-1\n"
+        "    title: Customer may terminate on a change of control\n"
+        "    severity: high\n"
+        "    workstream: commercial\n"
+        "    multi_document: false\n"
+        f"    source: {derived}\n"
+        "    location: Clause 14.2\n"
+        "    substance: The customer may terminate on a change of control of the target.\n"
+    )
+    monkeypatch.chdir(room)
+    fence = _fence_containing(_read(BUILD_SKILL), "# long mode: select, seed and brief this wave")
+    verdict = "anchors complete with this wave:"
+
+    exec(compile(fence, "vdr-build long wave selection", "exec"), {})
+    first = capsys.readouterr().out.splitlines()
+    verdicts = [line for line in first if line.startswith(verdict)]
+    assert len(verdicts) == 1, first[-5:]
+    assert verdicts[0].startswith(f"{verdict} no") and derived in verdicts[0], verdicts[0]
+    assert not any(line.startswith(f"- {derived}") for line in first), "selected before its house form"
+
+    lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
+    _write_finished_house_forms(room, families(read_slot_manifest(room / "_key" / "anchors.csv"), lengths), lengths)
+    exec(compile(fence, "vdr-build long wave selection", "exec"), {})
+    second = capsys.readouterr().out.splitlines()
+    lines = [line for line in second if line.startswith(f"- {derived}")]
+    assert len(lines) == 1 and "load-bearing" in lines[0], lines
+    assert [line for line in second if line.startswith(verdict)] == [f"{verdict} yes"]
+
+
+def test_build_skill_length_check_refuses_a_changed_doc_length(tmp_path, monkeypatch):
+    # Review Focus 5.
+    room = _long_m_room(tmp_path)
+    monkeypatch.chdir(room)
+    (room / "_key" / "build-status.md").write_text("# Build status\n\n## Length\n\nshort\n")
+    fence = _fence_containing(_read(BUILD_SKILL), "# the length this room was built at")
+    with pytest.raises(SystemExit, match="DOC_LENGTH"):
+        exec(compile(fence, "vdr-build length check", "exec"), {})
+
+
+def test_build_status_example_records_the_length():
+    block = find_example_by_marker(markdown_examples(BUILD_SKILL), "# Build status", BUILD_SKILL)
+    assert "## Length" in block
+    assert block.split("## Length", 1)[1].split()[0] in ("short", "long")
+
+
+def test_author_agent_carries_the_long_form_protocol():
+    text = _read(ROOT / "agents" / "vdr-author.md")
+    for phrase in ("[draft part", "one part per Edit", "Definitions last", "House form", "Derived contract", "## "):
+        assert phrase in text, f"vdr-author.md no longer says {phrase!r}"
+    # Final review Important 3: the rule gate 22 measures, stated where the author reads it.
+    assert "at least two negotiated changes to clauses that carry no blank in the house form" in " ".join(text.split())
+
+
+def test_build_skill_step_3_checks_every_derived_contract_against_its_house_form(tmp_path, monkeypatch, capsys):
+    """Final review Important 3: a derived contract whose changes all landed in blank-carrying
+    clauses fails gate 22 only at Step 7. Step 3 runs the same check beside the depth check,
+    so it is re-dispatched inside the wave that caused it."""
+    from synthvdr.houseforms import families
+    from synthvdr.lengths import load_lengths
+    from synthvdr.slots import read_slot_manifest
+
+    from .test_houseforms import HOUSE
+
+    room = _long_m_room(tmp_path)
+    monkeypatch.chdir(room)
+    lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
+    fam = families(read_slot_manifest(room / "_key" / "anchors.csv"), lengths)[0]
+    for slot in (fam.house_form, fam.derived[0]):
+        path = room / "data-room" / slot.rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(HOUSE)  # the house form, and an unedited seeded copy of it
+    step_3 = _read(BUILD_SKILL)
+    step_3 = step_3[step_3.index("### 3. Measure"):step_3.index("### 3.1")]
+    fence = _fence_containing(step_3, "# every derived contract against its house form")
+
+    exec(compile(fence, "vdr-build step 3 derivation check", "exec"), {})
+
+    out = capsys.readouterr().out
+    assert fam.derived[0].rel_path in out and "blank" in out, out
+    assert fam.house_form.rel_path + ":" not in out
+
+
+def test_build_skill_step_3_depth_fence_holds_a_long_agreement_to_its_band_floor(tmp_path, monkeypatch, capsys):
+    """Gate 10 passes `lengths` in a long room; the mid-wave check is 'gate 10's own check' and
+    must too, or a 3,000-word principal agreement passes the wave against its 10,000 floor."""
+    room = _long_m_room(tmp_path)
+    monkeypatch.chdir(room)
+    doc = room / "data-room" / "05_commercial" / "5.1_customer-contracts" / "5.1.2_customer-contracts-02.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("The parties agree to the terms set out in this agreement. " * 300)  # 3,000 words
+    fence = _fence_containing(_read(BUILD_SKILL), "# gate 10's own check, in either length mode")
+
+    exec(compile(fence, "vdr-build step 3 depth check", "exec"), {})
+
+    out = capsys.readouterr().out
+    assert "5.1.2: " in out and "floor 10000" in out
+
+
+def _long_form_items(text: str) -> dict:
+    """vdr-author.md's numbered long-form items, by number, whitespace collapsed."""
+    section = text[text.index("## Long-form agreements"):text.index("## Return")]
+    items = re.split(r"^(\d+)\. ", section, flags=re.MULTILINE)
+    return {int(n): " ".join(body.split()) for n, body in zip(items[1::2], items[2::2])}
+
+
+def test_author_agent_long_form_items_close_the_final_review_minors():
+    """Final review M4/M5: a derived contract never starts from a skeleton Write; a house form's
+    brackets are blanks only; the author is told every token the depth lint fails; and
+    'section' is not a drafting word the cross-reference gate recognises."""
+    from synthvdr.qa.depth import PLACEHOLDER_TOKENS
+    from synthvdr.qa.structural import CLAUSE_WORDS
+
+    items = _long_form_items(_read(ROOT / "agents" / "vdr-author.md"))
+    assert "except a derived contract, which starts from the seeded copy (see 9); never Write over it" in items[1]
+    for bracket in ("[Reserved]", "[Not used]", "[Signature page follows]"):
+        assert bracket in items[8], f"item 8 does not warn against {bracket}"
+    missing = [token for token in PLACEHOLDER_TOKENS if token not in items[8].lower()]
+    assert not missing, f"item 8 does not list the placeholder tokens {missing}"
+    assert "section" not in CLAUSE_WORDS
+    assert "never 'section 4.2.1'" in items[2] and "'section' is not a drafting word" in items[2]
+
+
+def test_build_skill_length_check_reads_a_formatted_length(tmp_path, monkeypatch):
+    """Final review M6: an orchestrator that writes `long` or **long** under ## Length must not
+    be refused a long room it built long."""
+    room = _long_m_room(tmp_path)
+    monkeypatch.chdir(room)
+    fence = _fence_containing(_read(BUILD_SKILL), "# the length this room was built at")
+    for recorded in ("`long`", "**long**"):
+        (room / "_key" / "build-status.md").write_text(f"# Build status\n\n## Length\n\n{recorded}\n")
+        exec(compile(fence, "vdr-build length check", "exec"), {})
+
+
+def test_build_skill_step_8_writes_the_length_at_wave_1():
+    text = _read(BUILD_SKILL)
+    step_8 = text[text.index("### 8. Update the build status"):text.index("## After the last wave")]
+    assert "At wave 1, also write `## Length` with the room's DOC_LENGTH (see Resume)." in " ".join(step_8.split())
+
+
+def test_docs_name_gates_21_and_22_where_the_gates_are_listed():
+    """Final review M7."""
+    architecture = _read(ROOT / "ARCHITECTURE.md")
+    qa_row = next(line for line in architecture.splitlines() if line.startswith("| `qa/` |"))
+    modules = sorted(
+        p.stem for p in (ROOT / "synthvdr" / "qa").glob("*.py") if p.stem not in ("__init__", "__main__", "runner")
+    )
+    missing = [m for m in modules if f"`{m}`" not in qa_row]
+    assert not missing, f"ARCHITECTURE.md's qa/ row does not list {missing}"
+
+    description = frontmatter(ROOT / "skills" / "vdr-qa" / "SKILL.md")["description"]
+    assert "repetition" in description and "house forms" in description
+
+    notes = " ".join(_read(ROOT / "TECHNICAL-NOTES.md").split())
+    assert "more than 10% of a 2,000+-word document's words sit in repeated paragraphs of 30+ tokens" in notes
+    assert "real agreement clauses run longer than 30 tokens" not in notes
+    assert (
+        "form boilerplate in the material measured runs under 30 tokens; drafted clauses mostly run longer"
+        in notes
+    )
+    assert "Frithcombe (`ll_vdr_08`)" in notes

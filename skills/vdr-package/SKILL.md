@@ -77,6 +77,20 @@ print(str(len(slots)) + ' document(s) will render as scans:')
 for slot in slots:
     print('  ' + slot)
 "
+```
+
+In a long room, price the scans before rendering them. `scanned.csv` lists whole documents and
+draws only on evidence, which in a long room is often a 20–45-page agreement:
+
+```bash
+python3 -m synthvdr pages --room . --estimate
+```
+
+It prints the listed documents' estimated pages and both scan trees' size, at the measured
+~141KB per pristine scanned page and ~2.26MB per `office` page (known issue #1). If the office
+figure is more than the room can carry, say so to the user before rendering.
+
+```bash
 node "${CLAUDE_PLUGIN_ROOT}/synthvdr/render/pdf.mjs" \
   --src data-room --out data-room-pdf --scan-profile none
 ```
@@ -182,6 +196,17 @@ before Step 6's final gate run — gate 16 will catch the mismatch either way, i
 directions (a source missing its render, and a render missing its source), but it is your job
 to fix it, not the renderer's to guess which side is right.
 
+In a long room, once every PDF render exists, check what the agreements actually rendered to
+(it reads the pristine `data-room-pdf/` tree):
+
+```bash
+python3 -m synthvdr pages --room .
+```
+
+One line per length band — min, median and max pages against the band's range, and how many fell
+below it. It is not a gate; it is the check on `lengths.yaml`'s 500 words per page. Report any band
+with documents below its range to the user rather than re-rendering.
+
 ## 4. Write the manifest
 
 `_key/manifest.json` is what makes the room's provenance checkable. `content_hash` is
@@ -263,7 +288,7 @@ python3 -m synthvdr.qa --room . --strict
 ```
 
 **This is the one point in this skill where `--strict` must show a clean result, and the only
-check that actually licenses Step 7.** Every input the twenty gates check now exists —
+check that actually licenses Step 7.** Every input the twenty-two gates check now exists —
 the subset (Step 2), a render tree or an explicit decision not to build one (Step 3), and the
 manifest (Step 4, itself a file under `_key/`, so gate 12 must confirm it has not leaked into
 the blind tree same as every other answer-key artefact) — so `--strict` is now answerable, not

@@ -1,6 +1,7 @@
 """The QA gate suite."""
 
 from .depth import gate_10_depth
+from .houseforms import gate_22_house_forms
 from .integrity import (
     gate_11_subset,
     gate_13_fact_sheet,
@@ -16,6 +17,7 @@ from .leakage import (
     gate_14_unchecked_names,
 )
 from .renders import gate_16_render_parity
+from .repetition import gate_21_repetition
 from .tells import gate_20_tells
 from .structural import (
     gate_01_index,
@@ -48,6 +50,8 @@ ALL_GATES = [
     gate_18_room_role,
     gate_19_eval_answer_key,
     gate_20_tells,
+    gate_21_repetition,
+    gate_22_house_forms,
 ]
 
 __all__ = ["ALL_GATES"]

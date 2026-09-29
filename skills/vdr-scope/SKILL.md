@@ -44,6 +44,15 @@ otherwise, and that the other sizes are `XS` 40 / `S` 60 / `L` 800 / `XL` 2,000+
 line of reply, or no reply beyond "make one up", is enough to proceed. Invent everything
 else yourself: deal structure, entity tree, cast, sites, financials, dates, section budget.
 
+In the same breath, offer **document length** as a second default they can override in passing:
+short unless they say long. `DOC_LENGTH="long"` writes every agreement in the room — customer and
+supplier contracts, leases, facilities, the SPA, the JV agreement, employment contracts and the
+rest — at its real length, 4 to 45 pages by type (`domain/ma/lengths.yaml`), where a short room's
+agreements run to three or four. Say what it costs, in one line: a long `M` room is about 3.4×
+the authoring of a short one (~790k words against ~235k) and about five build waves; a long `S`
+room is the cheap way to try it. It is fixed at Gate A — `/vdr-build` records it at wave 1 and
+refuses a later wave whose `room.conf` changes it.
+
 In that same message, also **propose the workstreams this deal has**, as a list they can
 correct in passing — not as a second question. At `XS` and `S` a room does not have to build
 all twenty: 40 documents over twelve sections is three to four per section instead of two,
@@ -91,11 +100,15 @@ Then print the profile the fact sheet has to satisfy — which sections exist, a
 substantial a document each one demands:
 
 ```python
-from synthvdr.qa.depth import floor_for
+from synthvdr.lengths import load_lengths
+from synthvdr.qa.depth import slot_floor
+
+doc_length = "short"  # or "long", as agreed in step 1
+lengths = load_lengths(DEFAULT_DOMAIN_ROOT, pack) if doc_length == "long" else None
 
 profile = {}
 for slot in slots:
-    floor = floor_for(slot.slot_id, Path(slot.rel_path).name, slot.tier, room_pack)
+    floor = slot_floor(slot.slot_id, slot.rel_path, slot.tier, room_pack, lengths)
     count, heaviest = profile.get(slot.section_dir, (0, 0))
     profile[slot.section_dir] = (count + 1, max(heaviest, floor))
 
@@ -112,6 +125,10 @@ keep any of these four only if the deal genuinely has them, and if you keep one,
 step 3 must give it something real to be about: bank debt, a pension arrangement, a
 management-presentation programme or a minority holding. A section that has no place in the
 sector's fiction belongs dropped in step 1, not carried into step 3 and invented to order.
+
+In a long room the heaviest floors are the length bands: 17,500 words for a section holding a
+lease, facility, pension trust deed or SPA; 10,000 for one holding a principal commercial
+agreement. The fiction has to give each of those a counterparty and terms worth 20–45 pages.
 
 Getting this wrong is expensive in a specific way. The fact sheet is what the user signs off
 at Gate A, and it is the one file every document in the room reconciles to; discovering
@@ -156,6 +173,12 @@ It needs:
   `extract_candidates` raises rather than guessing which is right. (Kind `person` may also be
   declared here — that is reserved for the rare case where a cast member's exact name doubles
   as an invented entity name on purpose; it is not something you need for an ordinary room.)
+- **In a long room, the supporting counterparties.** Full-length boilerplate names institutions
+  a short room never needs: an account bank and a security agent for the facility and debenture,
+  an escrow agent for the SPA, an insurer and a broker for the policies, a W&I insurer, a pension
+  trustee company, and each lease's landlord. Invent them now, as `entity` rows, so step 4
+  name-checks them at Gate A. An author who meets one mid-build otherwise has to stop and ask,
+  and one who invents it fails gate 14.
 - **`## Canonical figures`** — a `| Key | Value | Superseded |` table. Every figure any
   document states must trace back to a row here; when a figure is corrected mid-build, move
   the old value into `Superseded` (semicolon-separated if there is more than one) rather than
@@ -371,6 +394,10 @@ values step 2 just printed, plus:
   reads it until `/vdr-package`, so a room can add it later without rebuilding anything —
   which is why this is not a decision Gate A needs to hold anyone up for. `"none"` says the
   default out loud; anything else is refused by name at load.
+- `DOC_LENGTH` — **optional; omit it for a short room.** `"long"` holds every agreement-bearing
+  slot to its length band (step 1). `"short"` says the default out loud; anything else is refused
+  by name at load. Unlike `SCAN_PROFILE` it cannot be added later: it is fixed at Gate A, and
+  `/vdr-build` records it at wave 1 and refuses a later wave whose `room.conf` has changed it.
 - `EXPECTED_KDP_CARRIERS=0` — no findings exist yet; `/vdr-findings` sets the real number.
 - `INDEX_TOTAL`, `BLIND_TOTAL`, `FLAGGED_TOTAL` — all equal to `len(slots)` from step 2.
 - `SECTION_DIRS` — the space-separated `room_pack.section_dirs()` string from step 2. This one

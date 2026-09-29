@@ -170,6 +170,49 @@ def test_gate_09_honours_the_gaps_allowlist(room):
     assert gate_09_xrefs(ctx_for(room)).status == "PASS"
 
 
+ACCOUNTS = "data-room/02_financial/2.1_statutory-accounts/2.1.1_accounts.md"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The Supplier shall comply with clause 1.9.9.",
+        "subject to Clause 1.9.9 and sub-clause 1.9.8",
+        "as set out in paragraphs 1.9.7, 1.9.8 and 1.9.9",
+        "under clauses 1.9.7–1.9.9",
+        "see Schedule 2.4.1",
+        "under clause 1.9.9",
+        "subject to clause\n1.9.9 below",
+        "1.9.9 The Supplier shall deliver the Goods.",
+        "## 1.9.9 Delivery",
+        "**1.9.9** Delivery",
+        "in accordance with Part 2.4.1(a)(ii)",
+        "as set out in clauses 1.9.7, 1.9.8, and 1.9.9",
+        "under clauses 1.9.7 and/or 1.9.9",
+    ],
+)
+def test_gate_09_does_not_read_clause_numbering_as_a_slot_reference(room, text):
+    (room / ACCOUNTS).write_text(f"# accounts\n\n{text}\n")
+    assert gate_09_xrefs(ctx_for(room)).status == "PASS"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "See 1.9.9 for detail.",
+        "as recorded in section 1.9.9",
+        "- 1.9.9 the missing register",
+        "| 1.9.9 | missing register |",
+        "the clause in the licence at 1.9.9",
+    ],
+)
+def test_gate_09_still_fails_a_dangling_reference_outside_clause_context(room, text):
+    (room / ACCOUNTS).write_text(f"# accounts\n\n{text}\n")
+    result = gate_09_xrefs(ctx_for(room))
+    assert result.status == "FAIL"
+    assert "1.9.9" in result.detail
+
+
 # ---------------------------------------------------------------------------
 # The flagged tree's marker file (synthvdr.twin.MARKER_NAME) has no blind
 # counterpart. It is not part of either fixture tree above (that fixture

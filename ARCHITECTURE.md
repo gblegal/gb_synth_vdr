@@ -76,7 +76,9 @@ shipped script sources it — `tools/check.sh` takes the room directory as an ar
 execs `python3 -m synthvdr.qa`, reading no config at all — so the format is a guarantee
 kept for the room's owner rather than something the toolchain needs. It declares the room codename, the document totals, the
 three tree paths, the two annotation flag strings, the finding-ID prefixes, the section
-directories and the expected annotation-carrier count. Every path-valued key is validated
+directories and the expected annotation-carrier count. It may also declare `DOC_LENGTH`
+(optional: `short`, the default, or `long` — see §5 and the long-form spec — fixed at
+Gate A). Every path-valued key is validated
 against the room root when it is loaded — no key may escape the room, and no component may
 be a symlink that redirects.
 
@@ -101,7 +103,7 @@ flowchart TB
     TW --> G["gate run → _key/build-status.md"]
     G -->|"anchors then filler remain"| W
     G -->|"authoring complete"| AU["vdr-auditor<br/>discoverability verdicts"]
-    AU --> Q["/vdr-qa<br/>the twenty gates"]
+    AU --> Q["/vdr-qa<br/>the twenty-two gates"]
     Q --> P["/vdr-package<br/>gates in --strict"]
     P --> SUB["subset/ · optional DOCX + PDF<br/>_key/manifest.json content hash"]
     SUB --> R(["frozen room"])
@@ -188,7 +190,10 @@ judgement-shaped work. Anything that must be identical across runs lives here.
 | `schema` | The answer-key model — findings and distractors — plus `validate()`'s internal-consistency checks. YAML is canonical; `findings.md` is generated from it. |
 | `manifest` | The room's `content_hash` — sha256 over the sorted `rel_path + "\0" + sha256(bytes)` of the blind tree — and the two manifests that carry it (the packaged room's and the corrupted twin's). Takes `built` as a value and never reads the clock. |
 | `score` | Deterministic scoring: provenance check, evidence-path prematching, recall/precision/partial trails, adjudication reconciliation, scorecard rendering and baseline diff. |
-| `qa/` | The twenty gates (`structural`, `leakage`, `depth`, `integrity`, `renders`, `tells`) and the runner that enforces how they report. |
+| `lengths` | Long mode's bands, agreement-bearing subfolders and anatomy (`domain/ma/lengths.yaml`, `anatomy.yaml`), validated on load; the per-slot author brief. Never read by a short room. |
+| `houseforms` | House-form families in the target's own paper: designation, the derivation checks, `seed` (the only Python writer into the blind tree — creates, never overwrites), and what counts as authored on resume. |
+| `pagereport` | `python3 -m synthvdr pages`: rendered pages per length band, and the scan trees' size before rendering. |
+| `qa/` | The twenty-two gates (`structural`, `leakage`, `depth`, `integrity`, `renders`, `tells`, `repetition`, `houseforms`) and the runner that enforces how they report. |
 | `render/` | The optional DOCX (`docx.py`) and PDF (`pdf.mjs`, a separate Node process) renders. Never imported at core-build time. |
 
 Two separate CLIs, sharing no conventions beyond their general shape: `python3 -m
@@ -223,7 +228,7 @@ silently swallowed `<Unchecked Name> Limited Retirement Benefits Scheme`.
 
 ---
 
-## 6. The twenty gates
+## 6. The twenty-two gates
 
 `python3 -m synthvdr.qa --room <dir>` runs every gate in `synthvdr/qa/__init__.py`'s
 `ALL_GATES`. This is the same suite `/vdr-qa` runs after every build wave and
@@ -251,6 +256,8 @@ silently swallowed `<Unchecked Name> Limited Retirement Benefits Scheme`.
 | 18 | Room role declared | `room.conf` says whether this is an `exemplar` room (may teach the downstream classifier) or an `eval` room (only ever scores it) — the train/test split, enforced |
 | 19 | Eval answer key | An `eval` room carries `_key/answer-key.jsonl` and the file matches a fresh rebuild from `_key/labels.yaml`; exemplar rooms pass — the key does not apply to them |
 | 20 | Evidence tells | No form gives the evidence away: selective bold on a finding's words, forward pointer notes along a chain, or a section whose notes sort evidence from filler. WARN only |
+| 21 | Repetition | No document of 2,000+ words has more than 10% of its words in paragraphs repeating an earlier one — the padding gate 10's floor cannot see |
+| 22 | House forms | Long rooms: no evidence on a house form, every house form has blanks, every derived contract fills them and makes at least two negotiated changes. Short rooms pass |
 
 **The runner enforces three disciplines, once, rather than leaving them to each gate.**
 
