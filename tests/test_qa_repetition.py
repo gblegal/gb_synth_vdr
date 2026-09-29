@@ -58,6 +58,22 @@ def test_table_blocks_and_short_paragraphs_are_ignored():
     assert duplicate_paragraph_share(text) == 0.0
 
 
+def test_a_repeated_long_table_block_is_ignored():
+    # Create a table with enough tokens (16) that it would count as a duplicate
+    # if the table-skip line were removed. Tests that table-block skipping is not
+    # redundant with the MIN_PARAGRAPH_TOKENS filter.
+    table = (
+        "| Column1 | Column2 | Column3 | Column4 |\n"
+        "|---|---|---|---|\n"
+        "| DataA1 | DataA2 | DataA3 | DataA4 |\n"
+        "| DataB1 | DataB2 | DataB3 | DataB4 |\n"
+        "| DataC1 | DataC2 | DataC3 | DataC4 |"
+    )
+    text = "\n\n".join([para(i) for i in range(10)] + [table, table])
+    # If table-skipping is active, share should be 0.0 (tables not counted at all)
+    assert duplicate_paragraph_share(text) == 0.0
+
+
 def test_crlf_documents_split_into_the_same_paragraphs():
     text = "\n\n".join(para(i) for i in range(5))
     assert paragraphs(text.replace("\n", "\r\n")) == paragraphs(text)
