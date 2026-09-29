@@ -117,11 +117,13 @@ authors documents that make an *already signed-off* registry true of the corpus 
 invents a finding of its own.
 
 **The build loop is the interesting part.** Documents are authored in waves, and within a
-wave by several `vdr-author` subagents in parallel. Slots are sorted by tier before
-batching: every `A` (anchor — carries a finding, a distractor, or is otherwise
-load-bearing) slot is exhausted across as many waves as it takes before a single `F`
-(filler) slot is assigned. The corpus is therefore complete and valid at every checkpoint,
-and an interrupted build never strands a finding half-planted.
+wave by several `vdr-author` subagents in parallel. Slots are ordered findings-first before
+batching: every load-bearing slot — a finding's source or corroboration, both ends of each
+distractor, the canonical home of each fact-sheet figure — is exhausted across as many
+waves as it takes before any other slot is assigned, and tier only orders what comes after.
+Tier is no proxy for this: `/vdr-scope` assigns it by position before the registry exists,
+so a finding's evidence often sits in an `F` slot. The corpus is therefore complete and
+valid at every checkpoint, and an interrupted build never strands a finding half-planted.
 
 After each wave: authors' hand-backs in `_key/incoming/` are consolidated into the
 registry, the flagged tree is re-derived, the gates run, and only an all-PASS gate run
@@ -176,7 +178,7 @@ judgement-shaped work. Anything that must be identical across runs lives here.
 |---|---|
 | `roomconf` | Parses `room.conf`, the single source of room constants. Validates every path-valued key against the room root; rejects escapes and redirecting symlinks. Shell-sourceable format, so a room's owner can read its constants from their own shell; no shipped script sources it. Rejects a key set twice rather than taking the last value. |
 | `domain` | Domain packs — the section taxonomy, document archetypes and finding seeds, loaded from `domain/ma/`. |
-| `slots` | The slot manifest: the deterministic list of document slots, each with a tier (`A` anchor / `F` filler). Holds the size presets — XS 40, S 60, M 200, L 800, XL 2,000 documents. |
+| `slots` | The slot manifest: the deterministic list of document slots, each with a tier (`A` anchor / `F` filler) assigned by position. Holds the size presets — XS 40, S 60, M 200, L 800, XL 2,000 documents. |
 | `index_build` | Writes `_key/index-src/` and regenerates `index.md` from it. `index.md` is tool-facing but sits outside the blind tree, and is never hand-edited. |
 | `twin` | Derives the flagged tree from the blind tree. The only writer of `_key/flagged/`. |
 | `subset` | Selects and builds the deterministic subset — every finding survives with its full evidence chain, filler chosen by hash up to a bound derived from the room's own size. Also reconciles an existing subset (gate 11) without writing. |
