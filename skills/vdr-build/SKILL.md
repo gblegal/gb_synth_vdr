@@ -96,6 +96,14 @@ Complete as of wave 2 — every finding's and distractor's evidence path has bee
 Gate 8 is a real check from wave 3 onward; gate 2 stays excepted until the LAST wave (it
 checks the room's finished size, fixed since `/vdr-scope`, not what has been authored so far).
 
+## Author models
+
+| Batch | Model |
+|---|---|
+| wave1-batch-a | opus |
+| wave2-batch-a | opus |
+| wave2-batch-b | sonnet |
+
 ## New findings
 
 | Provisional id | Final id | Workstream |
@@ -239,6 +247,30 @@ and never the flagged tree or its path. A subagent that cannot see a finding out
 batch cannot leak it into the wrong document by accident, and it has no route to the flagged
 tree to write to even if it wanted to; see `agents/vdr-author.md` for why that separation is
 load-bearing, not just tidy scoping.
+
+**Choose each batch's model from what it carries.** Dispatch a batch with `model: "sonnet"`
+only when none of its slots is in the load-bearing set; every other batch runs on the agent's
+default, Opus. The set is the one the ordering rule above composes —
+`load_bearing_paths(findings, distractors) | figure_homes` — so a batch holding even one
+finding, distractor or figure-home slot stays on Opus, and a wave that straddles the end of
+the load-bearing block splits: its load-bearing batches on Opus, its filler-only batches on
+Sonnet. Step 3's re-dispatches follow the same rule, slot by slot.
+
+The split is measured, not assumed. In a blind test of 38 slots from `ll_vdr_08` — 16
+finding-bearing commercial documents and 22 benign pensions documents, each written by both
+models from the same brief and judged by a third — Sonnet 5.5 and Opus 5.5 both cleared every
+gate, every depth floor and every discoverability audit, and tied on the filler (4.90 against
+4.93 out of 5). On the finding documents Opus won 11 slots to 5, and Sonnet's losses were
+restraint: a contract schedule stating outright that a renewal notice had been missed, a
+customer's letter working out the answer key's exposure for the reader. No gate catches that
+— gate 15 asks whether a finding can be reached, never whether it has been handed over — so
+the only defence is to keep those documents away from the model that does it. Sonnet cost
+about a third less per document, not half, because most of an author's spend is re-reading
+cached context, which is priced the same for both.
+
+Record each batch's model in `_key/build-status.md`'s "Author models" table when you record
+its wave. The aliases resolve to whichever Opus and Sonnet are current on the day the build
+runs, and nothing in the finished room says which model wrote it.
 
 **Also give every author the four room-level invariants, by value.** These are not per-batch,
 so it is easy to leave them out — and each one is a gate the wave fails without them.
@@ -705,8 +737,9 @@ a FAIL on any of them is always a real defect — never wave the whole gate run 
 Update `_key/build-status.md`: append this wave's number, the slots it authored, and the gate
 result to the "Waves completed" table, then rewrite "Next wave" to name exactly one more than
 the wave you just appended (see the literal shape above) — never leave the file pointing at a
-wave number that has already run, and never skip a number. "New findings" is **not** touched
-here — Step 4 already appended to it, unconditionally, before this wave's gate even ran. If
+wave number that has already run, and never skip a number. Append one "Author models" row
+for each batch the wave dispatched, with the model Step 2 chose for it. "New findings" is
+**not** touched here — Step 4 already appended to it, unconditionally, before this wave's gate even ran. If
 this wave is the one Step 1 identified as anchors-complete and `## Anchors` is not yet
 recorded, write it now.
 

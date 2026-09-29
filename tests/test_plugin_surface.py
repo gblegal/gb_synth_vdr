@@ -912,6 +912,18 @@ def test_auditor_agent_reads_only_the_blind_room():
     )
 
 
+def test_author_agent_defaults_to_opus():
+    """Without a `model:` line the author inherits whatever model runs the build, so a room
+    built from a Haiku or Sonnet session gets its finding documents from that model with
+    nothing on record to say so. A blind test on 2026-09-29 (38 slots of ll_vdr_08, judged
+    by Fable 5.1) found Sonnet 5.5 level with Opus 5.5 on every gate but behind it on the
+    finding documents, where it stated conclusions the room exists to leave unstated. Opus
+    is therefore the default; `/vdr-build` overrides it to Sonnet for filler-only batches,
+    which is the test below.
+    """
+    assert frontmatter(ROOT / "agents" / "vdr-author.md").get("model") == "opus"
+
+
 def test_author_and_auditor_agents_declare_a_restricted_tool_set():
     """Task 18 fix round 2, F4 (defence in depth): prose is the only enforcement of the
     author/auditor separation today, and prose can be edited away by someone who does not
@@ -1148,6 +1160,42 @@ def test_build_status_example_new_findings_table_names_real_looking_ids():
         )
         assert FINAL_FINDING_ID.match(final_id), f"{final_id!r} is not a real PREFIX-<n> id"
         assert workstream, "every 'New findings this wave' row must name its workstream"
+
+
+BUILD_STATUS_AUTHOR_MODEL_ROW = re.compile(
+    r"^\|\s*wave(\d+)-batch-[a-z]\s*\|\s*(\w+)\s*\|\s*$", re.MULTILINE
+)
+
+
+def test_build_skill_sends_only_filler_batches_to_sonnet():
+    """The model split is the cheaper half of a measured trade: Sonnet 5.5 matched Opus 5.5
+    on filler and cost about a third less, but on finding documents it gave the answer
+    away (see test_author_agent_defaults_to_opus). The condition is therefore the whole
+    rule: a batch holding even one load-bearing slot stays on Opus, and softening "only
+    when none of its slots" to "mostly filler" reintroduces exactly the failure the test
+    measured. The build-status example must also record a model for every batch it
+    dispatched, because the alias resolves to whatever Sonnet is current when the build
+    runs and a room carries no other trace of which model wrote it.
+    """
+    path = ROOT / "skills" / "vdr-build" / "SKILL.md"
+    normalised = _normalise_whitespace(path.read_text())
+    assert (
+        'Dispatch a batch with `model: "sonnet"` only when none of its slots is in the '
+        "load-bearing set; every other batch runs on the agent's default, Opus."
+        in normalised
+    )
+
+    block = find_example_by_marker(markdown_examples(path), "# Build status", path)
+    assert "## Author models" in block
+    completed = {int(w) for w, _, _ in BUILD_STATUS_WAVE_ROW.findall(block)}
+    rows = BUILD_STATUS_AUTHOR_MODEL_ROW.findall(block)
+    assert rows, f"{path}: build-status.md example has no 'Author models' rows"
+    for wave, model in rows:
+        assert model in ("opus", "sonnet"), f"author model {model!r} is not opus or sonnet"
+        assert int(wave) in completed, f"author model recorded for unrecorded wave {wave}"
+    assert {model for _, model in rows} == {"opus", "sonnet"}, (
+        "the example should show both models, so it demonstrates the split it documents"
+    )
 
 
 def test_qa_skill_documents_strict_mode():
