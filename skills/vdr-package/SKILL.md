@@ -103,16 +103,6 @@ the next sub-step adds a second render at a different profile and the pair only 
 pair if both say which one they are. It is the behaviour this renderer has always had: PNG
 screenshots, a sub-degree rotation per page, nothing else.
 
-In a long room, once the PDF tree exists, check what the agreements actually rendered to:
-
-```bash
-python3 -m synthvdr pages --room .
-```
-
-One line per length band — min, median and max pages against the band's range, and how many fell
-below it. It is not a gate; it is the check on `lengths.yaml`'s 500 words per page. Report any band
-with documents below its range to the user rather than re-rendering.
-
 **Write `_key/scanned.csv` before running `pdf.mjs`, not after** — the renderer reads it once,
 at startup, and a room whose manifest arrives later just renders every page as live text with
 no error. Those scanned pages are the only thing the PDF render adds that a tool cannot get
@@ -205,6 +195,17 @@ since-deleted source. If you rename or remove a source document after rendering,
 before Step 6's final gate run — gate 16 will catch the mismatch either way, in both
 directions (a source missing its render, and a render missing its source), but it is your job
 to fix it, not the renderer's to guess which side is right.
+
+In a long room, once every PDF render exists, check what the agreements actually rendered to
+(it reads the pristine `data-room-pdf/` tree):
+
+```bash
+python3 -m synthvdr pages --room .
+```
+
+One line per length band — min, median and max pages against the band's range, and how many fell
+below it. It is not a gate; it is the check on `lengths.yaml`'s 500 words per page. Report any band
+with documents below its range to the user rather than re-rendering.
 
 ## 4. Write the manifest
 

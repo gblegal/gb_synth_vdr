@@ -2410,10 +2410,65 @@ def test_package_skill_estimates_scan_size_before_any_render_in_a_long_room():
     estimate_at = text.index("synthvdr pages --room . --estimate")
     for match in PDF_MJS_INVOCATION.finditer(text):
         assert estimate_at < match.start(), "the scan-size estimate must come before the render it prices"
-    assert "synthvdr pages --room ." in text[text.index("## 3."):text.index("## 4.")]
+    # "synthvdr pages --room ." is a substring of the --estimate command, so it cannot
+    # pin the post-render report on its own: some line must BE that command, and it must
+    # come after the last render it reports on.
+    report_lines = [
+        offset
+        for offset in (m.start() for m in re.finditer(r"^python3 -m synthvdr pages --room \.\s*$", text, re.MULTILINE))
+    ]
+    assert report_lines, "step 3 never runs the bare `python3 -m synthvdr pages --room .` report"
+    last_render = max(match.start() for match in PDF_MJS_INVOCATION.finditer(text))
+    assert report_lines[-1] > last_render, "the rendered-page report must come after the last render"
+    assert report_lines[-1] < text.index("## 4."), "the rendered-page report belongs in step 3"
 
 
 def test_qa_skill_lists_twenty_one_gates():
     text = _read(ROOT / "skills" / "vdr-qa" / "SKILL.md")
     assert "twenty-one" in text and "nineteen" not in text
     assert "| 20 | Repetition |" in text and "| 21 | House forms |" in text
+
+
+def test_findings_skill_lists_long_slots_and_house_forms_before_evidence_is_placed():
+    text = _read(ROOT / "skills" / "vdr-findings" / "SKILL.md")
+    step_2 = text[text.index("## 2. Draft the registry"):text.index("## 3.")]
+    assert "house_form_paths" in step_2 and "row_for_rel_path" in step_2
+
+
+def test_findings_skill_step_2_listing_fence_prints_each_band_and_the_house_forms(
+    tmp_path, monkeypatch, capsys
+):
+    """Spec §9: /vdr-findings must SHOW the author which slots are long and which are
+    house forms where the registry is drafted, not merely count them afterwards. Runs the
+    shipped fence against a real M-size room in long mode."""
+    from synthvdr.slots import SIZE_PRESETS, build_slot_manifest, write_anchors_csv
+
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    slots = build_slot_manifest(pack, SIZE_PRESETS["M"])
+    (tmp_path / "_key").mkdir()
+    write_anchors_csv(slots, tmp_path / "_key" / "anchors.csv")
+    conf = _SEMANTIC_ROOM_CONF.replace('SECTION_DIRS="."', f'SECTION_DIRS="{" ".join(pack.section_dirs())}"')
+    (tmp_path / "room.conf").write_text(conf + 'DOC_LENGTH="long"\n', encoding="utf-8")
+
+    path = ROOT / "skills" / "vdr-findings" / "SKILL.md"
+    text = _read(path)
+    step_2 = text[text.index("## 2. Draft the registry"):text.index("## 3.")]
+    fences = FENCED_PYTHON.findall(step_2)
+    assert len(fences) == 1, f"expected exactly one python fence in step 2, found {len(fences)}"
+    monkeypatch.chdir(tmp_path)
+    exec(compile(fences[0], str(path), "exec"), {})
+
+    out = capsys.readouterr().out
+    assert "heavy (10):" in out
+    assert "house forms — benign by rule:" in out
+    house_forms = out[out.index("house forms — benign by rule:"):].splitlines()[1:]
+    assert any(line.strip().endswith("5.1.1_customer-contracts-01.md") for line in house_forms), house_forms
+
+
+def test_scope_skill_says_doc_length_is_fixed_at_gate_a():
+    body = _scope_body()
+    step_1 = body[body.index("## 1. One question"):body.index("## 2. Generate the structure")]
+    step_5 = body[body.index("## 5. Write `room.conf`"):body.index("## Gate A")]
+    assert "fixed at Gate A" in step_1 and "wave 1" in step_1
+    assert "once `/vdr-build` starts" not in step_1
+    assert "wave 1" in step_5

@@ -50,7 +50,8 @@ supplier contracts, leases, facilities, the SPA, the JV agreement, employment co
 rest — at its real length, 4 to 45 pages by type (`domain/ma/lengths.yaml`), where a short room's
 agreements run to three or four. Say what it costs, in one line: a long `M` room is about 3.4×
 the authoring of a short one (~790k words against ~235k) and about five build waves; a long `S`
-room is the cheap way to try it. It is fixed once `/vdr-build` starts.
+room is the cheap way to try it. It is fixed at Gate A — `/vdr-build` records it at wave 1 and
+refuses a later wave whose `room.conf` changes it.
 
 In that same message, also **propose the workstreams this deal has**, as a list they can
 correct in passing — not as a second question. At `XS` and `S` a room does not have to build
@@ -395,8 +396,8 @@ values step 2 just printed, plus:
   default out loud; anything else is refused by name at load.
 - `DOC_LENGTH` — **optional; omit it for a short room.** `"long"` holds every agreement-bearing
   slot to its length band (step 1). `"short"` says the default out loud; anything else is refused
-  by name at load. Unlike `SCAN_PROFILE` it cannot be added later: `/vdr-build` records it at
-  wave 1 and refuses a wave whose `room.conf` has changed it.
+  by name at load. Unlike `SCAN_PROFILE` it cannot be added later: it is fixed at Gate A, and
+  `/vdr-build` records it at wave 1 and refuses a later wave whose `room.conf` has changed it.
 - `EXPECTED_KDP_CARRIERS=0` — no findings exist yet; `/vdr-findings` sets the real number.
 - `INDEX_TOTAL`, `BLIND_TOTAL`, `FLAGGED_TOTAL` — all equal to `len(slots)` from step 2.
 - `SECTION_DIRS` — the space-separated `room_pack.section_dirs()` string from step 2. This one

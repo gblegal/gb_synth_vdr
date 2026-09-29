@@ -132,6 +132,31 @@ enforces some of them mechanically and the rest are invisible to it:
   worse — hide a genuine leaked finding ID behind a false-positive the author has learned to
   ignore. Pick reference numbering that cannot collide with the prefix alphabet you declared.
 
+In a long room, see which slots are full-length agreements and which are house forms before you
+place any evidence — a clause-level finding is most natural in a long agreement, and a house form
+can carry nothing:
+
+```python
+from pathlib import Path
+from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
+from synthvdr.houseforms import families, house_form_paths
+from synthvdr.lengths import load_lengths
+from synthvdr.roomconf import doc_length, load_room_conf
+from synthvdr.slots import read_slot_manifest
+
+if doc_length(load_room_conf(Path("room.conf"))) == "long":
+    lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
+    slots = read_slot_manifest(Path("_key/anchors.csv"))
+    for band in lengths.bands:
+        paths = []
+        for slot in slots:
+            row = lengths.row_for_rel_path(slot.rel_path)
+            if row is not None and row.band == band:
+                paths.append(slot.rel_path)
+        print(f"{band} ({len(paths)}):", *paths, sep="\n  ")
+    print("house forms — benign by rule:", *sorted(house_form_paths(families(slots, lengths))), sep="\n  ")
+```
+
 ## 3. Draft the distractors
 
 Write `_key/distractors.yaml` (schema: `synthvdr.schema.Distractor`, loaded by
