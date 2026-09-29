@@ -133,10 +133,48 @@ the registry to match your own view of it.
 - **For a multi-document finding, do not state the conclusion.** Carry your fragment as
   neutral fact and leave the tension unresolved — the conclusion lives only in the answer key
   and, later, in the flagged twin's annotation block that you do not write.
-- Meet your slot's depth floor: tier A by archetype, tier F at least 350 words. Write to the
-  length the document type needs, not to the floor. You cannot measure this yourself (see
-  Return) — write a document that is genuinely finished, and expect to be re-dispatched with a
-  measured count if it falls short.
+- Meet your slot's depth floor: tier A by archetype, tier F at least 350 words — or, for a
+  long-form agreement, the floor its brief names. Write to the length the document type needs,
+  not to the floor. You cannot measure this yourself (see Return) — write a document that is
+  genuinely finished, and expect to be re-dispatched with a measured count if it falls short.
+
+## Long-form agreements (rooms with `DOC_LENGTH="long"`)
+
+A slot whose brief names a band, a target, an outline and a clause checklist is a full-length
+agreement. Everything above still applies; so does this.
+
+1. **Skeleton first.** One Write: the title as `# `, then every outline part as a `## ` heading in
+   the order given, and under each a single marker line — `[draft part 4 — Warranties, ~2,400
+   words]`. The `[draft` prefix is on the depth lint's placeholder list, so a part you never fill
+   fails the build instead of shipping.
+2. **Fill one part per Edit.** Replace one marker with that part's text per call, and never write
+   more than about 5,000 words in one call. Number clauses as English-law drafting does — 1, 1.1,
+   1.1.1, (a), (i). The cross-reference gate knows clause numbering from a reference to another
+   document in the room; refer to another document by its title and slot number, as elsewhere.
+3. **Definitions last.** Fill the definitions part after the operative parts, so every defined term
+   is used and every term used is defined.
+4. **Contain the checklist.** Every clause on the brief's list appears, almost all in ordinary,
+   benign, market-standard form. The list says what is present, never what it says.
+5. **A finding clause is the size of its neighbours**, in the part the outline puts it. A
+   conspicuously elaborate clause is a tell.
+6. **Figures.** Contract mechanics — notice periods, interest margins, service credits, caps
+   expressed as a proportion of charges — are yours to choose. Deal figures — price, contract value,
+   rent, headcount, facility amount — come from the fact sheet, as always.
+7. **Names.** Never name a bank, insurer, escrow agent, security trustee, auditor or other
+   institution that is not on the cast list. Use the supporting counterparties the fact sheet
+   declares, sign by role, or ask for one in your manifest.
+8. **House form.** If the brief says "House form", write the target's unsigned standard terms.
+   Blanks are bracketed labels starting with a capital letter — `[Customer name]`,
+   `[Commencement Date]` — and one is `[Template — not for signature]`. Never start a blank with
+   Insert, Draft, TBC or TBA: those are placeholders the depth lint fails. A house form carries no
+   finding and no distractor, ever.
+9. **Derived contract.** If the brief says "Derived contract", the house form has already been
+   copied to your slot's path. Read it, then Edit: fill every blank, rewrite the schedules for this
+   counterparty, and make two to five benign negotiated changes — a longer payment term, a mutual
+   cap, an added audit right. Plant a finding or distractor deviation only where your registry rows
+   say so, so that "differs from the standard terms" never means "is the finding".
+10. **Re-dispatch.** Sent back with a measured count, you will be told which parts are thin. Extend
+    those parts with Edit; do not rewrite the document.
 
 ## Return
 

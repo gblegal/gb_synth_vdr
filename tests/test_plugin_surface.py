@@ -1625,7 +1625,7 @@ def test_build_skill_excepts_every_gate_that_cannot_pass_before_the_audit():
         "gate 19 is not in the named mid-build exception list — an eval room's key is "
         "written at package time, so every build wave necessarily fails it"
     )
-    assert "four of the nineteen gates" in excepted, (
+    assert "four of the twenty-one gates" in excepted, (
         "the exception list says how many gates it names; that count has drifted"
     )
 
@@ -2472,3 +2472,75 @@ def test_scope_skill_says_doc_length_is_fixed_at_gate_a():
     assert "fixed at Gate A" in step_1 and "wave 1" in step_1
     assert "once `/vdr-build` starts" not in step_1
     assert "wave 1" in step_5
+
+
+BUILD_SKILL = ROOT / "skills" / "vdr-build" / "SKILL.md"
+
+
+def _fence_containing(text: str, marker: str) -> str:
+    at = text.index(marker)
+    start = text.rindex("```python", 0, at) + len("```python")
+    return text[start:text.index("```", at)]
+
+
+def _long_m_room(tmp_path):
+    from synthvdr.slots import SIZE_PRESETS, build_slot_manifest, write_anchors_csv
+
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    (tmp_path / "room.conf").write_text(
+        _SEMANTIC_ROOM_CONF.replace(
+            _SEMANTIC_ROOM_CONF.split("SECTION_DIRS=")[1].split("\n")[0],
+            '"' + " ".join(pack.section_dirs()) + '"',
+        )
+        + 'DOC_LENGTH="long"\n'
+    )
+    write_anchors_csv(build_slot_manifest(pack, SIZE_PRESETS["M"]), tmp_path / "_key" / "anchors.csv")
+    (tmp_path / "_key" / "findings.yaml").write_text("findings: []\n")
+    (tmp_path / "_key" / "distractors.yaml").write_text("distractors: []\n")
+    (tmp_path / "data-room").mkdir()
+    return tmp_path
+
+
+def test_build_skill_long_wave_selection_puts_house_forms_first_then_seeds(tmp_path, monkeypatch, capsys):
+    from synthvdr.houseforms import families
+    from synthvdr.lengths import load_lengths
+    from synthvdr.slots import read_slot_manifest
+
+    room = _long_m_room(tmp_path)
+    monkeypatch.chdir(room)
+    fence = _fence_containing(_read(BUILD_SKILL), "# long mode: select, seed and brief this wave")
+
+    exec(compile(fence, "vdr-build long wave selection", "exec"), {})
+    first = capsys.readouterr().out
+    assert "## Author 1" in first and "seeded 0 derived" in first
+
+    lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
+    for fam in families(read_slot_manifest(room / "_key" / "anchors.csv"), lengths):
+        path = room / "data-room" / fam.house_form.rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Standard terms\n\n[Template — not for signature]\n\n[Customer name]\n")
+    exec(compile(fence, "vdr-build long wave selection", "exec"), {})
+    second = capsys.readouterr().out
+    assert "Derived contract" in second and "seeded 0 derived" not in second
+
+
+def test_build_skill_length_check_refuses_a_changed_doc_length(tmp_path, monkeypatch):
+    # Review Focus 5.
+    room = _long_m_room(tmp_path)
+    monkeypatch.chdir(room)
+    (room / "_key" / "build-status.md").write_text("# Build status\n\n## Length\n\nshort\n")
+    fence = _fence_containing(_read(BUILD_SKILL), "# the length this room was built at")
+    with pytest.raises(SystemExit, match="DOC_LENGTH"):
+        exec(compile(fence, "vdr-build length check", "exec"), {})
+
+
+def test_build_status_example_records_the_length():
+    block = find_example_by_marker(markdown_examples(BUILD_SKILL), "# Build status", BUILD_SKILL)
+    assert "## Length" in block
+    assert block.split("## Length", 1)[1].split()[0] in ("short", "long")
+
+
+def test_author_agent_carries_the_long_form_protocol():
+    text = _read(ROOT / "agents" / "vdr-author.md")
+    for phrase in ("[draft part", "one part per Edit", "Definitions last", "House form", "Derived contract", "## "):
+        assert phrase in text, f"vdr-author.md no longer says {phrase!r}"

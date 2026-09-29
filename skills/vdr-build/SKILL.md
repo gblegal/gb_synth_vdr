@@ -79,6 +79,10 @@ this table until its own gate run above (Step 7) has come back all-PASS):
 ```markdown
 # Build status — Project Ashfell
 
+## Length
+
+short
+
 ## Waves completed
 
 | Wave | Slots authored | Gate result |
@@ -121,8 +125,29 @@ the section entirely rather than leaving it with no rows.
 (see Step 1) — never rewritten afterwards. Absent before that point (a fresh build, or one still mid-anchor). This
 is the fact Steps 6–8 read to know whether gates 2/7/8/15's (and, in an eval room, 19's) mid-build exceptions still apply.
 
+"Length" is written **once**, at wave 1: the room's `DOC_LENGTH` (`short` when `room.conf` has no
+such line). `DOC_LENGTH` is fixed at Gate A, and this record is what holds it there: every later
+wave checks it before selecting anything:
+
+```python
+# the length this room was built at
+from pathlib import Path
+from synthvdr.roomconf import doc_length, load_room_conf
+
+current = doc_length(load_room_conf(Path("room.conf")))
+status = Path("_key/build-status.md")
+text = status.read_text(encoding="utf-8") if status.is_file() else ""
+recorded = text.split("## Length", 1)[1].split()[0] if "## Length" in text else None
+if recorded is not None and recorded != current:
+    raise SystemExit(
+        f"room.conf now says DOC_LENGTH {current!r}, but this room was built {recorded!r} from "
+        "wave 1 — every agreement already written is held to the wrong floor. Stop and ask the user."
+    )
+print(f"DOC_LENGTH {current}" + ("" if recorded else " — record it under ## Length with this wave"))
+```
+
 "Gate result" in "Waves completed" records **PASS once every gate outside Step 7's named
-mid-build exceptions is clean** — not "every one of the nineteen gates," which (see Step 7)
+mid-build exceptions is clean** — not "every one of the twenty-one gates," which (see Step 7)
 no wave before the last one can ever produce. Wave 1 and wave 2 above both legitimately show
 PASS with gates 2 and 15 excepted throughout (and gate 19 too, in an eval room), and gates 7/8 additionally excepted before
 "Anchors" is recorded; that is not a weaker PASS, it is what "clean" is defined to mean before the room
@@ -142,6 +167,50 @@ At most **5 subagents**, roughly 40–50 slots each, taken off the front of the
 and `_key/distractors.yaml` for which slots in this batch carry a finding's
 `source`/`corroboration` or a distractor's `location`/`resolution` — those are this wave's
 registry rows, and by construction they are the slots at the front of that list.
+
+**In a long room, select by weighted words instead.** Forty long agreements would be ~500,000
+words for one author; the budget below gives each author about three principal agreements, or a
+heavy one plus a principal, or ~33 short documents. House forms come first, and a derived contract
+is never batched with its own house form, so its seed exists before its author starts:
+
+```python
+# long mode: select, seed and brief this wave
+from pathlib import Path
+from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
+from synthvdr.houseforms import authored_paths, families, house_form_of, house_form_paths, ready_slots, seed
+from synthvdr.lengths import brief_for, load_lengths
+from synthvdr.roomconf import load_room_conf
+from synthvdr.schema import load_bearing_paths, load_distractors, load_findings
+from synthvdr.slots import authoring_order, batch_by_budget, read_slot_manifest
+
+conf = load_room_conf(Path("room.conf"))
+blind = Path(conf.get("BLIND_TREE"))
+lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
+slots = read_slot_manifest(Path("_key/anchors.csv"))
+fams = families(slots, lengths)
+load_bearing = load_bearing_paths(
+    load_findings(Path("_key/findings.yaml")), load_distractors(Path("_key/distractors.yaml"))
+)
+order = authoring_order(slots, load_bearing, house_form_paths(fams))
+done = authored_paths(blind, slots, fams)
+weights = {s.rel_path: lengths.weight_for(s.rel_path) for s in slots}
+batches = batch_by_budget(ready_slots(order, done, fams), weights, budget=40_000, max_batches=5)
+seeded = seed(blind, fams, only={s.rel_path for batch in batches for s in batch})
+parents = house_form_of(fams)
+for number, batch in enumerate(batches, start=1):
+    print(f"## Author {number} — {sum(weights[s.rel_path] for s in batch):,} weighted words")
+    for s in batch:
+        print(f"- {s.rel_path} (tier {s.tier})")
+        brief = brief_for(s.rel_path, lengths, parents)
+        if brief:
+            print("  " + brief.replace("\n", "\n  "))
+print(f"seeded {len(seeded)} derived contract(s) from their house forms")
+```
+
+`authored_paths` is the resume pointer in a long room: a document counts as written once it is on
+disk, and a derived contract only once it clears gate 21's checks — so a copy an interrupted wave
+seeded and never edited is dispatched again, not skipped. A long `S` room takes about two waves,
+`M` about five, `L` about nineteen — more if the findings registry pulls agreements forward.
 
 **Note the exact wave this batch selection first has to reach past the load-bearing block,
 because no load-bearing slot is left.** That is "anchors complete" — see Steps 6–8 below,
@@ -223,6 +292,12 @@ phrasing scores as a miss the classifier never made:
 {chr(10).join("  " + v for v in vocabulary)}''')
 ```
 
+**In a long room, paste each agreement slot's brief with it** — the lines the selection fence
+printed under that slot: band, target, outline with part budgets, clause checklist, and whether it
+is a house form or a derived contract (with its house form's path). An author without the outline
+writes one long clause; an author without the house-form line writes an executed contract where a
+template belongs.
+
 `cast_list(..., kind=None)` is deliberate here: gate 14 masks with the entity rows only, but
 an author needs the whole closed list, people included, because it must not invent a person
 either.
@@ -269,6 +344,18 @@ way to get that list subtly wrong and measure the wrong documents.
 
 Re-dispatch a `vdr-author` for every slot named, telling it the measured count and the floor,
 then measure again. Only move on when this prints nothing.
+
+In a long room, tell it which parts are thin as well — it extends those parts with Edit rather than
+rewriting a 12,000-word document:
+
+```python
+from pathlib import Path
+from synthvdr.qa.depth import part_counts
+
+path = Path("data-room/05_commercial/5.1_customer-contracts/5.1.2_customer-contracts-02.md")  # the slot named
+for heading, words in part_counts(path.read_text(encoding="utf-8")):
+    print(f"{words:6,}  {heading}")
+```
 
 **Do not skip this because the authors reported their word counts.** They cannot have
 measured them. `agents/vdr-author.md` grants `Read, Write, Edit, Grep, Glob` and no Bash, so
@@ -571,7 +658,7 @@ caught here, at build time, or by gate 8's carrier census afterwards.
 `bash tools/check.sh .`
 
 **Multi-wave is the normal case** (`M` = 200 documents, `L` = 800, `XL` = 2,000+): most builds
-take several waves, and four of the nineteen gates check something that genuinely does not
+take several waves, and four of the twenty-one gates check something that genuinely does not
 exist yet before the room is finished. Naming all four exactly, rather than leaving "do not
 proceed on any failure" as a rule the room's own size makes impossible to satisfy:
 
