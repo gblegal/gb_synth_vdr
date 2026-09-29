@@ -1,4 +1,4 @@
-"""CLI: python3 -m synthvdr {score|score-classification|answerkey|corrupt|manifest} ...
+"""CLI: python3 -m synthvdr {score|score-classification|answerkey|corrupt|manifest|pages} ...
 
 `score <tool-output> --room PATH [--baseline FILE]` scores a findings report;
 `score-classification <output> --room PATH [--key FILE]` scores a
@@ -8,7 +8,9 @@ classification run against `_key/answer-key.jsonl` (or the key named by
 `corrupted/` (or `--out`) so eval runs are not scored against a suspiciously
 clean room, and gives the twin its own manifest so a run against it can be
 verified rather than only assumed; `manifest` writes `_key/manifest.json`,
-the clean room's content hash, which is /vdr-package's step 4.
+the clean room's content hash, which is /vdr-package's step 4; `pages` reports
+a long room's rendered page counts per length band, or with `--estimate` the
+size of its scan trees before rendering.
 
 This is the package-level entry point (`python3 -m synthvdr ...`), distinct
 from `synthvdr/qa/__main__.py` (`python3 -m synthvdr.qa`, the room QA gate
@@ -355,6 +357,35 @@ def _run_manifest(args) -> int:
     return 0
 
 
+def _run_pages(args) -> int:
+    """`pages --room . [--estimate]` — see synthvdr.pagereport."""
+    from .domain import DEFAULT_DOMAIN_ROOT, load_domain
+    from .lengths import load_lengths
+    from .pagereport import page_report, scan_estimate
+    from .roomconf import doc_length
+
+    try:
+        conf = load_room_conf(args.room / "room.conf")
+    except RoomConfError as exc:
+        print(f"synthvdr pages: {exc}".replace("\n", " "), file=sys.stderr)
+        return 2
+    blind = args.room / conf.get("BLIND_TREE")
+    if args.estimate:
+        scanned = args.room / conf.get("KEY_ROOT") / "scanned.csv"
+        if not scanned.is_file():
+            print(f"synthvdr pages: no {scanned} — write it first (/vdr-package step 3)", file=sys.stderr)
+            return 2
+        print(scan_estimate(blind, scanned))
+        return 0
+    if doc_length(conf) != "long":
+        print("DOC_LENGTH is short — there are no length bands to report")
+        return 0
+    lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
+    for line in page_report(blind, args.room / f"{conf.get('BLIND_TREE')}-pdf", lengths):
+        print(line)
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="synthvdr", description="synth-vdr tools.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -435,6 +466,14 @@ def main(argv=None) -> int:
         "manifest reproducible.",
     )
 
+    pages_parser = subparsers.add_parser(
+        "pages",
+        help="Long rooms: rendered page counts per length band (after the PDF render), or "
+        "with --estimate the scan trees' size (before it).",
+    )
+    pages_parser.add_argument("--room", type=Path, default=Path("."))
+    pages_parser.add_argument("--estimate", action="store_true")
+
     args = parser.parse_args(argv)
 
     if args.command == "answerkey":
@@ -447,6 +486,8 @@ def main(argv=None) -> int:
         return _run_corrupt(args)
     if args.command == "manifest":
         return _run_manifest(args)
+    if args.command == "pages":
+        return _run_pages(args)
     parser.error(f"unknown command {args.command!r}")  # pragma: no cover - argparse exits first
     return 2  # pragma: no cover
 
