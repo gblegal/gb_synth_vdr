@@ -1424,6 +1424,36 @@ def test_every_make_target_the_docs_tell_you_to_run_exists():
     assert not missing, f"documented but not declared in the Makefile: {missing}"
 
 
+def test_every_documented_install_from_github_is_editable():
+    """A plain `pip install "git+https://…@<tag>"` is the obvious command and the
+    wrong one. Only `synthvdr/` goes into the wheel, and `DEFAULT_DOMAIN_ROOT` is
+    `<package>/../domain/ma`, so a site-packages install imports cleanly, answers
+    every `--help`, and fails on the first skill with `domain pack file missing`.
+    Nothing in this suite would notice, because pytest imports from the checkout,
+    where the domain pack is always beside the package.
+
+    `-e` with a VCS URL clones the whole repository into the environment and keeps
+    it there, which is the only form of the GitHub install that works. Every such
+    command in a ```bash fence of the docs must carry it, and pin a release tag
+    rather than float on master, so the package matches the plugin version.
+    """
+    import re
+
+    commands = []
+    for name in ("README.md", "TECHNICAL-NOTES.md", "ARCHITECTURE.md"):
+        path = ROOT / name
+        if not path.is_file():
+            continue
+        for block in re.findall(r"```bash\n(.*?)```", path.read_text(encoding="utf-8"), re.DOTALL):
+            commands += [(name, line.strip()) for line in block.splitlines() if "pip install" in line and "git+" in line]
+
+    assert commands, "no `pip install git+…` command found in the docs — has the install wiring changed?"
+    for name, line in commands:
+        assert re.search(r"pip install (\S+ )*-e ", line), f"{name}: install from GitHub is not editable: {line}"
+        assert "@synth-vdr--v" in line, f"{name}: install from GitHub is not pinned to a release tag: {line}"
+        assert "#egg=synthvdr" in line, f"{name}: editable VCS install does not name the project: {line}"
+
+
 def test_the_licence_file_matches_what_the_manifests_declare():
     """A repo whose manifest and LICENCE file disagree states two different
     sets of terms at once, which is worse than either alone — and it is only
