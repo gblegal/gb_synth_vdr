@@ -565,3 +565,27 @@ fenced code blocks and long cross-reference lists all inflate the word count and
 Two metric caveats apply to any band quoted against it — markdown table pipes tokenise as
 words, so table-heavy documents read 15–25% longer than their prose, and CJK characters are
 counted at half weight rather than as a single token.
+
+**Gate 20 reads form, never meaning, and so it only warns.** It was calibrated on one room,
+Project Frithcombe, by scoring its flags on the pre-fix room against the lines the fix
+(ll_vdr_08, `fix/section-05-tells`) actually took bold off: 123 lines flagged, 60% of them
+lines the fix changed, catching 67% of what it changed. The thresholds and that measurement
+live together in `synthvdr.qa.tells.THRESHOLDS`. Four kinds of bold it cannot judge. A
+counterparty's own demand or position bolded in its own letter — a trustee's, a regulator's,
+an insurer's — is legitimate, and the fix kept it; a mark-up that shows the other side's
+insertions in bold is convention. The gate reports both, for a human to wave through. The
+other two pass unreported: bold sharing fewer than three words with the finding's title and
+substance (a spotlight on a bare "**45 days**" or "**£0.25m**", roughly a third of what the
+fix removed), and a wholly bold line of figures, which reads as a subtotal (Frithcombe's
+bolded "Other income — insurance recovery on the 2025 recall", and its 1.6, among them).
+
+**A pointer's direction is only as good as the documents' header dates.** `document_date`
+takes a "Dated"/"Date:" line or the first full date in a document's first 25 lines, and a
+header whose first date is a period start, a quoted expiry or a filing date turns a pointer
+round: Frithcombe's IP register reads as 2020, so the 2021 distribution agreement's note to
+it reads backward, though the fix removed it as a forward signpost. Same-dated documents are
+reported as lateral and not counted; a document with no readable date falls back to the
+answer key, where pointing at a finding's `source` is backward. Only a wholly italic
+paragraph is a note: an index number cited in ordinary prose, as a Q&A answer's "copies are
+at 7.2.1", is never a pointer, which is right for Q&A and means a signpost written in roman
+text passes.

@@ -1673,7 +1673,7 @@ def test_build_skill_excepts_every_gate_that_cannot_pass_before_the_audit():
         "gate 19 is not in the named mid-build exception list — an eval room's key is "
         "written at package time, so every build wave necessarily fails it"
     )
-    assert "four of the nineteen gates" in excepted, (
+    assert "four of the twenty gates" in excepted, (
         "the exception list says how many gates it names; that count has drifted"
     )
 

@@ -101,7 +101,7 @@ flowchart TB
     TW --> G["gate run → _key/build-status.md"]
     G -->|"anchors then filler remain"| W
     G -->|"authoring complete"| AU["vdr-auditor<br/>discoverability verdicts"]
-    AU --> Q["/vdr-qa<br/>the nineteen gates"]
+    AU --> Q["/vdr-qa<br/>the twenty gates"]
     Q --> P["/vdr-package<br/>gates in --strict"]
     P --> SUB["subset/ · optional DOCX + PDF<br/>_key/manifest.json content hash"]
     SUB --> R(["frozen room"])
@@ -188,7 +188,7 @@ judgement-shaped work. Anything that must be identical across runs lives here.
 | `schema` | The answer-key model — findings and distractors — plus `validate()`'s internal-consistency checks. YAML is canonical; `findings.md` is generated from it. |
 | `manifest` | The room's `content_hash` — sha256 over the sorted `rel_path + "\0" + sha256(bytes)` of the blind tree — and the two manifests that carry it (the packaged room's and the corrupted twin's). Takes `built` as a value and never reads the clock. |
 | `score` | Deterministic scoring: provenance check, evidence-path prematching, recall/precision/partial trails, adjudication reconciliation, scorecard rendering and baseline diff. |
-| `qa/` | The nineteen gates (`structural`, `leakage`, `depth`, `integrity`, `renders`) and the runner that enforces how they report. |
+| `qa/` | The twenty gates (`structural`, `leakage`, `depth`, `integrity`, `renders`, `tells`) and the runner that enforces how they report. |
 | `render/` | The optional DOCX (`docx.py`) and PDF (`pdf.mjs`, a separate Node process) renders. Never imported at core-build time. |
 
 Two separate CLIs, sharing no conventions beyond their general shape: `python3 -m
@@ -223,7 +223,7 @@ silently swallowed `<Unchecked Name> Limited Retirement Benefits Scheme`.
 
 ---
 
-## 6. The nineteen gates
+## 6. The twenty gates
 
 `python3 -m synthvdr.qa --room <dir>` runs every gate in `synthvdr/qa/__init__.py`'s
 `ALL_GATES`. This is the same suite `/vdr-qa` runs after every build wave and
@@ -250,6 +250,7 @@ silently swallowed `<Unchecked Name> Limited Retirement Benefits Scheme`.
 | 17 | Answer-key validation | `_key/findings.yaml` / `_key/distractors.yaml` pass `synthvdr.schema.validate()`'s internal-consistency checks |
 | 18 | Room role declared | `room.conf` says whether this is an `exemplar` room (may teach the downstream classifier) or an `eval` room (only ever scores it) — the train/test split, enforced |
 | 19 | Eval answer key | An `eval` room carries `_key/answer-key.jsonl` and the file matches a fresh rebuild from `_key/labels.yaml`; exemplar rooms pass — the key does not apply to them |
+| 20 | Evidence tells | No form gives the evidence away: selective bold on a finding's words, forward pointer notes along a chain, or a section whose notes sort evidence from filler. WARN only |
 
 **The runner enforces three disciplines, once, rather than leaving them to each gate.**
 
@@ -265,6 +266,14 @@ silently swallowed `<Unchecked Name> Limited Retirement Benefits Scheme`.
 `--strict` turns every SKIP into a hard failure. It is what `/vdr-package` runs, and it is
 the only mode that verifies a room end-to-end — the plain mode is a mid-build diagnostic
 that legitimately skips gates whose inputs do not exist yet.
+
+**Gate 20 is the one gate that only ever warns.** Gates 3, 4, 5 and 12 keep the answer key
+out of the blind tree as words; gate 20 watches the same boundary for form — the bold, the
+notes and the note habits that let a reader sort evidence from filler without reading
+either. It exists because Project Frithcombe passed all nineteen other gates while a blind
+judge ranked its section-05 documents last on 11 of 16 slots. Its thresholds were
+calibrated on that one room, so it reports WARN — never FAIL, even under `--strict` — until
+they have held on more; `REPORT` in `synthvdr/qa/tells.py` is the line that promotes it.
 
 Gate caveats — what each gate can and cannot see — are in
 [TECHNICAL-NOTES.md](TECHNICAL-NOTES.md) §6.
