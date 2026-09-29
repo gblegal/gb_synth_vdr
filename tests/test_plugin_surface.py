@@ -2572,6 +2572,25 @@ def test_build_skill_long_wave_selection_puts_house_forms_first_then_seeds(tmp_p
     assert spa in batched, "the SPA (a canonical figure home) is not in the first wave"
     assert [path for path in batched if path not in house][0] == spa
 
+    # Each batch is headed with the model it runs on, by the same load-bearing rule Step 2
+    # states (Sonnet only when nothing in the batch is load-bearing; figure homes count, house
+    # forms do not), so the operator does not have to work it out. Here the SPA is the room's
+    # only load-bearing slot, so exactly the batch that holds it is Opus.
+    headers = [line for line in first.splitlines() if line.startswith("## Author")]
+    assert headers and all(h.endswith(("model: opus", "model: sonnet")) for h in headers), headers
+    models = {}
+    current = None
+    for line in first.splitlines():
+        if line.startswith("## Author"):
+            current = line
+            models[current] = []
+        elif line.startswith("- ") and current is not None:
+            models[current].append(line[2:].split(" (tier")[0])
+    for header, paths in models.items():
+        expected = "opus" if spa in paths else "sonnet"
+        assert header.endswith(f"model: {expected}"), (header, spa in paths)
+    assert any(spa in paths and header.endswith("model: opus") for header, paths in models.items())
+
     lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
     for fam in families(read_slot_manifest(room / "_key" / "anchors.csv"), lengths):
         path = room / "data-room" / fam.house_form.rel_path

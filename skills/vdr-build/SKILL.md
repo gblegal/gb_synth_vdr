@@ -210,7 +210,8 @@ batches = batch_by_budget(ready_slots(order, done, fams), weights, budget=40_000
 seeded = seed(blind, fams, only={s.rel_path for batch in batches for s in batch})
 parents = house_form_of(fams)
 for number, batch in enumerate(batches, start=1):
-    print(f"## Author {number} — {sum(weights[s.rel_path] for s in batch):,} weighted words")
+    model = "opus" if any(s.rel_path in load_bearing for s in batch) else "sonnet"
+    print(f"## Author {number} — {sum(weights[s.rel_path] for s in batch):,} weighted words — model: {model}")
     for s in batch:
         print(f"- {s.rel_path} (tier {s.tier})")
         brief = brief_for(s.rel_path, lengths, parents)
@@ -218,6 +219,9 @@ for number, batch in enumerate(batches, start=1):
             print("  " + brief.replace("\n", "\n  "))
 print(f"seeded {len(seeded)} derived contract(s) from their house forms")
 ```
+
+Each batch's model follows the rule in Step 2 — Sonnet only when nothing in the batch is load-bearing;
+house forms are benign, so a house-form-only batch runs on Sonnet.
 
 `authored_paths` is the resume pointer in a long room: a document counts as written once it is on
 disk, and a derived contract only once it clears gate 21's checks — so a copy an interrupted wave
