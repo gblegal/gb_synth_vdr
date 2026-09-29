@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AbstractSet, Dict, Iterable, List, Set
+from typing import AbstractSet, Dict, Iterable, List, Mapping, Sequence, Set
 
 from .domain import DomainPack, Section
 
@@ -210,3 +210,34 @@ def authoring_order(
             slot.tier != TIER_ANCHOR,
         ),
     )
+
+
+def batch_by_budget(
+    order: Sequence[Slot], weights: Mapping[str, int], budget: int, max_batches: int
+) -> List[List[Slot]]:
+    """One wave's author batches: `order` packed greedily into at most
+    `max_batches` batches of at most `budget` weighted words each.
+
+    Long mode's replacement for "40-50 slots per author", which is ~50,000
+    words of short documents but would be ~500,000 of long ones. Never
+    reorders and never splits a document; a slot heavier than the budget
+    travels alone. Whatever is left once `max_batches` is reached is the next
+    wave's. `weights` is `Lengths.weight_for` per rel_path.
+    """
+    if budget <= 0 or max_batches <= 0:
+        raise ValueError(f"budget ({budget}) and max_batches ({max_batches}) must both be positive")
+    batches: List[List[Slot]] = []
+    current: List[Slot] = []
+    load = 0
+    for slot in order:
+        weight = weights[slot.rel_path]
+        if current and load + weight > budget:
+            batches.append(current)
+            if len(batches) == max_batches:
+                return batches
+            current, load = [], 0
+        current.append(slot)
+        load += weight
+    if current:
+        batches.append(current)
+    return batches

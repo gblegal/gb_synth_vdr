@@ -5,6 +5,7 @@ from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
 from synthvdr.slots import (
     SIZE_PRESETS,
     authoring_order,
+    batch_by_budget,
     build_slot_manifest,
     read_anchors_csv,
     read_slot_manifest,
@@ -265,3 +266,54 @@ def test_authoring_order_without_house_forms_is_what_it_always_was():
     _, slots = manifest("M")
     load_bearing = {slots[-1].rel_path, slots[-3].rel_path}
     assert authoring_order(slots, load_bearing) == authoring_order(slots, load_bearing, frozenset())
+
+
+def _uniform(slots, weight):
+    return {s.rel_path: weight for s in slots}
+
+
+def test_batch_by_budget_keeps_order_and_respects_the_budget():
+    _, slots = manifest("XS")
+    batches = batch_by_budget(slots, _uniform(slots, 1000), budget=5000, max_batches=100)
+    assert [s for batch in batches for s in batch] == slots
+    assert all(len(batch) == 5 for batch in batches[:-1])
+
+
+def test_batch_by_budget_sends_an_over_budget_slot_alone():
+    _, slots = manifest("XS")
+    weights = _uniform(slots, 1000)
+    weights[slots[2].rel_path] = 50000
+    batches = batch_by_budget(slots[:6], weights, budget=40000, max_batches=10)
+    assert [len(b) for b in batches] == [2, 1, 3]
+
+
+def test_batch_by_budget_stops_at_max_batches_and_leaves_the_rest():
+    _, slots = manifest("XS")
+    batches = batch_by_budget(slots, _uniform(slots, 1000), budget=5000, max_batches=2)
+    assert len(batches) == 2 and sum(len(b) for b in batches) == 10
+
+
+def test_batch_by_budget_refuses_a_non_positive_budget_or_batch_count():
+    _, slots = manifest("XS")
+    with pytest.raises(ValueError):
+        batch_by_budget(slots, _uniform(slots, 1), budget=0, max_batches=5)
+    with pytest.raises(ValueError):
+        batch_by_budget(slots, _uniform(slots, 1), budget=10, max_batches=0)
+
+
+@pytest.mark.parametrize("size,waves", [("S", 2), ("M", 5), ("L", 19)])
+def test_long_rooms_take_the_waves_the_spec_records(size, waves):
+    from synthvdr.houseforms import families, house_form_paths, ready_slots
+    from synthvdr.lengths import load_lengths
+
+    pack, slots = manifest(size)
+    lengths = load_lengths(DEFAULT_DOMAIN_ROOT, pack)
+    fams = families(slots, lengths)
+    order = authoring_order(slots, set(), house_form_paths(fams))
+    weights = {s.rel_path: lengths.weight_for(s.rel_path) for s in slots}
+    done, count = set(), 0
+    while len(done) < len(slots):
+        batches = batch_by_budget(ready_slots(order, done, fams), weights, 40000, 5)
+        done |= {s.rel_path for batch in batches for s in batch}
+        count += 1
+    assert count == waves

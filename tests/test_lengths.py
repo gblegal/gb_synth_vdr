@@ -4,11 +4,13 @@ from dataclasses import replace
 import pytest
 
 from synthvdr.domain import DEFAULT_DOMAIN_ROOT, DomainError, load_domain
+from synthvdr.houseforms import families, house_form_of
 from synthvdr.lengths import (
     SHORT_DOC_WEIGHT,
     Band,
     LengthRow,
     Lengths,
+    brief_for,
     check_against_pack,
     load_lengths,
 )
@@ -141,3 +143,25 @@ def test_load_lengths_names_the_pack_root_when_it_refuses(tmp_path):
     lengths_yaml.write_text(lengths_yaml.read_text().replace("floor: 10000", "floor: 9000"))
     with pytest.raises(DomainError, match=str(root)):
         load_lengths(root, PACK)
+
+
+PARENTS = house_form_of(families(build_slot_manifest(PACK, SIZE_PRESETS["M"]), LENGTHS))
+
+
+def test_brief_names_band_target_parts_and_clauses_for_an_agreement():
+    brief = brief_for("05_commercial/5.2_supplier-contracts/5.2.1_supplier-contracts-01.md", LENGTHS, PARENTS)
+    assert "about 12,000 words; the floor is 10,000" in brief
+    assert "  - Definitions and interpretation: ~1,400 words" in brief
+    assert "Change of control" in brief
+    assert "House form" not in brief and "Derived contract" not in brief
+
+
+def test_brief_is_none_for_a_slot_that_is_not_an_agreement():
+    assert brief_for("01_corporate/1.3_board-minutes/1.3.1_board-minutes-01.md", LENGTHS, PARENTS) is None
+
+
+def test_brief_tells_a_house_form_and_a_derived_contract_apart():
+    derived, house = next(iter(sorted(PARENTS.items())))
+    assert "House form" in brief_for(house, LENGTHS, PARENTS)
+    derived_brief = brief_for(derived, LENGTHS, PARENTS)
+    assert "Derived contract" in derived_brief and house in derived_brief

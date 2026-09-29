@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Mapping, Optional, Tuple
 
 import yaml
 
@@ -191,3 +191,39 @@ def load_lengths(root: Path = DEFAULT_DOMAIN_ROOT, pack: Optional[DomainPack] = 
     except DomainError as exc:
         raise DomainError(f"{root}: {exc}") from exc
     return lengths
+
+
+def brief_for(rel_path: str, lengths: Lengths, parents: Mapping[str, str]) -> Optional[str]:
+    """The long-form brief /vdr-build hands a slot's author, or None when the
+    slot is not an agreement. `parents` is `houseforms.house_form_of(...)`.
+
+    Part budgets are the anatomy share of the band TARGET, to the nearest
+    hundred — the floor is what gate 10 enforces, the target is what the
+    author aims at.
+    """
+    row = lengths.row_for_rel_path(rel_path)
+    if row is None:
+        return None
+    band = lengths.bands[row.band]
+    family = lengths.families[row.anatomy]
+    lines = [
+        f"Long-form agreement: {row.hint}. Band {band.name}, {band.pages[0]}-{band.pages[1]} pages: "
+        f"write to about {band.target:,} words; the floor is {band.floor:,}.",
+        f"Outline ({family.title}) — one level-2 heading (## ) per part, in this order:",
+    ]
+    lines += [f"  - {part.name}: ~{round(part.share * band.target / 100, -2):,.0f} words" for part in family.parts]
+    lines.append("Clauses it must contain, almost all in ordinary benign form: " + "; ".join(family.clauses) + ".")
+    if rel_path in parents:
+        lines.append(
+            f"Derived contract: {parents[rel_path]} has been copied to this path. Edit it — fill "
+            "every bracketed blank, rewrite the schedules, and make two to five benign negotiated "
+            "changes; plant a finding or distractor only where your registry rows say so."
+        )
+    elif rel_path in set(parents.values()):
+        lines.append(
+            "House form: write the target's unsigned standard terms. Blanks are bracketed labels "
+            "starting with a capital letter — [Customer name], [Commencement Date] — and one of "
+            "them is [Template — not for signature]. Benign by rule: no finding and no distractor "
+            "goes in a house form."
+        )
+    return "\n".join(lines)
