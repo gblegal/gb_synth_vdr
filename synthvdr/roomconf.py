@@ -83,6 +83,19 @@ ROOM_ROLES = ("exemplar", "eval")
 # rotation_for and _ATX_HEADING are held to across the same language boundary.
 SCAN_PROFILES = ("none", "office")
 
+# The values of the optional DOC_LENGTH key. "long" holds every agreement-
+# bearing slot to a per-type length band in domain/ma/lengths.yaml (spec:
+# docs/superpowers/specs/2026-09-29-long-form-documents-design.md); "short",
+# or no key at all, is the behaviour every room had before the key existed.
+#
+# Validated here for SCAN_PROFILE's reason — a typo that fell through to
+# "short" would build a room of three-page agreements under a room.conf that
+# says otherwise, and every measurement against it would be wrong rather than
+# missing. Unlike SCAN_PROFILE it cannot be changed late: it sets every
+# agreement slot's depth floor, so /vdr-build records it at wave 1 and refuses
+# a later wave whose room.conf disagrees.
+DOC_LENGTHS = ("short", "long")
+
 # Keys whose values are relative filesystem paths under the room root. Tools
 # that turn these into real paths (e.g. synthvdr.twin.build_flagged_tree)
 # call shutil.rmtree on the result, so a bad value here is a destructive-path
@@ -541,6 +554,12 @@ def load_room_conf(path: Path) -> RoomConf:
             "at render time, after the pristine tree had already been built."
         )
 
+    if "DOC_LENGTH" in values and values["DOC_LENGTH"] not in DOC_LENGTHS:
+        raise RoomConfError(
+            f"{path}: DOC_LENGTH is {values['DOC_LENGTH']!r} — it must be one of "
+            f"{', '.join(DOC_LENGTHS)}, or omitted entirely (which means 'short')."
+        )
+
     # Property 1 + Property 2 over every path-valued key at once. The room
     # root is path.parent — room.conf sits at the top of the room it
     # describes. This is a load-time snapshot: build_flagged_tree runs the
@@ -549,3 +568,12 @@ def load_room_conf(path: Path) -> RoomConf:
     check_tree_identity(path.parent, values, PATH_KEYS, path)
 
     return RoomConf(values=values, path=path)
+
+
+def doc_length(conf: RoomConf) -> str:
+    """The room's DOC_LENGTH, reading an absent key as "short".
+
+    One reader, so no caller spells the default differently from another.
+    `load_room_conf` has already refused any value outside DOC_LENGTHS.
+    """
+    return conf.values.get("DOC_LENGTH", "short")
