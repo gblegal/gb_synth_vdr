@@ -144,7 +144,8 @@ the registry to match your own view of it.
 A slot whose brief names a band, a target, an outline and a clause checklist is a full-length
 agreement. Everything above still applies; so does this.
 
-1. **Skeleton first.** One Write: the title as `# `, then every outline part as a `## ` heading in
+1. **Skeleton first** — except a derived contract, which starts from the seeded copy (see 9); never
+   Write over it. One Write: the title as `# `, then every outline part as a `## ` heading in
    the order given, and under each a single marker line — `[draft part 4 — Warranties, ~2,400
    words]`. The `[draft` prefix is on the depth lint's placeholder list, so a part you never fill
    fails the build instead of shipping. `## ` headings are reserved for the outline's parts, named
@@ -154,7 +155,8 @@ agreement. Everything above still applies; so does this.
    more than about 5,000 words in one call. Number clauses as English-law drafting does — 1, 1.1,
    1.1.1, (a), (i). Refer to the agreement's own provisions as "clause 4.2.1", "paragraph 3.1.2" or
    "Schedule 2" — never a bare three-part number in running text, which the cross-reference gate
-   reads as a reference to another document in the room. A number opening its own line as clause
+   reads as a reference to another document in the room, and never 'section 4.2.1' — 'section' is
+   not a drafting word the gate recognises. A number opening its own line as clause
    numbering is fine (after a list bullet or table pipe it is not). Refer to another document by
    its title and slot number, as elsewhere.
 3. **Definitions last.** Fill the definitions part after the operative parts, so every defined term
@@ -171,9 +173,13 @@ agreement. Everything above still applies; so does this.
    declares, sign by role, or ask for one in your manifest.
 8. **House form.** If the brief says "House form", write the target's unsigned standard terms.
    Blanks are bracketed labels starting with a capital letter — `[Customer name]`,
-   `[Commencement Date]` — and one is `[Template — not for signature]`. Never start a blank with
-   Insert, Draft, TBC or TBA: those are placeholders the depth lint fails. A house form carries no
-   finding and no distractor, ever.
+   `[Commencement Date]` — and one is `[Template — not for signature]`. Square brackets in a house
+   form are for blanks only: never `[Reserved]`, `[Not used]` or `[Signature page follows]`, because
+   gate 21 reads any bracket opening with a capital letter as a blank, and a derived contract that
+   keeps one fails. The depth lint fails any of these anywhere in a finished document, whatever the
+   case: "lorem ipsum", "todo", "tbd", "xxx", "fixme", "placeholder", and a bracket opening
+   "[insert", "[draft", "[tbc" or "[tba" — so never `[TBD]`, `[XXX]` or `£[TBD]`, and never a blank
+   opening Insert, Draft, TBC or TBA. A house form carries no finding and no distractor, ever.
 9. **Derived contract.** If the brief says "Derived contract", the house form has already been
    copied to your slot's path. Read it, then Edit: fill every blank, rewrite the schedules for this
    counterparty, and make at least two negotiated changes to clauses that carry no blank in the

@@ -145,7 +145,7 @@ from synthvdr.roomconf import doc_length, load_room_conf
 current = doc_length(load_room_conf(Path("room.conf")))
 status = Path("_key/build-status.md")
 text = status.read_text(encoding="utf-8") if status.is_file() else ""
-recorded = text.split("## Length", 1)[1].split()[0] if "## Length" in text else None
+recorded = text.split("## Length", 1)[1].split()[0].strip("`*") if "## Length" in text else None
 if recorded is not None and recorded != current:
     raise SystemExit(
         f"room.conf now says DOC_LENGTH {current!r}, but this room was built {recorded!r} from "
@@ -784,7 +784,8 @@ Update `_key/build-status.md`: append this wave's number, the slots it authored,
 result to the "Waves completed" table, then rewrite "Next wave" to name exactly one more than
 the wave you just appended (see the literal shape above) — never leave the file pointing at a
 wave number that has already run, and never skip a number. Append one "Author models" row
-for each batch the wave dispatched, with the model Step 2 chose for it. "New findings" is
+for each batch the wave dispatched, with the model Step 2 chose for it. At wave 1, also write
+`## Length` with the room's DOC_LENGTH (see Resume). "New findings" is
 **not** touched here — Step 4 already appended to it, unconditionally, before this wave's gate even ran. If
 this wave is the one Step 1 identified as anchors-complete and `## Anchors` is not yet
 recorded, write it now.

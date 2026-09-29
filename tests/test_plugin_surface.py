@@ -2734,3 +2734,67 @@ def test_build_skill_step_3_depth_fence_holds_a_long_agreement_to_its_band_floor
 
     out = capsys.readouterr().out
     assert "5.1.2: " in out and "floor 10000" in out
+
+
+def _long_form_items(text: str) -> dict:
+    """vdr-author.md's numbered long-form items, by number, whitespace collapsed."""
+    section = text[text.index("## Long-form agreements"):text.index("## Return")]
+    items = re.split(r"^(\d+)\. ", section, flags=re.MULTILINE)
+    return {int(n): " ".join(body.split()) for n, body in zip(items[1::2], items[2::2])}
+
+
+def test_author_agent_long_form_items_close_the_final_review_minors():
+    """Final review M4/M5: a derived contract never starts from a skeleton Write; a house form's
+    brackets are blanks only; the author is told every token the depth lint fails; and
+    'section' is not a drafting word the cross-reference gate recognises."""
+    from synthvdr.qa.depth import PLACEHOLDER_TOKENS
+    from synthvdr.qa.structural import CLAUSE_WORDS
+
+    items = _long_form_items(_read(ROOT / "agents" / "vdr-author.md"))
+    assert "except a derived contract, which starts from the seeded copy (see 9); never Write over it" in items[1]
+    for bracket in ("[Reserved]", "[Not used]", "[Signature page follows]"):
+        assert bracket in items[8], f"item 8 does not warn against {bracket}"
+    missing = [token for token in PLACEHOLDER_TOKENS if token not in items[8].lower()]
+    assert not missing, f"item 8 does not list the placeholder tokens {missing}"
+    assert "section" not in CLAUSE_WORDS
+    assert "never 'section 4.2.1'" in items[2] and "'section' is not a drafting word" in items[2]
+
+
+def test_build_skill_length_check_reads_a_formatted_length(tmp_path, monkeypatch):
+    """Final review M6: an orchestrator that writes `long` or **long** under ## Length must not
+    be refused a long room it built long."""
+    room = _long_m_room(tmp_path)
+    monkeypatch.chdir(room)
+    fence = _fence_containing(_read(BUILD_SKILL), "# the length this room was built at")
+    for recorded in ("`long`", "**long**"):
+        (room / "_key" / "build-status.md").write_text(f"# Build status\n\n## Length\n\n{recorded}\n")
+        exec(compile(fence, "vdr-build length check", "exec"), {})
+
+
+def test_build_skill_step_8_writes_the_length_at_wave_1():
+    text = _read(BUILD_SKILL)
+    step_8 = text[text.index("### 8. Update the build status"):text.index("## After the last wave")]
+    assert "At wave 1, also write `## Length` with the room's DOC_LENGTH (see Resume)." in " ".join(step_8.split())
+
+
+def test_docs_name_gates_20_and_21_where_the_gates_are_listed():
+    """Final review M7."""
+    architecture = _read(ROOT / "ARCHITECTURE.md")
+    qa_row = next(line for line in architecture.splitlines() if line.startswith("| `qa/` |"))
+    modules = sorted(
+        p.stem for p in (ROOT / "synthvdr" / "qa").glob("*.py") if p.stem not in ("__init__", "__main__", "runner")
+    )
+    missing = [m for m in modules if f"`{m}`" not in qa_row]
+    assert not missing, f"ARCHITECTURE.md's qa/ row does not list {missing}"
+
+    description = frontmatter(ROOT / "skills" / "vdr-qa" / "SKILL.md")["description"]
+    assert "repetition" in description and "house forms" in description
+
+    notes = " ".join(_read(ROOT / "TECHNICAL-NOTES.md").split())
+    assert "more than 10% of a 2,000+-word document's words sit in repeated paragraphs of 30+ tokens" in notes
+    assert "real agreement clauses run longer than 30 tokens" not in notes
+    assert (
+        "form boilerplate in the material measured runs under 30 tokens; drafted clauses mostly run longer"
+        in notes
+    )
+    assert "Frithcombe (`ll_vdr_08`)" in notes

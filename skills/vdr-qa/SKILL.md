@@ -1,6 +1,6 @@
 ---
 name: vdr-qa
-description: Run the twenty-one room QA gates — index regeneration, leakage sweeps, twin invariants, carrier census, cross-references, depth lint, subset, fact-sheet and answer-key reconciliation, unchecked-name sweep, discoverability, render parity, the room's exemplar/eval role declaration and the eval room's classification answer key. Use --strict before any release.
+description: Run the twenty-one room QA gates — index regeneration, leakage sweeps, twin invariants, carrier census, cross-references, depth lint, subset, fact-sheet and answer-key reconciliation, unchecked-name sweep, discoverability, render parity, the room's exemplar/eval role declaration, the eval room's classification answer key, repetition in long documents (gate 20) and house forms (gate 21). Use --strict before any release.
 ---
 
 # Run the QA gates

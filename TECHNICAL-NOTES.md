@@ -566,9 +566,10 @@ Two metric caveats apply to any band quoted against it — markdown table pipes 
 words, so table-heavy documents read 15–25% longer than their prose, and CJK characters are
 counted at half weight rather than as a single token.
 
-Gate 20 (§7) now catches one kind of padding — a paragraph of 30+ tokens repeated verbatim in a
-document of 2,000+ words — and nothing else: a paraphrased restatement, front matter and long
-cross-reference lists still pass.
+Gate 20 (§7) now catches one kind of padding — it fails when more than 10% of a 2,000+-word
+document's words sit in repeated paragraphs of 30+ tokens (verbatim repeats of an earlier
+paragraph) — and nothing else: a paraphrased restatement, front matter and long cross-reference
+lists still pass.
 
 ---
 
@@ -578,7 +579,7 @@ cross-reference lists still pass.
 length. Spec: `docs/superpowers/specs/2026-09-29-long-form-documents-design.md`.
 
 **Bands** (`domain/ma/lengths.yaml`), at 500 words per page — the conservative end of the 450–525
-measured on this renderer's agreement prose in Project Frithcombe:
+measured on this renderer's agreement prose in Project Frithcombe (`ll_vdr_08`):
 
 | Band | Pages | Floor | Target | Subfolders |
 |---|---|---|---|---|
@@ -605,7 +606,8 @@ NVCA forms max 0.004 (4), Frithcombe max 0.000 (127 documents of 2,000+ words by
 times 0.167. The floor is 30 tokens, not 15: at 15, `ll_vdr_09`'s 1.4.7 — a compilation of six
 conformed J30 stock transfer forms, 2,343 words — scored 0.350 on its 19–26-token boilerplate, which
 is legitimate form repetition, not padding, and raising the threshold past it would have blinded the
-gate; real agreement clauses run longer than 30 tokens, so padding is still caught. Re-run with
+gate; form boilerplate in the material measured runs under 30 tokens; drafted clauses mostly run
+longer, so padding is still caught. Re-run with
 `tools/calibrate_repetition.py DIR...`; the shipped gate, both rooms read-only, on 2026-09-29:
 
 ```text

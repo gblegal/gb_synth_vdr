@@ -193,7 +193,7 @@ judgement-shaped work. Anything that must be identical across runs lives here.
 | `lengths` | Long mode's bands, agreement-bearing subfolders and anatomy (`domain/ma/lengths.yaml`, `anatomy.yaml`), validated on load; the per-slot author brief. Never read by a short room. |
 | `houseforms` | House-form families in the target's own paper: designation, the derivation checks, `seed` (the only Python writer into the blind tree — creates, never overwrites), and what counts as authored on resume. |
 | `pagereport` | `python3 -m synthvdr pages`: rendered pages per length band, and the scan trees' size before rendering. |
-| `qa/` | The twenty-one gates (`structural`, `leakage`, `depth`, `integrity`, `renders`) and the runner that enforces how they report. |
+| `qa/` | The twenty-one gates (`structural`, `leakage`, `depth`, `integrity`, `renders`, `repetition`, `houseforms`) and the runner that enforces how they report. |
 | `render/` | The optional DOCX (`docx.py`) and PDF (`pdf.mjs`, a separate Node process) renders. Never imported at core-build time. |
 
 Two separate CLIs, sharing no conventions beyond their general shape: `python3 -m
