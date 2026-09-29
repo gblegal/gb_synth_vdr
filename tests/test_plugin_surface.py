@@ -2624,6 +2624,49 @@ def test_build_skill_long_wave_selection_puts_house_forms_first_then_seeds(tmp_p
     assert "Derived contract" in third and "seeded 0 derived" not in third
 
 
+def test_build_skill_long_wave_selection_says_when_anchors_are_complete(tmp_path, monkeypatch, capsys):
+    """Final review Important 1: a load-bearing derived contract waits for its house form while
+    filler fills the rest of the wave, so "the wave that first reaches past the load-bearing
+    block" is not anchors-complete in a long room. Recording `## Anchors` then runs Step 6 and
+    `build_flagged_tree` raises TwinError. The fence must say, and mark the load-bearing slots
+    Step 2 hands registry rows for."""
+    from synthvdr.houseforms import families
+    from synthvdr.lengths import load_lengths
+    from synthvdr.slots import read_slot_manifest
+
+    room = _long_m_room(tmp_path)
+    derived = "05_commercial/5.1_customer-contracts/5.1.2_customer-contracts-02.md"
+    (room / "_key" / "findings.yaml").write_text(
+        "findings:\n"
+        "  - id: COMM-1\n"
+        "    title: Customer may terminate on a change of control\n"
+        "    severity: high\n"
+        "    workstream: commercial\n"
+        "    multi_document: false\n"
+        f"    source: {derived}\n"
+        "    location: Clause 14.2\n"
+        "    substance: The customer may terminate on a change of control of the target.\n"
+    )
+    monkeypatch.chdir(room)
+    fence = _fence_containing(_read(BUILD_SKILL), "# long mode: select, seed and brief this wave")
+    verdict = "anchors complete with this wave:"
+
+    exec(compile(fence, "vdr-build long wave selection", "exec"), {})
+    first = capsys.readouterr().out.splitlines()
+    verdicts = [line for line in first if line.startswith(verdict)]
+    assert len(verdicts) == 1, first[-5:]
+    assert verdicts[0].startswith(f"{verdict} no") and derived in verdicts[0], verdicts[0]
+    assert not any(line.startswith(f"- {derived}") for line in first), "selected before its house form"
+
+    lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
+    _write_finished_house_forms(room, families(read_slot_manifest(room / "_key" / "anchors.csv"), lengths), lengths)
+    exec(compile(fence, "vdr-build long wave selection", "exec"), {})
+    second = capsys.readouterr().out.splitlines()
+    lines = [line for line in second if line.startswith(f"- {derived}")]
+    assert len(lines) == 1 and "load-bearing" in lines[0], lines
+    assert [line for line in second if line.startswith(verdict)] == [f"{verdict} yes"]
+
+
 def test_build_skill_length_check_refuses_a_changed_doc_length(tmp_path, monkeypatch):
     # Review Focus 5.
     room = _long_m_room(tmp_path)

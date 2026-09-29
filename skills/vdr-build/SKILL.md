@@ -207,21 +207,30 @@ order = authoring_order(slots, load_bearing, house_form_paths(fams))
 done = authored_paths(blind, slots, fams, lengths)
 weights = {s.rel_path: lengths.weight_for(s.rel_path) for s in slots}
 batches = batch_by_budget(ready_slots(order, done, fams), weights, budget=40_000, max_batches=5)
-seeded = seed(blind, fams, only={s.rel_path for batch in batches for s in batch})
+selected = {s.rel_path for batch in batches for s in batch}
+seeded = seed(blind, fams, only=selected)
 parents = house_form_of(fams)
 for number, batch in enumerate(batches, start=1):
     model = "opus" if any(s.rel_path in load_bearing for s in batch) else "sonnet"
     print(f"## Author {number} — {sum(weights[s.rel_path] for s in batch):,} weighted words — model: {model}")
     for s in batch:
-        print(f"- {s.rel_path} (tier {s.tier})")
+        print(f"- {s.rel_path} (tier {s.tier})" + (" — load-bearing" if s.rel_path in load_bearing else ""))
         brief = brief_for(s.rel_path, lengths, parents)
         if brief:
             print("  " + brief.replace("\n", "\n  "))
 print(f"seeded {len(seeded)} derived contract(s) from their house forms")
+# Filler is not held back while a load-bearing derived contract waits for its house form, so
+# reaching past the load-bearing block in `order` is not "anchors complete" here — this is.
+left = [
+    f"{p} (waits for its house form)" if p in parents and parents[p] not in done else p
+    for p in sorted((load_bearing & {s.rel_path for s in slots}) - done - selected)
+]
+print("anchors complete with this wave: " + ("no — load-bearing slots still to come: " + ", ".join(left) if left else "yes"))
 ```
 
 Each batch's model follows the rule in Step 2 — Sonnet only when nothing in the batch is load-bearing;
-house forms are benign, so a house-form-only batch runs on Sonnet.
+house forms are benign, so a house-form-only batch runs on Sonnet. Each load-bearing slot is marked
+`— load-bearing`: those are the slots whose registry rows Step 2 hands their author.
 
 `authored_paths` is the resume pointer in a long room: a document counts as written once it is on
 disk, a house form only once it is finished — no `[draft part …]` marker or other placeholder, at
@@ -242,6 +251,13 @@ it can take several waves. A long room batches by weighted words instead, so its
 it usually takes several. Record it in `_key/build-status.md`'s `## Anchors` line the moment
 it happens (see the literal shape in "Resume" above) — this is the one fact Steps 6–8 need
 that nothing else in the file states directly.
+
+**In a long room, record `## Anchors` only when the fence above prints `anchors complete with this
+wave: yes`.** There the selection does not hold filler back while a load-bearing derived contract
+waits for its house form, so the first wave to reach past the load-bearing block is not
+necessarily the one that exhausts it — record Anchors at that wave and Step 6's
+`build_flagged_tree` raises `TwinError` for the derived contract not yet written. Evidence on a
+derived contract is necessarily planted in the wave after its house form's.
 
 ### 2. Dispatch the authors
 
