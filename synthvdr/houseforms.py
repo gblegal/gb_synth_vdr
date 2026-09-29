@@ -10,7 +10,8 @@ customer contracts are mostly the target's own paper. Spec §7.
 A house form is benign by rule (gate 21 enforces it): a clause planted in one
 would propagate into every derived contract with evidence declared on none.
 
-Nothing here imports synthvdr.qa, which imports this module for gate 21.
+Nothing here imports synthvdr.qa at module level: it imports this module for
+gate 21, so the one use of it (`authored_paths`) imports lazily.
 """
 
 from __future__ import annotations
@@ -150,18 +151,48 @@ def seed(blind_root: Path, fams: Iterable[HouseFormFamily], only: Optional[Set[s
     return created
 
 
-def authored_paths(blind_root: Path, slots: Iterable[Slot], fams: Iterable[HouseFormFamily]) -> Set[str]:
+def _house_form_finished(text: str, rel_path: str, lengths: Optional[Lengths]) -> bool:
+    """Whether a house form on disk is fit to be copied into its derived slots.
+
+    Lazy import: synthvdr.qa imports this module for gate 21.
+    """
+    from .qa.depth import _placeholder_hit, wordcount
+
+    if _placeholder_hit(text) or not blanks(text):
+        return False
+    row = lengths.row_for_rel_path(rel_path) if lengths is not None else None
+    return row is None or wordcount(text) >= lengths.bands[row.band].floor
+
+
+def authored_paths(
+    blind_root: Path,
+    slots: Iterable[Slot],
+    fams: Iterable[HouseFormFamily],
+    lengths: Optional[Lengths] = None,
+) -> Set[str]:
     """Slots whose document exists and counts as authored.
 
     A derived contract counts only once it clears `derivation_problems`
     against its house form, so a seeded copy an interrupted wave never edited
     is re-dispatched by the resumed build rather than skipped.
+
+    A house form counts only once it is fit to seed from: no placeholder token
+    (a skeleton's `[draft part …]` markers), at least one blank, and — given
+    `lengths` — at least its band's floor. Otherwise its derived slots would be
+    dispatched and seeded with an unfinished form, and nothing afterwards could
+    tell (a contract written from scratch clears `derivation_problems` too).
     """
+    fams = list(fams)
     parent = house_form_of(fams)
+    forms = house_form_paths(fams)
     done = set()
     for slot in slots:
         path = blind_root / slot.rel_path
         if not path.is_file():
+            continue
+        if slot.rel_path in forms and not _house_form_finished(
+            path.read_text(encoding="utf-8"), slot.rel_path, lengths
+        ):
             continue
         house = parent.get(slot.rel_path)
         if house is not None:

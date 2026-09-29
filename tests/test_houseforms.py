@@ -203,6 +203,70 @@ def test_authored_paths_excludes_a_seeded_but_unedited_derived_contract(tmp_path
     assert fams[0].derived[0].rel_path in authored_paths(blind, slots, fams)
 
 
+SKELETON = """# Standard Terms of Supply
+
+[Template — not for signature]
+
+## Definitions and interpretation
+
+[draft part 1 — Definitions and interpretation, ~1,400 words]
+
+## Supply
+
+[draft part 2 — Supply, ~2,400 words]
+"""
+
+
+def test_a_skeleton_house_form_is_not_authored_and_its_derived_slots_are_neither_ready_nor_seeded(tmp_path):
+    # Final review Important 2: a skeleton counted as authored the moment it was on disk, so its
+    # derived slots were dispatched and seeded with the skeleton — and gate 21 cannot tell a
+    # from-scratch contract from a derived one afterwards.
+    slots = slots_for("M")
+    fams = families(slots, LENGTHS)
+    fam = fams[0]
+    blind = tmp_path / "data-room"
+    _write_house_form(blind, fam, SKELETON)
+
+    done = authored_paths(blind, slots, fams)
+    assert fam.house_form.rel_path not in done
+    ready = ready_slots(slots, done, fams)
+    assert not {d.rel_path for d in fam.derived} & {s.rel_path for s in ready}
+    assert seed(blind, fams, only={s.rel_path for s in ready}) == []
+    assert not any((blind / d.rel_path).exists() for d in fam.derived)
+
+
+def test_a_house_form_with_no_blanks_is_not_authored(tmp_path):
+    slots = slots_for("M")
+    fams = families(slots, LENGTHS)
+    blind = tmp_path / "data-room"
+    _write_house_form(blind, fams[0], filled())
+    assert fams[0].house_form.rel_path not in authored_paths(blind, slots, fams)
+
+
+def test_with_lengths_a_house_form_counts_as_authored_only_at_its_band_floor(tmp_path):
+    from synthvdr.qa.depth import wordcount
+
+    slots = slots_for("M")
+    fams = families(slots, LENGTHS)
+    fam = fams[0]
+    blind = tmp_path / "data-room"
+    floor = LENGTHS.bands[LENGTHS.row_for_rel_path(fam.house_form.rel_path).band].floor
+
+    _write_house_form(blind, fam, HOUSE)
+    assert fam.house_form.rel_path in authored_paths(blind, slots, fams), "no lengths, no floor"
+    assert fam.house_form.rel_path not in authored_paths(blind, slots, fams, LENGTHS)
+
+    under = HOUSE + "\n" + " ".join(["clause"] * (floor - wordcount(HOUSE) - 1)) + "\n"
+    assert wordcount(under) == floor - 1
+    _write_house_form(blind, fam, under)
+    assert fam.house_form.rel_path not in authored_paths(blind, slots, fams, LENGTHS)
+
+    at = under + "clause\n"
+    assert wordcount(at) == floor
+    _write_house_form(blind, fam, at)
+    assert fam.house_form.rel_path in authored_paths(blind, slots, fams, LENGTHS)
+
+
 def test_ready_slots_defers_a_derived_slot_until_its_house_form_is_authored():
     slots = slots_for("M")
     fams = families(slots, LENGTHS)

@@ -204,7 +204,7 @@ load_bearing = load_bearing_paths(
     load_findings(Path("_key/findings.yaml")), load_distractors(Path("_key/distractors.yaml"))
 ) | figure_homes
 order = authoring_order(slots, load_bearing, house_form_paths(fams))
-done = authored_paths(blind, slots, fams)
+done = authored_paths(blind, slots, fams, lengths)
 weights = {s.rel_path: lengths.weight_for(s.rel_path) for s in slots}
 batches = batch_by_budget(ready_slots(order, done, fams), weights, budget=40_000, max_batches=5)
 seeded = seed(blind, fams, only={s.rel_path for batch in batches for s in batch})
@@ -224,8 +224,10 @@ Each batch's model follows the rule in Step 2 — Sonnet only when nothing in th
 house forms are benign, so a house-form-only batch runs on Sonnet.
 
 `authored_paths` is the resume pointer in a long room: a document counts as written once it is on
-disk, and a derived contract only once it clears gate 21's checks — so a copy an interrupted wave
-seeded and never edited is dispatched again, not skipped. A long `S` room takes about two waves,
+disk, a house form only once it is finished — no `[draft part …]` marker or other placeholder, at
+least one blank, and at its band's floor — and a derived contract only once it clears gate 21's
+checks. So a copy an interrupted wave seeded and never edited is dispatched again, not skipped, and
+no derived contract is seeded from a skeleton or a house form still short of its floor. A long `S` room takes about two waves,
 `M` about five, `L` about nineteen — more if the findings registry pulls agreements forward.
 
 **Note the exact wave this batch selection first has to reach past the load-bearing block,

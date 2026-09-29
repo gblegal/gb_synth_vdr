@@ -2549,6 +2549,21 @@ def _long_m_room(tmp_path):
     return tmp_path
 
 
+def _write_finished_house_forms(room, fams, lengths):
+    """Every family's house form, written as `authored_paths` counts one finished: blanks, no
+    placeholder token, and at least its band's floor."""
+    sentence = "The Supplier shall supply the Goods in accordance with these standard terms. "
+    for fam in fams:
+        floor = lengths.bands[lengths.row_for_rel_path(fam.house_form.rel_path).band].floor
+        path = room / "data-room" / fam.house_form.rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "# Standard terms\n\n[Template — not for signature]\n\n[Customer name]\n\n"
+            + sentence * (floor // len(sentence.split()) + 1)
+            + "\n"
+        )
+
+
 def test_build_skill_long_wave_selection_puts_house_forms_first_then_seeds(tmp_path, monkeypatch, capsys):
     from synthvdr.houseforms import families, house_form_paths
     from synthvdr.lengths import load_lengths
@@ -2592,13 +2607,21 @@ def test_build_skill_long_wave_selection_puts_house_forms_first_then_seeds(tmp_p
     assert any(spa in paths and header.endswith("model: opus") for header, paths in models.items())
 
     lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
-    for fam in families(read_slot_manifest(room / "_key" / "anchors.csv"), lengths):
+    fams = families(read_slot_manifest(room / "_key" / "anchors.csv"), lengths)
+    for fam in fams:
         path = room / "data-room" / fam.house_form.rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("# Standard terms\n\n[Template — not for signature]\n\n[Customer name]\n")
     exec(compile(fence, "vdr-build long wave selection", "exec"), {})
     second = capsys.readouterr().out
-    assert "Derived contract" in second and "seeded 0 derived" not in second
+    # Final review Important 2: a house form under its band floor is not finished, so nothing
+    # is dispatched or seeded from it yet.
+    assert "Derived contract" not in second and "seeded 0 derived" in second
+
+    _write_finished_house_forms(room, fams, lengths)
+    exec(compile(fence, "vdr-build long wave selection", "exec"), {})
+    third = capsys.readouterr().out
+    assert "Derived contract" in third and "seeded 0 derived" not in third
 
 
 def test_build_skill_length_check_refuses_a_changed_doc_length(tmp_path, monkeypatch):
