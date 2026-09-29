@@ -32,7 +32,7 @@ distractors = load_distractors(Path("_key/distractors.yaml"))
 # The canonical home of a fact-sheet figure is load-bearing too — see below. Nothing
 # declares these, so name them yourself, as rel_paths.
 figure_homes = {
-    "18_transaction/18.2_spa/18.2.1_spa-01.md",   # enterprise value, earn-out
+    "18_transaction/18.2_draft-spa/18.2.1_draft-spa-01.md",   # enterprise value, earn-out
 }
 load_bearing = load_bearing_paths(findings, distractors) | figure_homes
 
@@ -188,9 +188,13 @@ blind = Path(conf.get("BLIND_TREE"))
 lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
 slots = read_slot_manifest(Path("_key/anchors.csv"))
 fams = families(slots, lengths)
+# The same figure homes you named in the ordering fence above — gate 13 needs them early.
+figure_homes = {
+    "18_transaction/18.2_draft-spa/18.2.1_draft-spa-01.md",   # enterprise value, earn-out
+}
 load_bearing = load_bearing_paths(
     load_findings(Path("_key/findings.yaml")), load_distractors(Path("_key/distractors.yaml"))
-)
+) | figure_homes
 order = authoring_order(slots, load_bearing, house_form_paths(fams))
 done = authored_paths(blind, slots, fams)
 weights = {s.rel_path: lengths.weight_for(s.rel_path) for s in slots}
@@ -218,9 +222,10 @@ which behave differently before and after it. Note what this now means, because 
 tier-based reading got it wrong in a way that mattered: anchors-complete is the point every
 document the answer key depends on has been authored, so it is exactly the point the flagged
 tree becomes worth building and gate 8's carrier census becomes a real check. Under the tier
-rule it fired while findings' evidence was still unwritten. For an `M`-size room (200 documents) this is usually wave 1
-itself, since a wave's capacity (up to 250 slots) already exceeds the whole room; for `L`/`XL`
-it can take several waves. Record it in `_key/build-status.md`'s `## Anchors` line the moment
+rule it fired while findings' evidence was still unwritten. In a short room, for an `M`-size room (200 documents) this is
+usually wave 1 itself, since a wave's capacity (up to 250 slots) already exceeds the whole room; for `L`/`XL`
+it can take several waves. A long room batches by weighted words instead, so its waves are far smaller and
+it usually takes several. Record it in `_key/build-status.md`'s `## Anchors` line the moment
 it happens (see the literal shape in "Resume" above) — this is the one fact Steps 6–8 need
 that nothing else in the file states directly.
 
@@ -318,19 +323,23 @@ regenerate `_key/name-check.md` through `render_name_check_md` before the next w
 authored, and re-dispatch whatever came up short:
 
 ```python
+# gate 10's own check, in either length mode
 from pathlib import Path
 from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
+from synthvdr.lengths import load_lengths
 from synthvdr.qa.depth import depth_problems
-from synthvdr.roomconf import load_room_conf
+from synthvdr.roomconf import doc_length, load_room_conf
 from synthvdr.slots import read_anchors_csv
 
 conf = load_room_conf(Path("room.conf"))
+pack = load_domain(DEFAULT_DOMAIN_ROOT)
 
 problems = depth_problems(
     sorted(Path(conf.get("BLIND_TREE")).rglob("*.md")),
     read_anchors_csv(Path("_key/anchors.csv")),
-    load_domain(DEFAULT_DOMAIN_ROOT),
+    pack,
     conf.get("FLAG_STRING_1"),
+    load_lengths(DEFAULT_DOMAIN_ROOT, pack) if doc_length(conf) == "long" else None,
 )
 for problem in problems:
     print(problem)

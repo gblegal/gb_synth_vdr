@@ -2502,7 +2502,7 @@ def _long_m_room(tmp_path):
 
 
 def test_build_skill_long_wave_selection_puts_house_forms_first_then_seeds(tmp_path, monkeypatch, capsys):
-    from synthvdr.houseforms import families
+    from synthvdr.houseforms import families, house_form_paths
     from synthvdr.lengths import load_lengths
     from synthvdr.slots import read_slot_manifest
 
@@ -2513,6 +2513,16 @@ def test_build_skill_long_wave_selection_puts_house_forms_first_then_seeds(tmp_p
     exec(compile(fence, "vdr-build long wave selection", "exec"), {})
     first = capsys.readouterr().out
     assert "## Author 1" in first and "seeded 0 derived" in first
+
+    # The canonical home of a fact-sheet figure is load-bearing in a long room too (gate 13
+    # needs it early): after the house forms, it is the first slot batched.
+    assert "figure_homes" in fence
+    spa = "18_transaction/18.2_draft-spa/18.2.1_draft-spa-01.md"
+    lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
+    house = house_form_paths(families(read_slot_manifest(room / "_key" / "anchors.csv"), lengths))
+    batched = [line[2:].split(" (tier")[0] for line in first.splitlines() if line.startswith("- ")]
+    assert spa in batched, "the SPA (a canonical figure home) is not in the first wave"
+    assert [path for path in batched if path not in house][0] == spa
 
     lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
     for fam in families(read_slot_manifest(room / "_key" / "anchors.csv"), lengths):
@@ -2544,3 +2554,19 @@ def test_author_agent_carries_the_long_form_protocol():
     text = _read(ROOT / "agents" / "vdr-author.md")
     for phrase in ("[draft part", "one part per Edit", "Definitions last", "House form", "Derived contract", "## "):
         assert phrase in text, f"vdr-author.md no longer says {phrase!r}"
+
+
+def test_build_skill_step_3_depth_fence_holds_a_long_agreement_to_its_band_floor(tmp_path, monkeypatch, capsys):
+    """Gate 10 passes `lengths` in a long room; the mid-wave check is 'gate 10's own check' and
+    must too, or a 3,000-word principal agreement passes the wave against its 10,000 floor."""
+    room = _long_m_room(tmp_path)
+    monkeypatch.chdir(room)
+    doc = room / "data-room" / "05_commercial" / "5.1_customer-contracts" / "5.1.2_customer-contracts-02.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("The parties agree to the terms set out in this agreement. " * 300)  # 3,000 words
+    fence = _fence_containing(_read(BUILD_SKILL), "# gate 10's own check, in either length mode")
+
+    exec(compile(fence, "vdr-build step 3 depth check", "exec"), {})
+
+    out = capsys.readouterr().out
+    assert "5.1.2: " in out and "floor 10000" in out

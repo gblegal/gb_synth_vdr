@@ -146,11 +146,16 @@ agreement. Everything above still applies; so does this.
 1. **Skeleton first.** One Write: the title as `# `, then every outline part as a `## ` heading in
    the order given, and under each a single marker line — `[draft part 4 — Warranties, ~2,400
    words]`. The `[draft` prefix is on the depth lint's placeholder list, so a part you never fill
-   fails the build instead of shipping.
+   fails the build instead of shipping. `## ` headings are reserved for the outline's parts, named
+   as the outline names them: inside a part, use `###` and deeper for schedules and sub-headings,
+   because the re-dispatch tool counts words per `## ` heading.
 2. **Fill one part per Edit.** Replace one marker with that part's text per call, and never write
    more than about 5,000 words in one call. Number clauses as English-law drafting does — 1, 1.1,
-   1.1.1, (a), (i). The cross-reference gate knows clause numbering from a reference to another
-   document in the room; refer to another document by its title and slot number, as elsewhere.
+   1.1.1, (a), (i). Refer to the agreement's own provisions as "clause 4.2.1", "paragraph 3.1.2" or
+   "Schedule 2" — never a bare three-part number in running text, which the cross-reference gate
+   reads as a reference to another document in the room. A number opening its own line as clause
+   numbering is fine (after a list bullet or table pipe it is not). Refer to another document by
+   its title and slot number, as elsewhere.
 3. **Definitions last.** Fill the definitions part after the operative parts, so every defined term
    is used and every term used is defined.
 4. **Contain the checklist.** Every clause on the brief's list appears, almost all in ordinary,
