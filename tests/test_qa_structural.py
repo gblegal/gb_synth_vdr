@@ -187,6 +187,8 @@ ACCOUNTS = "data-room/02_financial/2.1_statutory-accounts/2.1.1_accounts.md"
         "## 1.9.9 Delivery",
         "**1.9.9** Delivery",
         "in accordance with Part 2.4.1(a)(ii)",
+        "as set out in clauses 1.9.7, 1.9.8, and 1.9.9",
+        "under clauses 1.9.7 and/or 1.9.9",
     ],
 )
 def test_gate_09_does_not_read_clause_numbering_as_a_slot_reference(room, text):

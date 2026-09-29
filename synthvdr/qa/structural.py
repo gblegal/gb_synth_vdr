@@ -62,7 +62,7 @@ CLAUSE_WORDS = (
 )
 _CLAUSE_CONTEXT = re.compile(
     r"\b(?:" + "|".join(re.escape(word) for word in CLAUSE_WORDS) + r")s?\s+"
-    r"(?:\d[\d.]*(?:\([a-z0-9]+\))*\s*(?:,|and|or|to|–|-)\s*)*$",
+    r"(?:\d[\d.]*(?:\([a-z0-9]+\))*\s*(?:(?:,\s*)?(?:and/or|and|or|to)|,|–|-)\s*)*$",
     re.IGNORECASE,
 )
 # A clause number opening its line: bare, after heading hashes, or directly
