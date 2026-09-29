@@ -2265,6 +2265,41 @@ def test_build_skill_hands_authors_the_cast_with_roles_not_bare_names():
     )
 
 
+def test_author_agent_keeps_bold_and_notes_from_pointing_at_the_evidence():
+    """Project Frithcombe (29 Sep 2026): all nineteen gates passed while a blind judge
+    ranked section 05's documents last on 11 of 16 slots — the room pointed at its findings
+    by form. Gate 20 now warns on the three tells, but only after the wave, and the author
+    prompt said nothing about bold or notes, so authors wrote them freely. This pins the
+    three rules at source, verbatim: bold only structurally or on every item of a kind; no
+    note sending the reader forward along a trail; one note habit whatever a document's
+    class. Each is phrased against what the author can see — its own batch and the registry
+    rows it was handed — because it is never given the full key.
+
+    The backward-note exception is pinned in both files in the same words: an author told
+    to cut a note that `/vdr-qa`'s remediation says to keep would strip the room of what
+    real data rooms do, and the fix would then have to put it back.
+    """
+    author = _normalise_whitespace(_read(ROOT / "agents" / "vdr-author.md"))
+    qa = _normalise_whitespace(_read(ROOT / "skills" / "vdr-qa" / "SKILL.md"))
+
+    assert "never on the planted clause, figure or answer alone" in author
+    assert "to a later document named on the same registry row" in author
+    assert (
+        "Never add a note because a document carries a finding, or leave one off because "
+        "it does" in author
+    ), "the reverse tell — notes stripped from the evidence alone — must be ruled out too"
+
+    exception = "back to the contract it arises under"
+    assert exception in author and exception in qa, (
+        "the author prompt and /vdr-qa's Gate 20 WARN entry must keep the same exception "
+        "for a letter's note back to its contract"
+    )
+    assert "Gate 20" in author and "**Gate 20 WARN**" in qa, (
+        "the author prompt should name the gate that measures it, and /vdr-qa should still "
+        "carry the entry that says how to fix what it finds"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Step 3's two renders — the degraded scan tree, wired into the sanctioned
 # build. These read the SHIPPED command lines out of the skill, in the same
