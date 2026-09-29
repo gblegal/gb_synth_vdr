@@ -21,6 +21,12 @@ and the room does not pass.
 
 - **The room a tool sees** — a realistic seller-side data room, organised into the usual
   twenty diligence workstreams, anywhere from 40 documents up to 2,000.
+- **Agreements at their real length, if you ask.** By default a room's contracts run to a few
+  pages. Set `DOC_LENGTH="long"` at scoping (it is fixed at Gate A) and every agreement is
+  written at the length its type really runs to — 4 pages for an NDA, 20–30 for a commercial
+  contract, 35–45 for an SPA, lease or facility — with the target's own customer contracts
+  derived from its standard terms, as in a real room. It costs roughly three and a half times
+  the authoring.
 - **The answer key** — every planted problem: what it is, how serious it is, and which
   documents carry the evidence.
 - **The same room, annotated** — an identical copy in which each document carrying a
@@ -52,7 +58,7 @@ Six commands, run in order. Each stops when its own job is done; nothing runs ah
    paperwork: no note to the buyer, no highlighting, nothing that gives the game away. The
    evidence-carrying documents are written first, so an interrupted build never leaves a
    problem half-planted. Stop it and start it again and it picks up where it left off.
-4. **`/vdr-qa`** — runs nineteen automated checks over the room: that the answers have not
+4. **`/vdr-qa`** — runs twenty-one automated checks over the room: that the answers have not
    leaked into the documents, that nothing is a half-finished stub, that every figure
    agrees with every other, and that each planted problem really was reachable by a
    reviewer who was never told where to look.
@@ -120,3 +126,8 @@ which is what the MIT licence asks for.
 Naming SALI here identifies the source of the vocabulary. It is not a claim of endorsement
 or certification by the SALI Alliance, and neither this project nor gb-docclass's taxonomy
 is a conformant LMSS implementation.
+
+The length bands and agreement outlines behind `DOC_LENGTH="long"` were calibrated against
+public contract corpora — CUAD and MAUD from The Atticus Project, and the Stanford Material
+Contracts Corpus, all CC BY 4.0. This repository carries only statistics derived from them and the
+names of CUAD's clause categories, restated in English-law terms; none of their contract text.
