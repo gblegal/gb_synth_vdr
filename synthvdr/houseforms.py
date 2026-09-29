@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -84,17 +85,26 @@ def _paragraphs(text: str) -> List[str]:
 def deviation_count(house_text: str, derived_text: str) -> int:
     """How many paragraphs a derived contract changed beyond its blanks.
 
-    Standard paragraphs (no blank in the house form) edited or deleted, plus
-    new paragraphs beyond the one-for-one replacement of the house form's
-    blank-carrying paragraphs.
+    The two paragraph lists are aligned by difflib. A blank-carrying house
+    paragraph replaced or removed is a fill, not a deviation; every edited or
+    deleted standard paragraph counts once, and every inserted paragraph
+    counts once.
     """
     house = _paragraphs(house_text)
     derived = _paragraphs(derived_text)
-    house_set, derived_set = set(house), set(derived)
-    blank_paragraphs = sum(1 for p in house if BLANK.search(p))
-    changed = sum(1 for p in house if not BLANK.search(p) and p not in derived_set)
-    novel = sum(1 for p in derived if p not in house_set)
-    return changed + max(0, novel - blank_paragraphs)
+    count = 0
+    for tag, i1, i2, j1, j2 in SequenceMatcher(None, house, derived, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        if tag in ("delete", "replace"):
+            # Edited or deleted standard paragraphs; a blank-carrying one is a fill.
+            count += sum(1 for paragraph in house[i1:i2] if not BLANK.search(paragraph))
+        if tag == "insert":
+            count += j2 - j1
+        if tag == "replace":
+            # Paragraphs beyond the one-for-one replacement of the replaced span.
+            count += max(0, (j2 - j1) - (i2 - i1))
+    return count
 
 
 def derivation_problems(house_text: str, derived_text: str) -> List[str]:

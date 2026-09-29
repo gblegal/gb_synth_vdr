@@ -4,6 +4,7 @@ from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
 from synthvdr.houseforms import (
     authored_paths,
     blanks,
+    deviation_count,
     derivation_problems,
     families,
     house_form_of,
@@ -108,6 +109,34 @@ def test_crlf_derived_contract_is_compared_by_paragraph_not_line_ending():
         "six months'", "three months'"
     )
     assert derivation_problems(HOUSE, derived.replace("\n", "\r\n")) == []
+
+
+def test_an_edit_counts_once_not_twice():
+    derived = filled().replace("within thirty days", "within sixty days")
+    assert deviation_count(HOUSE, derived) == 1
+
+
+def test_a_single_insertion_counts_once():
+    derived = filled() + (
+        "\n1.5 The Customer may audit the Supplier's compliance with the Service Levels once in "
+        "each contract year on not less than twenty business days' written notice.\n"
+    )
+    assert deviation_count(HOUSE, derived) == 1
+
+
+def test_one_edit_with_the_banner_rewritten_is_still_one_deviation():
+    derived = (
+        HOUSE.replace("[Template — not for signature]", "Dated 1 March 2026")
+        .replace("[Supplier name]", "Ashfell Components Limited")
+        .replace("[Customer name]", "Brindlecote Retail Limited")
+        .replace("[Commencement Date]", "1 March 2026")
+        .replace("within thirty days", "within sixty days")
+    )
+    assert deviation_count(HOUSE, derived) == 1
+    assert derivation_problems(HOUSE, derived) == [
+        "differs from its house form in 1 paragraph(s) beyond the blanks; "
+        "at least 2 negotiated changes are required"
+    ]
 
 
 def _write_house_form(blind, fam, text=HOUSE):
