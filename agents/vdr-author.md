@@ -176,9 +176,12 @@ agreement. Everything above still applies; so does this.
    finding and no distractor, ever.
 9. **Derived contract.** If the brief says "Derived contract", the house form has already been
    copied to your slot's path. Read it, then Edit: fill every blank, rewrite the schedules for this
-   counterparty, and make two to five benign negotiated changes — a longer payment term, a mutual
-   cap, an added audit right. Plant a finding or distractor deviation only where your registry rows
-   say so, so that "differs from the standard terms" never means "is the finding".
+   counterparty, and make at least two negotiated changes to clauses that carry no blank in the
+   house form — two to five, all benign: a longer payment term, a mutual cap, an added audit right.
+   An edit inside a clause that carries a blank counts as filling it, not as a change, so a payment
+   term reading "within [Payment Days] days" is not where a negotiated change goes. Plant a finding
+   or distractor deviation only where your registry rows say so, so that "differs from the standard
+   terms" never means "is the finding".
 10. **Re-dispatch.** Sent back with a measured count, you will be told which parts are thin. Extend
     those parts with Edit; do not rewrite the document.
 

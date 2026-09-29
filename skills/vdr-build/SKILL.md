@@ -440,6 +440,30 @@ so a wave that clears this check clears gate 10 in Step 7 for the same reason. N
 reports placeholder tokens and slots missing from `anchors.csv` — both are real defects in
 what the author returned, and both are fixed the same way, by re-dispatching.
 
+In a long room, run gate 21's derivation check beside it, over every derived contract on disk, and
+re-dispatch whatever it prints on the same terms as a depth shortfall:
+
+```python
+# every derived contract against its house form (long rooms)
+from pathlib import Path
+from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
+from synthvdr.houseforms import derivation_problems, families, house_form_of
+from synthvdr.lengths import load_lengths
+from synthvdr.roomconf import doc_length, load_room_conf
+from synthvdr.slots import read_slot_manifest
+
+conf = load_room_conf(Path("room.conf"))
+blind = Path(conf.get("BLIND_TREE"))
+if doc_length(conf) == "long":
+    lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
+    fams = families(read_slot_manifest(Path("_key/anchors.csv")), lengths)
+    for derived, house in sorted(house_form_of(fams).items()):
+        if (blind / derived).is_file() and (blind / house).is_file():
+            house_text = (blind / house).read_text(encoding="utf-8")
+            for problem in derivation_problems(house_text, (blind / derived).read_text(encoding="utf-8")):
+                print(f"{derived}: {problem}")
+```
+
 ### 3.1 Check the wave's labels against the classifier's list — eval rooms only
 
 Run this in the same breath as the depth check, and re-dispatch on the same terms:

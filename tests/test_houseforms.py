@@ -85,7 +85,7 @@ def test_an_unedited_copy_fails_on_its_blanks_and_its_sameness():
 def test_filling_the_blanks_alone_is_not_enough():
     assert derivation_problems(HOUSE, filled()) == [
         "differs from its house form in 0 paragraph(s) beyond the blanks; "
-        "at least 2 negotiated changes are required"
+        "at least 2 negotiated changes to clauses that carry no blank in the house form are required"
     ]
 
 
@@ -135,7 +135,7 @@ def test_one_edit_with_the_banner_rewritten_is_still_one_deviation():
     assert deviation_count(HOUSE, derived) == 1
     assert derivation_problems(HOUSE, derived) == [
         "differs from its house form in 1 paragraph(s) beyond the blanks; "
-        "at least 2 negotiated changes are required"
+        "at least 2 negotiated changes to clauses that carry no blank in the house form are required"
     ]
 
 

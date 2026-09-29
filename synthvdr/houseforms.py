@@ -119,7 +119,8 @@ def derivation_problems(house_text: str, derived_text: str) -> List[str]:
     if count < MIN_DEVIATIONS:
         problems.append(
             f"differs from its house form in {count} paragraph(s) beyond the blanks; "
-            f"at least {MIN_DEVIATIONS} negotiated changes are required"
+            f"at least {MIN_DEVIATIONS} negotiated changes to clauses that carry no blank in the "
+            "house form are required"
         )
     return problems
 

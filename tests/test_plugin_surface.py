@@ -2687,6 +2687,37 @@ def test_author_agent_carries_the_long_form_protocol():
     text = _read(ROOT / "agents" / "vdr-author.md")
     for phrase in ("[draft part", "one part per Edit", "Definitions last", "House form", "Derived contract", "## "):
         assert phrase in text, f"vdr-author.md no longer says {phrase!r}"
+    # Final review Important 3: the rule gate 21 measures, stated where the author reads it.
+    assert "at least two negotiated changes to clauses that carry no blank in the house form" in " ".join(text.split())
+
+
+def test_build_skill_step_3_checks_every_derived_contract_against_its_house_form(tmp_path, monkeypatch, capsys):
+    """Final review Important 3: a derived contract whose changes all landed in blank-carrying
+    clauses fails gate 21 only at Step 7. Step 3 runs the same check beside the depth check,
+    so it is re-dispatched inside the wave that caused it."""
+    from synthvdr.houseforms import families
+    from synthvdr.lengths import load_lengths
+    from synthvdr.slots import read_slot_manifest
+
+    from .test_houseforms import HOUSE
+
+    room = _long_m_room(tmp_path)
+    monkeypatch.chdir(room)
+    lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
+    fam = families(read_slot_manifest(room / "_key" / "anchors.csv"), lengths)[0]
+    for slot in (fam.house_form, fam.derived[0]):
+        path = room / "data-room" / slot.rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(HOUSE)  # the house form, and an unedited seeded copy of it
+    step_3 = _read(BUILD_SKILL)
+    step_3 = step_3[step_3.index("### 3. Measure"):step_3.index("### 3.1")]
+    fence = _fence_containing(step_3, "# every derived contract against its house form")
+
+    exec(compile(fence, "vdr-build step 3 derivation check", "exec"), {})
+
+    out = capsys.readouterr().out
+    assert fam.derived[0].rel_path in out and "blank" in out, out
+    assert fam.house_form.rel_path + ":" not in out
 
 
 def test_build_skill_step_3_depth_fence_holds_a_long_agreement_to_its_band_floor(tmp_path, monkeypatch, capsys):

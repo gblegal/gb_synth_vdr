@@ -216,8 +216,10 @@ def brief_for(rel_path: str, lengths: Lengths, parents: Mapping[str, str]) -> Op
     if rel_path in parents:
         lines.append(
             f"Derived contract: {parents[rel_path]} has been copied to this path. Edit it — fill "
-            "every bracketed blank, rewrite the schedules, and make two to five benign negotiated "
-            "changes; plant a finding or distractor only where your registry rows say so."
+            "every bracketed blank, rewrite the schedules, and make at least two negotiated changes "
+            "to clauses that carry no blank in the house form (two to five, all benign: an edit "
+            "inside a clause with a blank counts as filling it, not as a change); plant a finding "
+            "or distractor only where your registry rows say so."
         )
     elif rel_path in set(parents.values()):
         lines.append(
