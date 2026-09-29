@@ -1,4 +1,4 @@
-"""Gate 20: a long document must not repeat itself.
+"""Gate 21: a long document must not repeat itself.
 
 Padding is the failure mode long documents invite — an author short of a floor
 pastes a clause again rather than writing the next one — and gate 10's floor
@@ -79,10 +79,10 @@ def duplicate_paragraph_share(text: str) -> float:
     return duplicated / total
 
 
-def gate_20_repetition(ctx):
+def gate_21_repetition(ctx):
     files = [p for p in ctx.blind_files() if p.suffix == ".md"]
     if not files:
-        return skip("20", "repetition", f"{ctx.blind_root} absent or empty")
+        return skip("21", "repetition", f"{ctx.blind_root} absent or empty")
     flag = ctx.conf.get("FLAG_STRING_1")
     checked = 0
     problems = []
@@ -96,11 +96,11 @@ def gate_20_repetition(ctx):
             rel = path.relative_to(ctx.blind_root).as_posix()
             problems.append(f"{rel}: {share:.0%} of its words repeat an earlier paragraph")
     if problems:
-        return fail("20", "repetition", truncated(problems) + f" (limit {THRESHOLD:.0%})")
+        return fail("21", "repetition", truncated(problems) + f" (limit {THRESHOLD:.0%})")
     if not checked:
-        return ok("20", "repetition", f"no document reaches {MIN_WORDS:,} words; nothing to measure")
+        return ok("21", "repetition", f"no document reaches {MIN_WORDS:,} words; nothing to measure")
     return ok(
-        "20",
+        "21",
         "repetition",
         f"{checked} document(s) of {MIN_WORDS:,}+ words, none above {THRESHOLD:.0%} repeated paragraphs",
     )

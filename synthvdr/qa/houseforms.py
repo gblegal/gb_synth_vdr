@@ -1,4 +1,4 @@
-"""Gate 21: house forms are benign, have blanks, and are genuinely derived from.
+"""Gate 22: house forms are benign, have blanks, and are genuinely derived from.
 
 Long rooms only. A short room — or a long one in which no target-paper
 subfolder has three slots — PASSes with the reason, following gate 19: under
@@ -19,16 +19,16 @@ from .runner import fail, ok, skip, truncated
 NAME = "house forms"
 
 
-def gate_21_house_forms(ctx):
+def gate_22_house_forms(ctx):
     if doc_length(ctx.conf) != "long":
-        return ok("21", NAME, "not applicable — DOC_LENGTH is short")
+        return ok("22", NAME, "not applicable — DOC_LENGTH is short")
     anchors = ctx.key_root / "anchors.csv"
     if not anchors.is_file():
-        return skip("21", NAME, "_key/anchors.csv absent")
+        return skip("22", NAME, "_key/anchors.csv absent")
     lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
     fams = families(read_slot_manifest(anchors), lengths)
     if not fams:
-        return ok("21", NAME, "not applicable — no target-paper subfolder in this room has three or more slots")
+        return ok("22", NAME, "not applicable — no target-paper subfolder in this room has three or more slots")
 
     problems = [
         f"{path}: answer-key evidence on a house form"
@@ -50,5 +50,5 @@ def gate_21_house_forms(ctx):
             for problem in derivation_problems(house_text, path.read_text(encoding="utf-8")):
                 problems.append(f"{slot.slot_id}: {problem}")
     if problems:
-        return fail("21", NAME, truncated(problems))
-    return ok("21", NAME, f"{len(fams)} families, {derived_checked} derived contract(s) checked")
+        return fail("22", NAME, truncated(problems))
+    return ok("22", NAME, f"{len(fams)} families, {derived_checked} derived contract(s) checked")

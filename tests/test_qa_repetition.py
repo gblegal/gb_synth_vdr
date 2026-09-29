@@ -4,7 +4,7 @@ from synthvdr.qa.repetition import (
     MIN_WORDS,
     THRESHOLD,
     duplicate_paragraph_share,
-    gate_20_repetition,
+    gate_21_repetition,
     paragraphs,
 )
 from synthvdr.qa.runner import GateContext
@@ -103,7 +103,7 @@ def write(room, name, text):
 
 def test_gate_passes_a_room_with_no_long_document_and_says_so(room):
     write(room, "5.1.1_customer-contracts-01.md", "\n\n".join(para(i) for i in range(10)))
-    result = gate_20_repetition(ctx_for(room))
+    result = gate_21_repetition(ctx_for(room))
     assert result.status == "PASS"
     assert f"no document reaches {MIN_WORDS:,} words" in result.detail
 
@@ -111,7 +111,7 @@ def test_gate_passes_a_room_with_no_long_document_and_says_so(room):
 def test_gate_fails_a_padded_long_document_and_names_it(room):
     body = [para(i) for i in range(60)]
     write(room, "5.1.1_customer-contracts-01.md", "\n\n".join(body + body[:30]))
-    result = gate_20_repetition(ctx_for(room))
+    result = gate_21_repetition(ctx_for(room))
     assert result.status == "FAIL"
     assert "5.1.1_customer-contracts-01.md" in result.detail
 
@@ -119,9 +119,9 @@ def test_gate_fails_a_padded_long_document_and_names_it(room):
 def test_gate_ignores_a_padded_short_document(room):
     body = [para(i) for i in range(20)]
     write(room, "5.1.1_customer-contracts-01.md", "\n\n".join(body + body))
-    assert gate_20_repetition(ctx_for(room)).status == "PASS"
+    assert gate_21_repetition(ctx_for(room)).status == "PASS"
 
 
 def test_gate_skips_when_the_blind_tree_is_empty(tmp_path):
     (tmp_path / "room.conf").write_text(CONF)
-    assert gate_20_repetition(ctx_for(tmp_path)).status == "SKIP"
+    assert gate_21_repetition(ctx_for(tmp_path)).status == "SKIP"

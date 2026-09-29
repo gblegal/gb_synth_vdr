@@ -303,7 +303,7 @@ else:
 Anything in the first list must move to one of that subfolder's later slots — a contract derived
 from the house form, where the finding is a negotiated deviation. A house form is benign by rule:
 a clause planted in it would be copied into every derived contract with evidence declared on none
-of them, and gate 21 fails the room. Long agreements are natural homes for clause-level findings,
+of them, and gate 22 fails the room. Long agreements are natural homes for clause-level findings,
 but do not steer every finding into one: length is fixed before this registry exists, and most
 long documents stay benign.
 

@@ -566,10 +566,34 @@ Two metric caveats apply to any band quoted against it — markdown table pipes 
 words, so table-heavy documents read 15–25% longer than their prose, and CJK characters are
 counted at half weight rather than as a single token.
 
-Gate 20 (§7) now catches one kind of padding — it fails when more than 10% of a 2,000+-word
+Gate 21 (§7) now catches one kind of padding — it fails when more than 10% of a 2,000+-word
 document's words sit in repeated paragraphs of 30+ tokens (verbatim repeats of an earlier
 paragraph) — and nothing else: a paraphrased restatement, front matter and long cross-reference
 lists still pass.
+
+**Gate 20 reads form, never meaning, and so it only warns.** It was calibrated on one room,
+Project Frithcombe, by scoring its flags on the pre-fix room against the lines the fix
+(ll_vdr_08, `fix/section-05-tells`) actually took bold off: 123 lines flagged, 60% of them
+lines the fix changed, catching 67% of what it changed. The thresholds and that measurement
+live together in `synthvdr.qa.tells.THRESHOLDS`. Four kinds of bold it cannot judge. A
+counterparty's own demand or position bolded in its own letter — a trustee's, a regulator's,
+an insurer's — is legitimate, and the fix kept it; a mark-up that shows the other side's
+insertions in bold is convention. The gate reports both, for a human to wave through. The
+other two pass unreported: bold sharing fewer than three words with the finding's title and
+substance (a spotlight on a bare "**45 days**" or "**£0.25m**", roughly a third of what the
+fix removed), and a wholly bold line of figures, which reads as a subtotal (Frithcombe's
+bolded "Other income — insurance recovery on the 2025 recall", and its 1.6, among them).
+
+**A pointer's direction is only as good as the documents' header dates.** `document_date`
+takes a "Dated"/"Date:" line or the first full date in a document's first 25 lines, and a
+header whose first date is a period start, a quoted expiry or a filing date turns a pointer
+round: Frithcombe's IP register reads as 2020, so the 2021 distribution agreement's note to
+it reads backward, though the fix removed it as a forward signpost. Same-dated documents are
+reported as lateral and not counted; a document with no readable date falls back to the
+answer key, where pointing at a finding's `source` is backward. Only a wholly italic
+paragraph is a note: an index number cited in ordinary prose, as a Q&A answer's "copies are
+at 7.2.1", is never a pointer, which is right for Q&A and means a signpost written in roman
+text passes.
 
 ---
 
@@ -599,7 +623,7 @@ English-law headings; the SPA's part shares follow MAUD's measured split (defini
 warranties 15–26%, covenants 20–29%, boilerplate 9–13%), adapted to a UK warranties schedule, tax
 covenant and limitations schedule. No corpus text is in this repository.
 
-**Gate 20's threshold (0.10) and paragraph floor (30 tokens).** Duplicate-paragraph share, measured
+**Gate 21's threshold (0.10) and paragraph floor (30 tokens).** Duplicate-paragraph share, measured
 29 September 2026 at the 30-token floor: MAUD max 0.020 (5 agreements), Model Commercial Lease and
 NVCA forms max 0.004 (4), Frithcombe max 0.000 (127 documents of 2,000+ words by `wordcount`),
 `ll_vdr_09` max 0.068 (512); an SPA with its second half repeated 0.331, one paragraph pasted five

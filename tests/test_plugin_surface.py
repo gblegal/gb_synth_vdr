@@ -1673,7 +1673,7 @@ def test_build_skill_excepts_every_gate_that_cannot_pass_before_the_audit():
         "gate 19 is not in the named mid-build exception list — an eval room's key is "
         "written at package time, so every build wave necessarily fails it"
     )
-    assert "four of the twenty-one gates" in excepted, (
+    assert "four of the twenty-two gates" in excepted, (
         "the exception list says how many gates it names; that count has drifted"
     )
 
@@ -2265,6 +2265,41 @@ def test_build_skill_hands_authors_the_cast_with_roles_not_bare_names():
     )
 
 
+def test_author_agent_keeps_bold_and_notes_from_pointing_at_the_evidence():
+    """Project Frithcombe (29 Sep 2026): all nineteen gates passed while a blind judge
+    ranked section 05's documents last on 11 of 16 slots — the room pointed at its findings
+    by form. Gate 20 now warns on the three tells, but only after the wave, and the author
+    prompt said nothing about bold or notes, so authors wrote them freely. This pins the
+    three rules at source, verbatim: bold only structurally or on every item of a kind; no
+    note sending the reader forward along a trail; one note habit whatever a document's
+    class. Each is phrased against what the author can see — its own batch and the registry
+    rows it was handed — because it is never given the full key.
+
+    The backward-note exception is pinned in both files in the same words: an author told
+    to cut a note that `/vdr-qa`'s remediation says to keep would strip the room of what
+    real data rooms do, and the fix would then have to put it back.
+    """
+    author = _normalise_whitespace(_read(ROOT / "agents" / "vdr-author.md"))
+    qa = _normalise_whitespace(_read(ROOT / "skills" / "vdr-qa" / "SKILL.md"))
+
+    assert "never on the planted clause, figure or answer alone" in author
+    assert "to a later document named on the same registry row" in author
+    assert (
+        "Never add a note because a document carries a finding, or leave one off because "
+        "it does" in author
+    ), "the reverse tell — notes stripped from the evidence alone — must be ruled out too"
+
+    exception = "back to the contract it arises under"
+    assert exception in author and exception in qa, (
+        "the author prompt and /vdr-qa's Gate 20 WARN entry must keep the same exception "
+        "for a letter's note back to its contract"
+    )
+    assert "Gate 20" in author and "**Gate 20 WARN**" in qa, (
+        "the author prompt should name the gate that measures it, and /vdr-qa should still "
+        "carry the entry that says how to fix what it finds"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Step 3's two renders — the degraded scan tree, wired into the sanctioned
 # build. These read the SHIPPED command lines out of the skill, in the same
@@ -2471,10 +2506,11 @@ def test_package_skill_estimates_scan_size_before_any_render_in_a_long_room():
     assert report_lines[-1] < text.index("## 4."), "the rendered-page report belongs in step 3"
 
 
-def test_qa_skill_lists_twenty_one_gates():
+def test_qa_skill_lists_twenty_two_gates():
     text = _read(ROOT / "skills" / "vdr-qa" / "SKILL.md")
-    assert "twenty-one" in text and "nineteen" not in text
-    assert "| 20 | Repetition |" in text and "| 21 | House forms |" in text
+    assert "twenty-two" in text and "nineteen" not in text
+    assert "| 20 | Evidence tells |" in text
+    assert "| 21 | Repetition |" in text and "| 22 | House forms |" in text
 
 
 def test_findings_skill_lists_long_slots_and_house_forms_before_evidence_is_placed():
@@ -2687,13 +2723,13 @@ def test_author_agent_carries_the_long_form_protocol():
     text = _read(ROOT / "agents" / "vdr-author.md")
     for phrase in ("[draft part", "one part per Edit", "Definitions last", "House form", "Derived contract", "## "):
         assert phrase in text, f"vdr-author.md no longer says {phrase!r}"
-    # Final review Important 3: the rule gate 21 measures, stated where the author reads it.
+    # Final review Important 3: the rule gate 22 measures, stated where the author reads it.
     assert "at least two negotiated changes to clauses that carry no blank in the house form" in " ".join(text.split())
 
 
 def test_build_skill_step_3_checks_every_derived_contract_against_its_house_form(tmp_path, monkeypatch, capsys):
     """Final review Important 3: a derived contract whose changes all landed in blank-carrying
-    clauses fails gate 21 only at Step 7. Step 3 runs the same check beside the depth check,
+    clauses fails gate 22 only at Step 7. Step 3 runs the same check beside the depth check,
     so it is re-dispatched inside the wave that caused it."""
     from synthvdr.houseforms import families
     from synthvdr.lengths import load_lengths
@@ -2777,7 +2813,7 @@ def test_build_skill_step_8_writes_the_length_at_wave_1():
     assert "At wave 1, also write `## Length` with the room's DOC_LENGTH (see Resume)." in " ".join(step_8.split())
 
 
-def test_docs_name_gates_20_and_21_where_the_gates_are_listed():
+def test_docs_name_gates_21_and_22_where_the_gates_are_listed():
     """Final review M7."""
     architecture = _read(ROOT / "ARCHITECTURE.md")
     qa_row = next(line for line in architecture.splitlines() if line.startswith("| `qa/` |"))

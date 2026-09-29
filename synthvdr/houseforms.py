@@ -7,11 +7,11 @@ slots, the ordinal-1 slot is an unsigned standard-terms document and every
 later slot is an executed contract on those terms — the way a real room's
 customer contracts are mostly the target's own paper. Spec §7.
 
-A house form is benign by rule (gate 21 enforces it): a clause planted in one
+A house form is benign by rule (gate 22 enforces it): a clause planted in one
 would propagate into every derived contract with evidence declared on none.
 
 Nothing here imports synthvdr.qa at module level: it imports this module for
-gate 21, so the one use of it (`authored_paths`) imports lazily.
+gate 22, so the one use of it (`authored_paths`) imports lazily.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def families(slots: Iterable[Slot], lengths: Lengths) -> List[HouseFormFamily]:
     """Every house-form family in a room, sorted by slot id.
 
     A pure function of the slot manifest and lengths.yaml, so /vdr-findings,
-    /vdr-build and gate 21 all see the same families without a file recording
+    /vdr-build and gate 22 all see the same families without a file recording
     them. Independent of the order `slots` arrives in.
     """
     groups: Dict[Tuple[str, str], List[Slot]] = {}
@@ -155,7 +155,7 @@ def seed(blind_root: Path, fams: Iterable[HouseFormFamily], only: Optional[Set[s
 def _house_form_finished(text: str, rel_path: str, lengths: Optional[Lengths]) -> bool:
     """Whether a house form on disk is fit to be copied into its derived slots.
 
-    Lazy import: synthvdr.qa imports this module for gate 21.
+    Lazy import: synthvdr.qa imports this module for gate 22.
     """
     from .qa.depth import _placeholder_hit, wordcount
 

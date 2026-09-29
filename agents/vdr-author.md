@@ -24,6 +24,32 @@ Every slot is exactly one of:
 3. **Distractor** — carries a trap that looks alarming and is fine. No annotation. The
    resolving evidence lives in another document as ordinary, unannotated content.
 
+## Bold and data-room notes
+
+A document's words carry its evidence; its form must not. If a reader can pick out the
+finding and distractor documents by their bold or their notes, without reading either, the
+room has handed over its answers: Project Frithcombe passed every other gate while a blind
+judge ranked its section-05 documents last on 11 of 16 slots for exactly this. You know which
+of your slots are finding-touching or distractors, and the registry rows you were handed
+name the other documents in each one's trail. Hold all three rules against those:
+
+- **Bold only as structure, or on every item of a kind.** Headings, run-in labels, defined
+  terms, party and signature labels and totals are structure. Beyond those, bold every
+  answer in a Q&A log or every exclusion in a W&I draft, or none — never on the planted
+  clause, figure or answer alone.
+- **No note that sends the reader along a trail.** In a finding-touching or distractor
+  document, write no data-room note ("*Data room note: see 7.2.3*") pointing to a later
+  document named on the same registry row — the correspondence a contract leads to, the
+  resolution of an alarm. The reader should reach it by working through the room. A letter's
+  note back to the contract it arises under is what real rooms carry, and is fine.
+- **One note habit across the section.** Your finding and distractor documents carry the same
+  kind of notes as your benign documents in that section, or none if they carry none. Never
+  add a note because a document carries a finding, or leave one off because it does: a
+  missing note sorts a section as surely as a present one.
+
+Gate 20 warns on all three after the wave, and `/vdr-qa`'s entry for it is how they come
+out — a correction pass that writing them right in the first place avoids.
+
 ## Label every document you write
 
 Whatever its class, every document in your batch gets one `labels:` row in
@@ -175,7 +201,7 @@ agreement. Everything above still applies; so does this.
    Blanks are bracketed labels starting with a capital letter — `[Customer name]`,
    `[Commencement Date]` — and one is `[Template — not for signature]`. Square brackets in a house
    form are for blanks only: never `[Reserved]`, `[Not used]` or `[Signature page follows]`, because
-   gate 21 reads any bracket opening with a capital letter as a blank, and a derived contract that
+   gate 22 reads any bracket opening with a capital letter as a blank, and a derived contract that
    keeps one fails. The depth lint fails any of these anywhere in a finished document, whatever the
    case: "lorem ipsum", "todo", "tbd", "xxx", "fixme", "placeholder", and a bracket opening
    "[insert", "[draft", "[tbc" or "[tba" — so never `[TBD]`, `[XXX]` or `£[TBD]`, and never a blank

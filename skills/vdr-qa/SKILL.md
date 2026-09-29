@@ -1,6 +1,6 @@
 ---
 name: vdr-qa
-description: Run the twenty-one room QA gates — index regeneration, leakage sweeps, twin invariants, carrier census, cross-references, depth lint, subset, fact-sheet and answer-key reconciliation, unchecked-name sweep, discoverability, render parity, the room's exemplar/eval role declaration, the eval room's classification answer key, repetition in long documents (gate 20) and house forms (gate 21). Use --strict before any release.
+description: Run the twenty-two room QA gates — index regeneration, leakage sweeps, twin invariants, carrier census, cross-references, depth lint, subset, fact-sheet and answer-key reconciliation, unchecked-name sweep, discoverability, render parity, the room's exemplar/eval role declaration, the eval room's classification answer key, the evidence-tells warning (gate 20 — bold, pointer notes and note asymmetry that give away which documents carry findings), repetition in long documents (gate 21) and house forms (gate 22). Use --strict before any release.
 ---
 
 # Run the QA gates
@@ -12,7 +12,7 @@ python3 -m synthvdr.qa --room . --strict   # release mode
 
 `tools/check.sh` is a thin wrapper around the same command (`bash tools/check.sh .` and
 `bash tools/check.sh . --strict`) — use whichever is at hand, they run the identical
-twenty-one gates.
+twenty-two gates.
 
 If either form reports that it cannot import `synthvdr`, the room's `python3` is not the
 interpreter the package was installed into — which is the normal case, since a room is a
@@ -44,7 +44,7 @@ could not even be loaded (missing or malformed `room.conf`, or a malformed answe
 distinct from `1` so you can tell "the checks found a problem" apart from "the checks
 never ran."
 
-## The twenty-one gates, briefly
+## The twenty-two gates, briefly
 
 | # | Gate | Checks |
 |---|---|---|
@@ -67,8 +67,9 @@ never ran."
 | 17 | Answer-key validation | `_key/findings.yaml`/`_key/distractors.yaml` pass `synthvdr.schema.validate()`'s own internal-consistency checks |
 | 18 | Room role declared | `room.conf` says whether this is an `exemplar` room (may teach the downstream classifier) or an `eval` room (only ever scores it) — the train/test split, enforced |
 | 19 | Eval answer key | An `eval` room carries `_key/answer-key.jsonl`, and the file matches a fresh rebuild from `_key/labels.yaml` — an eval room without a complete, current classification key cannot score the classifier, which is the one thing it exists to do. Exemplar rooms pass: the key does not apply to them |
-| 20 | Repetition | No document of 2,000+ words has more than 10% of its words in paragraphs that repeat an earlier paragraph — padding, which gate 10's floor cannot see |
-| 21 | House forms | Long rooms: no answer-key evidence on a house form, every house form has blanks, every derived contract fills them and differs by at least two negotiated changes. Short rooms pass: it does not apply |
+| 20 | Evidence tells | Form that gives away which documents carry findings or distractors: bold on some comparable items of an evidence document and not all, landing on the finding's words; italic notes pointing forward from one document of a chain to a later one; a section whose evidence documents carry index-citing notes and whose other documents do not, or the reverse. **WARN only** — never fails a run, including `--strict` |
+| 21 | Repetition | No document of 2,000+ words has more than 10% of its words in paragraphs that repeat an earlier paragraph — padding, which gate 10's floor cannot see |
+| 22 | House forms | Long rooms: no answer-key evidence on a house form, every house form has blanks, every derived contract fills them and differs by at least two negotiated changes. Short rooms pass: it does not apply |
 
 ## Common failures and what they mean
 
@@ -117,9 +118,21 @@ never ran."
   longer matches the room. Run `python3 -m synthvdr answerkey --room .` (see
   `/vdr-package` Step 5); if the rebuild itself refuses, the message names the
   unlabelled document or the label that points at nothing.
-- **Gate 20** — an author padded to reach a floor. Re-dispatch the document naming the repeated
+- **Gate 20 WARN** — the room points at its own answers by form rather than by words.
+  Nothing has leaked, so gates 3–5 and 12 pass, but a blind reader can still sort evidence
+  from filler: in Project Frithcombe this is what ranked section 05 last on 11 of 16 slots
+  while every other gate passed. Work through the detail by kind. **Selective bold**: take
+  the bold off and leave the words, unless the document bolds that kind of item
+  throughout or it is a counterparty's own demand in its own letter, which the gate cannot
+  tell apart and reports anyway. **Forward pointer**: cut the note's reference to the
+  later document; keep a letter's note back to the contract it arises under (reported,
+  never counted). **Note asymmetry**: even the notes up — give the bare side ordinary
+  notes to benign siblings rather than deleting notes from the other, because removing
+  notes outright makes their absence the tell. Thresholds live in
+  `synthvdr.qa.tells.THRESHOLDS`; the calibration behind them is in its docstring.
+- **Gate 21** — an author padded to reach a floor. Re-dispatch the document naming the repeated
   paragraphs; never raise the threshold to let it through.
-- **Gate 21** — usually a derived contract an interrupted wave seeded and nobody edited. Resuming
+- **Gate 22** — usually a derived contract an interrupted wave seeded and nobody edited. Resuming
   `/vdr-build` re-dispatches it.
 
 ## Before release

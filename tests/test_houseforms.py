@@ -219,7 +219,7 @@ SKELETON = """# Standard Terms of Supply
 
 def test_a_skeleton_house_form_is_not_authored_and_its_derived_slots_are_neither_ready_nor_seeded(tmp_path):
     # Final review Important 2: a skeleton counted as authored the moment it was on disk, so its
-    # derived slots were dispatched and seeded with the skeleton — and gate 21 cannot tell a
+    # derived slots were dispatched and seeded with the skeleton — and gate 22 cannot tell a
     # from-scratch contract from a derived one afterwards.
     slots = slots_for("M")
     fams = families(slots, LENGTHS)

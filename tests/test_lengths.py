@@ -165,6 +165,6 @@ def test_brief_tells_a_house_form_and_a_derived_contract_apart():
     assert "House form" in brief_for(house, LENGTHS, PARENTS)
     derived_brief = brief_for(derived, LENGTHS, PARENTS)
     assert "Derived contract" in derived_brief and house in derived_brief
-    # Final review Important 3: gate 21 counts an edit inside a blank-carrying paragraph as a
+    # Final review Important 3: gate 22 counts an edit inside a blank-carrying paragraph as a
     # fill, so the brief must say where the negotiated changes go.
     assert "at least two negotiated changes to clauses that carry no blank in the house form" in derived_brief

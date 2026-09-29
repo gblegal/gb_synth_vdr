@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Print the duplicate-paragraph distribution gate 20 is calibrated against.
+"""Print the duplicate-paragraph distribution gate 21 is calibrated against.
 
 Usage: python3 tools/calibrate_repetition.py DIR [DIR ...]
 
 Each DIR is walked for .md and .txt files: a room's blind tree, or the
 full_contract_txt/ directory of a CUAD download you supply — no corpus text is
-kept in this repository. Documents under gate 20's MIN_WORDS are left out,
+kept in this repository. Documents under gate 21's MIN_WORDS are left out,
 exactly as the gate leaves them out. Read-only: it never writes anywhere.
 """
 
@@ -39,7 +39,7 @@ def summarise(directory: Path) -> str:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Gate 20 calibration: duplicate-paragraph share.")
+    parser = argparse.ArgumentParser(description="Gate 21 calibration: duplicate-paragraph share.")
     parser.add_argument("dirs", nargs="+", type=Path)
     args = parser.parse_args(argv)
     missing = [str(d) for d in args.dirs if not d.is_dir()]
