@@ -69,12 +69,18 @@ def scan_estimate(blind_root: Path, scanned_csv: Path, words_per_page: int = 500
     with scanned_csv.open(newline="", encoding="utf-8") as handle:
         slots = [row["slot"].strip() for row in csv.DictReader(handle)]
     pages = 0
+    missing = 0
     for slot in slots:
-        source = blind_root / Path(slot).with_suffix(".md")
+        source = blind_root / f"{slot}.md"
         if source.is_file():
             pages += max(1, math.ceil(wordcount(source.read_text(encoding="utf-8")) / words_per_page))
-    return (
+        else:
+            missing += 1
+    result = (
         f"{len(slots)} scanned document(s), ~{pages} page(s): the pristine scans come to "
         f"~{pages * PRISTINE_KB_PER_SCANNED_PAGE / 1024:.1f}MB; an office-profile tree would "
         f"add ~{pages * OFFICE_MB_PER_SCANNED_PAGE:.0f}MB"
     )
+    if missing:
+        result += f"; {missing} listed slot(s) have no source under {blind_root}"
+    return result
