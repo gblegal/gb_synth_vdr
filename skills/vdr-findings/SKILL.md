@@ -249,6 +249,39 @@ rehoming the evidence or by rescoping the room, never later: the alternative is
 `build_flagged_tree` raising `TwinError` waves into the build, on a registry the user has
 already signed off.
 
+In a long room, check nothing lands on a house form — the target's unsigned standard terms, which
+every other contract in its subfolder is copied from:
+
+```python
+from pathlib import Path
+from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
+from synthvdr.houseforms import families, house_form_paths
+from synthvdr.lengths import load_lengths
+from synthvdr.roomconf import doc_length, load_room_conf
+from synthvdr.schema import load_bearing_paths, load_distractors, load_findings
+from synthvdr.slots import read_slot_manifest
+
+conf = load_room_conf(Path("room.conf"))
+if doc_length(conf) == "long":
+    lengths = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
+    slots = read_slot_manifest(Path("_key/anchors.csv"))
+    fams = families(slots, lengths)
+    evidence = load_bearing_paths(
+        load_findings(Path("_key/findings.yaml")), load_distractors(Path("_key/distractors.yaml"))
+    )
+    print(sorted(evidence & house_form_paths(fams)) or f"no evidence on any of {len(fams)} house forms")
+    print(f"{sum(1 for s in slots if lengths.row_for_rel_path(s.rel_path))} long-form agreement slots")
+else:
+    print("DOC_LENGTH short — no house forms")
+```
+
+Anything in the first list must move to one of that subfolder's later slots — a contract derived
+from the house form, where the finding is a negotiated deviation. A house form is benign by rule:
+a clause planted in it would be copied into every derived contract with evidence declared on none
+of them, and gate 21 fails the room. Long agreements are natural homes for clause-level findings,
+but do not steer every finding into one: length is fixed before this registry exists, and most
+long documents stay benign.
+
 ## 6. Put the classifier's document list in the room — eval rooms only
 
 `/vdr-build` hands every author this list and checks each wave's labels against it, so it

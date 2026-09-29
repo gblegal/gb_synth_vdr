@@ -77,6 +77,20 @@ print(str(len(slots)) + ' document(s) will render as scans:')
 for slot in slots:
     print('  ' + slot)
 "
+```
+
+In a long room, price the scans before rendering them. `scanned.csv` lists whole documents and
+draws only on evidence, which in a long room is often a 20–45-page agreement:
+
+```bash
+python3 -m synthvdr pages --room . --estimate
+```
+
+It prints the listed documents' estimated pages and both scan trees' size, at the measured
+~141KB per pristine scanned page and ~2.26MB per `office` page (known issue #1). If the office
+figure is more than the room can carry, say so to the user before rendering.
+
+```bash
 node "${CLAUDE_PLUGIN_ROOT}/synthvdr/render/pdf.mjs" \
   --src data-room --out data-room-pdf --scan-profile none
 ```
@@ -88,6 +102,16 @@ differs.)
 the next sub-step adds a second render at a different profile and the pair only reads as a
 pair if both say which one they are. It is the behaviour this renderer has always had: PNG
 screenshots, a sub-degree rotation per page, nothing else.
+
+In a long room, once the PDF tree exists, check what the agreements actually rendered to:
+
+```bash
+python3 -m synthvdr pages --room .
+```
+
+One line per length band — min, median and max pages against the band's range, and how many fell
+below it. It is not a gate; it is the check on `lengths.yaml`'s 500 words per page. Report any band
+with documents below its range to the user rather than re-rendering.
 
 **Write `_key/scanned.csv` before running `pdf.mjs`, not after** — the renderer reads it once,
 at startup, and a room whose manifest arrives later just renders every page as live text with

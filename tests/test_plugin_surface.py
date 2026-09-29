@@ -2372,8 +2372,48 @@ def test_scope_skill_names_every_room_conf_key_an_author_must_decide():
     text = _read(ROOT / "skills" / "vdr-scope" / "SKILL.md")
     step_5 = text[text.index("## 5. Write `room.conf`"):text.index("## Gate A")]
 
-    missing = [key for key in REQUIRED_KEYS + ("ROOM_ROLE", "SCAN_PROFILE") if key not in step_5]
+    missing = [key for key in REQUIRED_KEYS + ("ROOM_ROLE", "SCAN_PROFILE", "DOC_LENGTH") if key not in step_5]
     assert not missing, (
         f"/vdr-scope step 5 never names {missing} — an author following it "
         "writes a room.conf without them"
     )
+
+
+def test_scope_skill_offers_doc_length_beside_the_size_default():
+    body = _scope_body()
+    step_1 = body[body.index("## 1. One question"):body.index("## 2. Generate the structure")]
+    assert "DOC_LENGTH" in step_1 and "long" in step_1
+    assert "3.4" in step_1, "step 1 must state the cost multiple before the user opts in"
+
+
+def test_scope_skill_profile_print_uses_slot_floor_so_long_floors_show():
+    body = _scope_body()
+    step_2 = body[body.index("## 2. Generate the structure"):body.index("## 3. Invent the deal")]
+    assert "slot_floor" in step_2 and "load_lengths" in step_2
+
+
+def test_scope_skill_invents_supporting_counterparties_in_long_mode():
+    body = _scope_body()
+    step_3 = body[body.index("## 3. Invent the deal"):body.index("## 4. Check every invented name")]
+    for role in ("account bank", "escrow agent", "security agent", "insurer"):
+        assert role in step_3, f"step 3 does not name the {role} a long room's boilerplate needs"
+
+
+def test_findings_skill_checks_no_evidence_lands_on_a_house_form():
+    text = _read(ROOT / "skills" / "vdr-findings" / "SKILL.md")
+    step_5 = text[text.index("## 5. Validate"):text.index("## 6.")]
+    assert "house_form_paths" in step_5 and "load_bearing_paths" in step_5
+
+
+def test_package_skill_estimates_scan_size_before_any_render_in_a_long_room():
+    text = PACKAGE_SKILL.read_text(encoding="utf-8")
+    estimate_at = text.index("synthvdr pages --room . --estimate")
+    for match in PDF_MJS_INVOCATION.finditer(text):
+        assert estimate_at < match.start(), "the scan-size estimate must come before the render it prices"
+    assert "synthvdr pages --room ." in text[text.index("## 3."):text.index("## 4.")]
+
+
+def test_qa_skill_lists_twenty_one_gates():
+    text = _read(ROOT / "skills" / "vdr-qa" / "SKILL.md")
+    assert "twenty-one" in text and "nineteen" not in text
+    assert "| 20 | Repetition |" in text and "| 21 | House forms |" in text
