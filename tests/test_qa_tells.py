@@ -23,6 +23,7 @@ from synthvdr.qa.tells import (
     italic_notes,
     note_asymmetry,
     scan_room,
+    section_habits,
     selective_bold,
 )
 from synthvdr.qa.runner import warn
@@ -461,13 +462,41 @@ def test_a_room_with_all_three_tells_warns_and_names_each(tmp_path):
 def test_the_fixed_room_passes_with_its_backward_pointer_reported(tmp_path):
     result = gate_20_tells(_room(tmp_path, fixed_room()))
     assert result.status == "PASS", result.detail
-    assert "not counted: 1 backward and 0 same-date pointer(s)" in result.detail
+    assert "not counted: 1 backward, 0 same-date and 0 section-habit pointer(s)" in result.detail
 
 
 def test_bold_in_a_document_outside_every_chain_is_not_the_gates_business(tmp_path):
     documents = fixed_room()
     documents[OTHERS[0]] = "Dated 1 March 2023\n\n" + clauses(BOLD_CLAUSE) + note("5.1.2")
     assert gate_20_tells(_room(tmp_path, documents)).status == "PASS"
+
+
+def test_section_habits_are_the_documents_most_of_a_section_cites():
+    cites = {
+        "06_ip/a.md": ["6.1.1"],
+        "06_ip/b.md": ["6.1.1", "6.2.1"],
+        "06_ip/c.md": [],
+        "06_ip/d.md": ["6.1.1"],
+        "07_it/e.md": ["6.1.1"],
+    }
+    assert section_habits(cites, 0.5, 1) == {"06_ip": {"6.1.1"}, "07_it": {"6.1.1"}}
+    assert section_habits(cites, 0.25, 1) == {"06_ip": {"6.1.1", "6.2.1"}, "07_it": {"6.1.1"}}
+    # One document is the whole of section 07, but a habit of one is not a habit.
+    assert section_habits(cites, 0.5, 3) == {"06_ip": {"6.1.1"}, "07_it": set()}
+
+
+def test_a_forward_pointer_that_follows_the_sections_habit_is_not_counted(tmp_path):
+    # Frithcombe's section 06 closes most documents with the IP register's index
+    # number; the register is IP-2's evidence, so each copy read as a signpost.
+    documents = tells_room()
+    for rel in OTHERS:
+        documents[rel] = "Dated 1 March 2023\n\n" + clauses() + note("5.1.5")
+    result = gate_20_tells(_room(tmp_path, documents))
+    assert "1 forward pointer note(s): 5.1.6:" in result.detail
+    assert "0 same-date and 1 section-habit pointer(s)" in result.detail
+    # Four of seven documents cite 5.1.5: a habit at half, not at three in five.
+    stricter = gate_20_tells(_room(tmp_path, documents), Thresholds(hub_share=0.6))
+    assert "2 forward pointer note(s)" in stricter.detail
 
 
 def test_a_section_too_small_to_judge_is_not_judged(tmp_path):

@@ -593,7 +593,10 @@ reported as lateral and not counted; a document with no readable date falls back
 answer key, where pointing at a finding's `source` is backward. Only a wholly italic
 paragraph is a note: an index number cited in ordinary prose, as a Q&A answer's "copies are
 at 7.2.1", is never a pointer, which is right for Q&A and means a signpost written in roman
-text passes.
+text passes. A forward pointer to a document at least half the section's notes cite — the
+IP register, the draft SPA — is the section's habit and is not counted either, which costs a
+note that singles out a hub the section also cites by habit: only the rest of that note, if
+it has any, is still counted.
 
 ---
 

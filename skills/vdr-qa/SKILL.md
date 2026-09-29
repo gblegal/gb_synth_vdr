@@ -125,8 +125,9 @@ never ran."
   the bold off and leave the words, unless the document bolds that kind of item
   throughout or it is a counterparty's own demand in its own letter, which the gate cannot
   tell apart and reports anyway. **Forward pointer**: cut the note's reference to the
-  later document; keep a letter's note back to the contract it arises under (reported,
-  never counted). **Note asymmetry**: even the notes up — give the bare side ordinary
+  later document; keep a letter's note back to the contract it arises under, and a
+  note to a document most of the section's notes cite anyway, such as the IP register
+  (both reported, never counted). **Note asymmetry**: even the notes up — give the bare side ordinary
   notes to benign siblings rather than deleting notes from the other, because removing
   notes outright makes their absence the tell. Thresholds live in
   `synthvdr.qa.tells.THRESHOLDS`; the calibration behind them is in its docstring.

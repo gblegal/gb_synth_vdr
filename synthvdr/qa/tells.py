@@ -19,7 +19,9 @@ and this gate looks for each.
    from one document of a finding or distractor to another. A FORWARD pointer —
    to the later correspondence, claim or resolution — is the tell. A BACKWARD
    pointer, from correspondence to the contract it arises under, is what a real
-   data room does; it is reported and not counted.
+   data room does; it is reported and not counted. So is a pointer to a document
+   most of the section's notes cite anyway, like the IP register: that is the
+   section's habit, and says nothing about the document it sits on.
 3. Note-presence asymmetry. Where a section's evidence documents carry an
    index-citing note and their neighbours do not, or the reverse, the note's
    presence alone sorts the section. The reverse is not hypothetical: removing
@@ -42,7 +44,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, FrozenSet, Iterable, List, NamedTuple, Optional, Tuple
+from typing import Dict, FrozenSet, Iterable, List, NamedTuple, Optional, Set, Tuple
 
 from ..names import ENTITY_SUFFIXES
 from .runner import ok, skip, truncated, warn
@@ -78,12 +80,24 @@ class Thresholds:
     lopsided sections sit at 69, 82 and 100 points; the next widest, 06, at 39.
     `note_min_docs` is the fewest documents on EACH side for a section to be
     judged at all: one evidence document with a note against none without is
-    100% against 0% and says nothing.
+    100% against 0% and says nothing. It is also the fewest documents that must
+    cite a target before citing it can be a section's habit.
+
+    `hub_share` is the share of a section's documents whose notes must cite a
+    document before a forward pointer to it counts as the section's habit, not
+    a signpost (see `section_habits`). On Frithcombe as frozen at v2.0.0 it
+    discounts 4 of 33 forward pointers — the IP register and the draft SPA,
+    cited by 78% of section 06 and 60% of section 18 — and 40% or 60% would
+    discount the same four within one. What it costs: on the pre-fix room it
+    also discounts the register half of the trade mark notice's note, which
+    the fix removed. The note is still flagged, by its other half, a pointer to
+    the Irish licence.
     """
 
     bold_overlap: int = 3
     note_gap: float = 0.5
     note_min_docs: int = 3
+    hub_share: float = 0.5
 
 
 THRESHOLDS = Thresholds()
@@ -557,7 +571,7 @@ _DATED_LINE = re.compile(r"^\W*(dated|date)\b", re.I)
 # the body is full of other documents' dates.
 _HEADER_LINES = 25
 
-FORWARD, BACKWARD, LATERAL = "forward", "backward", "lateral"
+FORWARD, BACKWARD, LATERAL, HABIT = "forward", "backward", "lateral", "habit"
 
 
 def document_date(text: str) -> Optional[Tuple[int, int, int]]:
@@ -706,8 +720,40 @@ class TellReport:
 
     @property
     def count(self) -> int:
-        """Tells, as the gate counts them. Backward and lateral pointers are not."""
+        """Tells, as the gate counts them. Backward, lateral and habit pointers are not."""
         return len(self.bold) + len(self.forward) + len(self.asymmetric)
+
+
+def section_habits(
+    cites: Dict[str, Iterable[str]], share: float, min_docs: int
+) -> Dict[str, Set[str]]:
+    """Per top-level section, the documents its notes cite so often that citing
+    them is the section's habit rather than a choice: at least `share` of the
+    section's documents, and never fewer than `min_docs` — in a two-document
+    section one note is half the section, and a habit of one is not a habit.
+    `cites` maps every markdown document's path to the slots its notes cite.
+
+    A pointer to such a document says nothing about the document it sits on.
+    Frithcombe's section 06 closes 78% of its documents with "Group register of
+    intellectual property rights: 6.1.1", and the register is IP-2's
+    corroboration, so the trade mark notice's copy of that line read as a forward
+    signpost — the one a re-audit had removed, back in the room only because the
+    section's notes were later made to follow one convention.
+    """
+    documents: Dict[str, int] = {}
+    counts: Dict[str, Dict[str, int]] = {}
+    for rel, slots in cites.items():
+        section = rel.split("/", 1)[0]
+        documents[section] = documents.get(section, 0) + 1
+        per_slot = counts.setdefault(section, {})
+        for slot in set(slots):
+            per_slot[slot] = per_slot.get(slot, 0) + 1
+    return {
+        section: {
+            slot for slot, n in per_slot.items() if n >= max(min_docs, share * documents[section])
+        }
+        for section, per_slot in counts.items()
+    }
 
 
 def _slot(rel: str) -> str:
@@ -731,15 +777,22 @@ def scan_room(
     dates = {rel: document_date(texts[rel]) for rel in roles if rel in texts}
 
     report = TellReport()
-    has_note: Dict[str, bool] = {}
+    cites: Dict[str, List[str]] = {}
     for rel, text in texts.items():
         notes = italic_notes(text, _slot(rel), slot_paths)
-        has_note[rel] = bool(notes)
+        cites[rel] = [slot for note in notes for slot in note.cites]
         if rel in roles:
             report.bold.extend(selective_bold(rel, text, roles[rel], thresholds))
             report.pointers.extend(pointers(rel, notes, roles, slot_paths, dates))
 
-    report.sections = note_asymmetry(has_note, roles)
+    habits = section_habits(cites, thresholds.hub_share, thresholds.note_min_docs)
+    report.pointers = [
+        p._replace(direction=HABIT)
+        if p.direction == FORWARD and _slot(p.target) in habits.get(p.rel.split("/", 1)[0], ())
+        else p
+        for p in report.pointers
+    ]
+    report.sections = note_asymmetry({rel: bool(slots) for rel, slots in cites.items()}, roles)
     report.asymmetric = [
         s
         for s in report.sections
@@ -757,9 +810,13 @@ def gate_20_tells(ctx, thresholds: Thresholds = THRESHOLDS):
         return skip("20", NAME, f"{ctx.blind_root} absent or holds no markdown")
 
     report = scan_room(ctx.blind_root, roles, thresholds)
-    backward = sum(1 for p in report.pointers if p.direction == BACKWARD)
-    lateral = sum(1 for p in report.pointers if p.direction == LATERAL)
-    kept = f"not counted: {backward} backward and {lateral} same-date pointer(s)"
+    backward, lateral, habit = (
+        sum(1 for p in report.pointers if p.direction == kind) for kind in (BACKWARD, LATERAL, HABIT)
+    )
+    kept = (
+        f"not counted: {backward} backward, {lateral} same-date and {habit} section-habit "
+        "pointer(s)"
+    )
     if not report.count:
         return ok("20", NAME, f"no selective bold, forward pointer or note asymmetry; {kept}")
 
