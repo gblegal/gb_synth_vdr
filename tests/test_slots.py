@@ -250,3 +250,18 @@ def test_the_full_pack_is_unaffected_by_the_subset_machinery():
     slots = build_slot_manifest(pack, SIZE_PRESETS["XS"])
     assert len(slots) == 40
     assert len({s.section_dir for s in slots}) == 20
+
+
+def test_authoring_order_puts_house_forms_ahead_of_load_bearing_slots():
+    _, slots = manifest("M")
+    house_forms = {slots[-1].rel_path}
+    load_bearing = {slots[0].rel_path}
+    ordered = authoring_order(slots, load_bearing, house_forms)
+    assert ordered[0].rel_path in house_forms
+    assert ordered[1].rel_path in load_bearing
+
+
+def test_authoring_order_without_house_forms_is_what_it_always_was():
+    _, slots = manifest("M")
+    load_bearing = {slots[-1].rel_path, slots[-3].rel_path}
+    assert authoring_order(slots, load_bearing) == authoring_order(slots, load_bearing, frozenset())

@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Set
+from typing import AbstractSet, Dict, Iterable, List, Set
 
 from .domain import DomainPack, Section
 
@@ -161,7 +161,9 @@ def read_slot_manifest(path: Path) -> List[Slot]:
     return slots
 
 
-def authoring_order(slots: Iterable[Slot], load_bearing: Set[str]) -> List[Slot]:
+def authoring_order(
+    slots: Iterable[Slot], load_bearing: Set[str], house_forms: AbstractSet[str] = frozenset()
+) -> List[Slot]:
     """The order `/vdr-build` authors a room in: load-bearing slots first, tier
     order after, manifest order within each group.
 
@@ -193,10 +195,17 @@ def authoring_order(slots: Iterable[Slot], load_bearing: Set[str]) -> List[Slot]
     after /vdr-findings was the alternative considered; it was rejected because
     tier drives gate 10's depth floors, so promoting a slot silently changes
     what an existing room is required to meet.
+
+    HOUSE FORMS FIRST, in a long room (`house_forms` is
+    `synthvdr.houseforms.house_form_paths(...)`): a derived contract is seeded
+    from its house form, so the house form must exist before any derived
+    slot — including a load-bearing one — can be authored. Empty by default,
+    which leaves the order exactly what it was before house forms existed.
     """
     return sorted(
         slots,
         key=lambda slot: (
+            slot.rel_path not in house_forms,
             slot.rel_path not in load_bearing,
             slot.tier != TIER_ANCHOR,
         ),
