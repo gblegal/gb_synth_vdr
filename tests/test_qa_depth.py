@@ -1,16 +1,24 @@
+from pathlib import Path
+
 import pytest
 
 from synthvdr.domain import Archetype, DEFAULT_DOMAIN_ROOT, DomainPack, load_domain
+from synthvdr.lengths import load_lengths
+from synthvdr.slots import SIZE_PRESETS, build_slot_manifest
 from synthvdr.qa.depth import (
     DepthLintError,
     classify_archetype,
     depth_problems,
     floor_for,
+    part_counts,
+    slot_floor,
     strip_annotation,
     wordcount,
 )
 
 PACK = load_domain(DEFAULT_DOMAIN_ROOT)
+LENGTHS = load_lengths(DEFAULT_DOMAIN_ROOT, PACK)
+CUSTOMER = "05_commercial/5.1_customer-contracts/5.1.9_customer-contracts-09.md"
 
 
 def test_wordcount_counts_whitespace_tokens():
@@ -177,3 +185,57 @@ def test_depth_problems_ignores_an_annotation_block(tmp_path):
     path.write_text("word " * 100 + "\n## Key diligence points\n" + "word " * 5000)
     (problem,) = depth_problems([path], {"1.1.1": "A"}, pack, "Key diligence points")
     assert "100 words" in problem
+
+
+@pytest.mark.parametrize("size", ["XS", "S", "M", "L"])
+def test_slot_floor_without_lengths_is_exactly_floor_for(size):
+    # The short-mode guarantee, slot by slot: no lengths, no change.
+    for slot in build_slot_manifest(PACK, SIZE_PRESETS[size]):
+        assert slot_floor(slot.slot_id, slot.rel_path, slot.tier, PACK) == floor_for(
+            slot.slot_id, Path(slot.rel_path).name, slot.tier, PACK
+        )
+
+
+@pytest.mark.parametrize("size", ["XS", "M"])
+def test_long_mode_holds_agreements_to_their_band_and_leaves_every_other_slot(size):
+    for slot in build_slot_manifest(PACK, SIZE_PRESETS[size]):
+        row = LENGTHS.row_for_rel_path(slot.rel_path)
+        short = floor_for(slot.slot_id, Path(slot.rel_path).name, slot.tier, PACK)
+        expected = LENGTHS.bands[row.band].floor if row else short
+        assert slot_floor(slot.slot_id, slot.rel_path, slot.tier, PACK, LENGTHS) == expected
+
+
+def test_long_mode_ignores_tier_for_an_agreement_slot():
+    assert slot_floor("5.1.9", CUSTOMER, "A", PACK, LENGTHS) == 10000
+    assert slot_floor("5.1.9", CUSTOMER, "F", PACK, LENGTHS) == 10000
+
+
+def test_long_mode_still_refuses_an_invalid_tier():
+    with pytest.raises(DepthLintError):
+        slot_floor("5.1.9", CUSTOMER, "Z", PACK, LENGTHS)
+
+
+def test_an_unfilled_skeleton_marker_fails_the_depth_lint(tmp_path):
+    # The long-mode authoring protocol relies on this existing behaviour: a
+    # part left as its "[draft part N ...]" marker is a placeholder.
+    path = tmp_path / "05_commercial" / "5.1_customer-contracts" / "5.1.9_customer-contracts-09.md"
+    path.parent.mkdir(parents=True)
+    path.write_text("# Agreement\n\n" + "word " * 12000 + "\n\n## Schedules\n\n[draft part 9 — Schedules, ~1,600 words]\n")
+    problems = depth_problems([path], {"5.1.9": "A"}, PACK, "Key diligence points", LENGTHS)
+    assert problems == ["5.1.9: placeholder token '[draft'"]
+
+
+def test_part_counts_counts_words_under_each_level_two_heading():
+    text = (
+        "# Title\n\nIntro words here.\n\n## Definitions\n\none two three\n\n"
+        "### 1.1 Sub\n\nfour five\n\n## Term\n\nsix\n"
+    )
+    assert part_counts(text) == [
+        ("(before the first part)", 5),
+        ("Definitions", 8),
+        ("Term", 1),
+    ]
+
+
+def test_part_counts_omits_an_empty_preamble():
+    assert part_counts("## Only\n\none two\n") == [("Only", 2)]

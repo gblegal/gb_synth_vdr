@@ -122,3 +122,49 @@ def test_a_slot_missing_from_the_manifest_is_a_failure(room):
 def test_skips_when_there_is_no_anchors_manifest(room):
     (room / "_key" / "anchors.csv").unlink()
     assert gate_10_depth(ctx_for(room)).status == "SKIP"
+
+
+LONG_CONF = CONF.replace('SECTION_DIRS="01_corporate"', 'SECTION_DIRS="05_commercial"')
+
+
+def long_room(tmp_path, words, doc_length_line='DOC_LENGTH="long"\n'):
+    (tmp_path / "room.conf").write_text(LONG_CONF + doc_length_line)
+    d = tmp_path / "data-room" / "05_commercial" / "5.1_customer-contracts"
+    d.mkdir(parents=True)
+    (d / "5.1.1_customer-contracts-01.md").write_text("# Supply agreement\n\n" + ("word " * words))
+    (tmp_path / "_key").mkdir()
+    (tmp_path / "_key" / "anchors.csv").write_text(
+        "slot_id,tier,rel_path\n"
+        "5.1.1,F,05_commercial/5.1_customer-contracts/5.1.1_customer-contracts-01.md\n"
+    )
+    return tmp_path
+
+
+def test_long_mode_fails_an_agreement_below_its_band_floor(tmp_path):
+    result = gate_10_depth(ctx_for(long_room(tmp_path, words=5000)))
+    assert result.status == "FAIL"
+    assert "floor 10000" in result.detail
+
+
+def test_long_mode_passes_an_agreement_at_its_band_floor_and_says_so(tmp_path):
+    result = gate_10_depth(ctx_for(long_room(tmp_path, words=10050)))
+    assert result.status == "PASS"
+    assert "DOC_LENGTH long" in result.detail
+
+
+def test_the_same_agreement_passes_in_short_mode(tmp_path):
+    assert gate_10_depth(ctx_for(long_room(tmp_path, words=5000, doc_length_line=""))).status == "PASS"
+
+
+def test_short_mode_detail_is_identical_with_and_without_the_key(room):
+    before = gate_10_depth(ctx_for(room)).detail
+    conf = room / "room.conf"
+    conf.write_text(conf.read_text() + 'DOC_LENGTH="short"\n')
+    assert gate_10_depth(ctx_for(room)).detail == before
+
+
+def test_long_mode_in_a_subset_room_uses_the_full_pack(tmp_path):
+    # Review Focus 1: SECTION_DIRS here is one section of twenty; the lengths
+    # file's rows for the other nineteen must match nothing and break nothing.
+    room = long_room(tmp_path, words=10050)
+    assert gate_10_depth(ctx_for(room)).status == "PASS"
