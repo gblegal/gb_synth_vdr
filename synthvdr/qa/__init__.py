@@ -16,6 +16,7 @@ from .leakage import (
     gate_14_unchecked_names,
 )
 from .renders import gate_16_render_parity
+from .repetition import gate_20_repetition
 from .structural import (
     gate_01_index,
     gate_02_counts,
@@ -46,6 +47,7 @@ ALL_GATES = [
     gate_17_answer_key_validation,
     gate_18_room_role,
     gate_19_eval_answer_key,
+    gate_20_repetition,
 ]
 
 __all__ = ["ALL_GATES"]
