@@ -52,8 +52,9 @@ Six commands, run in order. Each stops when its own job is done; nothing runs ah
    paperwork: no note to the buyer, no highlighting, nothing that gives the game away. The
    evidence-carrying documents are written first, so an interrupted build never leaves a
    problem half-planted. Stop it and start it again and it picks up where it left off.
-4. **`/vdr-qa`** — runs nineteen automated checks over the room: that the answers have not
-   leaked into the documents, that nothing is a half-finished stub, that every figure
+4. **`/vdr-qa`** — runs twenty automated checks over the room: that the answers have not
+   leaked into the documents, nor been signposted by bold or by notes pointing from one
+   piece of evidence to the next, that nothing is a half-finished stub, that every figure
    agrees with every other, and that each planted problem really was reachable by a
    reviewer who was never told where to look.
 5. **`/vdr-package`** — re-runs those checks in their strictest form, builds the sample

@@ -130,7 +130,7 @@ the section entirely rather than leaving it with no rows.
 is the fact Steps 6–8 read to know whether gates 2/7/8/15's (and, in an eval room, 19's) mid-build exceptions still apply.
 
 "Gate result" in "Waves completed" records **PASS once every gate outside Step 7's named
-mid-build exceptions is clean** — not "every one of the nineteen gates," which (see Step 7)
+mid-build exceptions is clean** — not "every one of the twenty gates," which (see Step 7)
 no wave before the last one can ever produce. Wave 1 and wave 2 above both legitimately show
 PASS with gates 2 and 15 excepted throughout (and gate 19 too, in an eval room), and gates 7/8 additionally excepted before
 "Anchors" is recorded; that is not a weaker PASS, it is what "clean" is defined to mean before the room
@@ -603,7 +603,7 @@ caught here, at build time, or by gate 8's carrier census afterwards.
 `bash tools/check.sh .`
 
 **Multi-wave is the normal case** (`M` = 200 documents, `L` = 800, `XL` = 2,000+): most builds
-take several waves, and four of the nineteen gates check something that genuinely does not
+take several waves, and four of the twenty gates check something that genuinely does not
 exist yet before the room is finished. Naming all four exactly, rather than leaving "do not
 proceed on any failure" as a rule the room's own size makes impossible to satisfy:
 
@@ -635,6 +635,12 @@ proceed on any failure" as a rule the room's own size makes impossible to satisf
 **Every gate other than these four is a real check on every wave, including the first**, and
 a FAIL on any of them is always a real defect — never wave the whole gate run through because
 "gate 2 usually fails mid-build" without checking which gate actually failed.
+
+**Gate 20 (evidence tells) never fails, and is not one of the four.** It WARNs when bold,
+pointer notes or note habits let a reader sort the wave's evidence documents from its filler.
+A WARN does not stop the wave being recorded, but read it every wave: the wave's documents
+are cheapest to correct while they are the newest thing in the room, and `/vdr-qa`'s entry
+for gate 20 says what to change in each case.
 
 ### 8. Update the build status
 
