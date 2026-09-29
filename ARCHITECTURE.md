@@ -142,6 +142,11 @@ the flagged tree or even its location. It writes the offending clause as natural
 seller-side content, with no analytical overlay, then writes its refinement of that
 finding's `location` and `substance` into `_key/incoming/<label>.yaml`.
 
+It runs on Opus by default, and `/vdr-build` moves a batch to Sonnet only when the batch
+holds no load-bearing slot. A blind test found Sonnet 5.5 as good as Opus 5.5 on filler and
+about a third cheaper, but readier to state a finding's conclusion in the documents that
+carry one — a failure no gate detects.
+
 When an author discovers a genuine issue nobody drafted at Gate B, it declares it — under a
 **label-scoped provisional ID** (`<label>-NEW-1`), never a real one. Parallel authors cannot
 see each other, so two of them each taking "the next free ENV number" would silently collide
