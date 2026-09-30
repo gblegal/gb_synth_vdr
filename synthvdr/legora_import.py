@@ -30,10 +30,16 @@ as it reads any tool's JSON.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
-from pathlib import Path
-from typing import List, Optional, Sequence, Set, Tuple
+from pathlib import Path, PurePosixPath
+from typing import Dict, List, Optional, Sequence, Set, Tuple
+
+from .manifest import MANIFEST_NAME, read_content_hash
+from .roomconf import RoomConf, load_room_conf
+from .schema import SEVERITIES
+from .score import ToolOutputError, parse_markdown_report
 
 
 class LegoraImportError(Exception):
@@ -49,6 +55,9 @@ class LegoraImportError(Exception):
 # `.csv` is a document in its own right, as the parser's own pattern allows.
 DOCUMENT_SUFFIXES = (".md", ".pdf", ".docx", ".csv")
 RENDERED_SUFFIXES = (".pdf", ".docx")
+
+# How many paths a summary or a refusal names before it says "and N more".
+LIST_LIMIT = 20
 
 
 def as_markdown(rel: str) -> str:
@@ -255,3 +264,220 @@ def tool_name(model: str, skill: str, override: Optional[str] = None) -> str:
     stated = model.strip().rstrip(".").strip()
     name = "legora/" + (stated if stated.lower() not in _NOT_STATED else "model-not-stated")
     return f"{name} ({skill})" if skill else name
+
+
+@dataclass(frozen=True)
+class ImportResult:
+    """The tool output an import produced, and the facts its summary reports."""
+
+    output: dict
+    report: Path
+    room: Path
+    cut: str
+    cut_total: int
+    by_severity: Dict[str, int]
+    documents_cited: int
+    files_read: Optional[int]
+    not_read: int
+    unexplained: List[str]
+    cited_not_read: List[str]
+    ignored: List[str]
+    dropped: List[str]
+    provenance: str
+    notes: List[str]
+
+    @property
+    def findings(self) -> int:
+        return len(self.output["findings"])
+
+
+def _named(paths: Sequence[str]) -> List[str]:
+    lines = [f"  {path}" for path in paths[:LIST_LIMIT]]
+    if len(paths) > LIST_LIMIT:
+        lines.append(f"  … and {len(paths) - LIST_LIMIT} more")
+    return lines
+
+
+def _unknown_message(unknown: Sequence[str], cut: str, room: Path) -> str:
+    return "\n".join(
+        [f"the report names {len(unknown)} path(s) that {cut}/ in {room} does not hold:"]
+        + _named(unknown)
+        + [
+            "Nothing was written. The usual causes, most likely first: --cut names a "
+            "different folder from the one uploaded to Legora; the Legora project holds "
+            "a stale copy of the room; or the agent invented or mistyped a path. If it is "
+            "the last, --drop-unknown imports the rest and leaves the run UNVERIFIED."
+        ]
+    )
+
+
+def _provenance(room: Path, conf: RoomConf, unknown: Sequence[str]) -> Tuple[str, str]:
+    """The room_hash to stamp, and one sentence saying why or why not.
+
+    The stamp vouches that this report was made on this room. Legora never saw
+    the manifest, so what vouches is the path check: every path the report
+    names is in the room. When any was dropped, nothing vouches."""
+    manifest = PurePosixPath(conf.get_relative_path("KEY_ROOT")) / MANIFEST_NAME
+    if unknown:
+        return "", (
+            f"not stamped — {len(unknown)} path(s) the report names are not in the cut "
+            "and were dropped, so it cannot be vouched for as a run on this room. The "
+            "scorecard will say UNVERIFIED."
+        )
+    content_hash = read_content_hash(room / manifest)
+    if not content_hash:
+        return "", (
+            f"not stamped — no content_hash in {manifest} (it is written by /vdr-package). "
+            "The scorecard will say UNVERIFIED."
+        )
+    return content_hash, f"room_hash stamped from {manifest}: every path the report names is in this room."
+
+
+def import_review(
+    report: Path,
+    room: Path,
+    cut: Optional[str] = None,
+    tool: Optional[str] = None,
+    drop_unknown: bool = False,
+) -> ImportResult:
+    """Read a Legora review and build the tool output for `score`.
+
+    `cut` is the folder uploaded to Legora, relative to the room; it defaults
+    to BLIND_TREE and cannot be inferred, because a subset run and a
+    full-room run cite identical paths. Every path the report names — in an
+    issue or in the files-read list — must be a document in the cut, or the
+    import is refused (LegoraImportError), unless `drop_unknown`. Documents
+    the files-read list leaves out are reported, never refused: the output is
+    a true record of what was found either way."""
+    conf = load_room_conf(room / "room.conf")
+    section_dirs = conf.get_list("SECTION_DIRS")
+    cut_name = (cut or conf.get("BLIND_TREE")).strip("/")
+    cut_root = room / cut_name
+    if not cut_root.is_dir():
+        raise LegoraImportError(
+            f"there is no folder {cut_name!r} in {room}. --cut names the folder that was "
+            "uploaded to Legora, relative to the room: data-room, subset, data-room-pdf "
+            "or data-room-docx."
+        )
+
+    text, notes = read_report(report)
+    split = split_report(text)
+    issues = normalise_citations(split.issues, section_dirs)
+    try:
+        parsed = parse_markdown_report(issues)
+    except ToolOutputError:
+        raise LegoraImportError(
+            f"{report.name} has no issues under '##' headings, so there is nothing to "
+            "score. The hand-back puts each issue under its own '##' heading; a report "
+            "in another shape has to be fixed at the skill, not guessed at here."
+        ) from None
+
+    documents = cut_documents(cut_root)
+    sections = set(section_dirs)
+    cited = citations_in(issues, section_dirs)
+    read_list: List[str] = []
+    ignored: Set[str] = set()
+    if split.files_read is not None:
+        for path in citations_in(split.files_read, section_dirs):
+            if path.split("/", 1)[0] in sections:
+                read_list.append(path)
+            else:
+                ignored.add(path)
+    unknown = sorted({path for path in cited + read_list if path not in documents})
+    if unknown and not drop_unknown:
+        raise LegoraImportError(_unknown_message(unknown, cut_name, room))
+
+    findings = []
+    for finding in parsed.findings:
+        kept = [d for d in dict.fromkeys(finding.documents) if d in documents]
+        findings.append(
+            {
+                "title": finding.title,
+                "severity": finding.severity,
+                "documents": kept,
+                "summary": finding.summary,
+            }
+        )
+    cited_known = {d for finding in findings for d in finding["documents"]}
+
+    if split.files_read is None:
+        files_read, not_read, unexplained, cited_not_read = None, 0, [], []
+    else:
+        read = {path for path in read_list if path in documents}
+        missed = sorted(documents - read)
+        reached = {str(PurePosixPath(path).parent) for path in read}
+        unexplained = [path for path in missed if str(PurePosixPath(path).parent) in reached]
+        cited_not_read = sorted(cited_known - read)
+        files_read, not_read = len(read), len(missed)
+
+    room_hash, provenance = _provenance(room, conf, unknown)
+    output = {
+        "tool": tool_name(split.model, split.skill, tool),
+        "room_hash": room_hash,
+        "findings": findings,
+    }
+    return ImportResult(
+        output=output,
+        report=report,
+        room=room,
+        cut=cut_name,
+        cut_total=len(documents),
+        by_severity={s: sum(1 for f in findings if f["severity"] == s) for s in SEVERITIES},
+        documents_cited=len(cited_known),
+        files_read=files_read,
+        not_read=not_read,
+        unexplained=unexplained,
+        cited_not_read=cited_not_read,
+        ignored=sorted(ignored),
+        dropped=unknown,
+        provenance=provenance,
+        notes=notes,
+    )
+
+
+def write_output(result: ImportResult, out: Path) -> None:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(result.output, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def render_summary(result: ImportResult, out: Path) -> str:
+    counts = ", ".join(f"{s} {result.by_severity.get(s, 0)}" for s in SEVERITIES)
+    lines = [
+        f"Imported {result.findings} issue(s) from {result.report.name} ({counts}), "
+        f"citing {result.documents_cited} document(s).",
+        f"Cut: {result.cut}/, {result.cut_total} documents.",
+    ]
+    if result.files_read is None:
+        lines.append(
+            "Files read: the report has no '# Files read' section, so nothing can be said "
+            "about what Legora did not read."
+        )
+    else:
+        lines.append(
+            f"Files read: {result.files_read} of {result.cut_total} named; {result.not_read} not named."
+        )
+        if result.unexplained:
+            lines.append(
+                f"{len(result.unexplained)} of those sit in a folder the list otherwise "
+                "reaches, so a part-run does not explain them:"
+            )
+            lines += _named(result.unexplained)
+        if result.cited_not_read:
+            lines.append(f"Cited but not in the files-read list: {len(result.cited_not_read)}")
+            lines += _named(result.cited_not_read)
+        if result.ignored:
+            lines.append(
+                f"Files-read entries outside the room's section folders, ignored: {len(result.ignored)}"
+            )
+            lines += _named(result.ignored)
+    if result.dropped:
+        lines.append(f"Dropped under --drop-unknown, not in {result.cut}/: {len(result.dropped)}")
+        lines += _named(result.dropped)
+    lines.append(f"Provenance: {result.provenance}")
+    lines.append(f"Tool: {result.output['tool']}")
+    lines += [f"Note: {note}" for note in result.notes]
+    lines += [
+        f"Written to {out}. Score it with:",
+        f"  python3 -m synthvdr score {out} --room {result.room}",
+    ]
+    return "\n".join(lines)

@@ -2,18 +2,29 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from synthvdr.legora_import import (
     LegoraImportError,
     citations_in,
     cut_documents,
+    import_review,
     normalise_citations,
     normalise_path,
     read_report,
+    render_summary,
     split_report,
     tool_name,
+    write_output,
 )
+from synthvdr.manifest import MANIFEST_NAME, build_room_manifest, compute_content_hash, write_manifest
+from synthvdr.schema import load_distractors, load_findings
+from synthvdr.score import check_provenance, load_tool_output, score
+
+ROOT = Path(__file__).resolve().parent.parent
 
 SECTIONS = ["01_corporate", "05_commercial", "11_environmental-hs"]
 DOC = "01_corporate/1.1_constitutional/1.1.1_constitutional-01.md"
@@ -199,3 +210,189 @@ def test_read_report_refuses_anything_but_markdown_or_word(tmp_path):
 )
 def test_tool_name(model, skill, override, expected):
     assert tool_name(model, skill, override) == expected
+
+
+# Paths in the XS room `xs_room` (tests/conftest.py) builds: 40 documents, one per
+# subsection folder, and a 10-document subset holding every finding's evidence.
+CORP = "01_corporate/1.1_constitutional/1.1.1_constitutional-01.md"        # CORP-1's source
+COMM = "05_commercial/5.1_customer-contracts/5.1.1_customer-contracts-01.md"  # COMM-1's source
+COMM_2 = "05_commercial/5.2_supplier-contracts/5.2.1_supplier-contracts-01.md"  # its corroboration
+TAX = "03_tax/3.1_corporation-tax/3.1.1_corporation-tax-01.md"             # DX-1's location; not in the subset
+MOUNT = "/workspace/documents/projects/Testbed pdf/data-room-pdf"
+
+
+def pdf(rel: str) -> str:
+    return f"{MOUNT}/{rel[:-3]}.pdf"
+
+
+def add_pdf_cut(room: Path) -> None:
+    blind = room / "data-room"
+    for md in blind.rglob("*.md"):
+        target = room / "data-room-pdf" / md.relative_to(blind).with_suffix(".pdf")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"%PDF-1.4 stand-in")
+
+
+def add_manifest(room: Path) -> str:
+    content_hash, documents = compute_content_hash(room / "data-room")
+    manifest = build_room_manifest("Project Testbed", content_hash, documents, 4, "2026-09-30")
+    write_manifest(room / "_key" / MANIFEST_NAME, manifest)
+    return content_hash
+
+
+def report(*issues, files_read=None, preamble="# Review of Project Testbed\n\nModel: not known\n"):
+    parts = [preamble]
+    for title, severity, documents in issues:
+        parts.append(
+            f"## {title}\n\nSeverity: {severity}\n\nThe issue.\n\nDocuments:\n"
+            + "".join(f"- `{d}`\n" for d in documents)
+        )
+    if files_read is not None:
+        parts.append("# Files read\n\n" + "".join(f"- `{d}`\n" for d in files_read))
+    return "\n".join(parts)
+
+
+def write_report(room: Path, text: str, name: str = "review.md") -> Path:
+    path = room.parent / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_a_pdf_run_imports_onto_the_room_and_scores_as_if_it_cited_the_md_paths(xs_room, tmp_path):
+    add_pdf_cut(xs_room)
+    content_hash = add_manifest(xs_room)
+    text = report(
+        ("Consent gap", "critical", [pdf(CORP)]),
+        ("Pricing term not mirrored", "medium", [pdf(COMM), pdf(COMM_2)]),
+        files_read=[pdf(CORP), pdf(COMM), pdf(COMM_2)],
+    )
+    result = import_review(write_report(xs_room, text), xs_room, cut="data-room-pdf")
+    assert result.output["room_hash"] == content_hash
+    assert [f["documents"] for f in result.output["findings"]] == [[CORP], [COMM, COMM_2]]
+
+    out = tmp_path / "legora.json"
+    write_output(result, out)
+    output = load_tool_output(out)
+    assert check_provenance(xs_room, output).verified
+    card = score(
+        output,
+        load_findings(xs_room / "_key" / "findings.yaml"),
+        load_distractors(xs_room / "_key" / "distractors.yaml"),
+    )
+    assert card.recall == 0.5
+    assert card.misses == ["ENV-1", "FIN-1"]
+
+
+def test_the_files_read_list_never_becomes_a_finding(xs_room):
+    everything = sorted(cut_documents(xs_room / "data-room"))
+    text = report(("Consent gap", "critical", [CORP]), files_read=everything)
+    result = import_review(write_report(xs_room, text), xs_room)
+    assert result.findings == 1
+    assert result.output["findings"][0]["documents"] == [CORP]
+    assert result.files_read == 40 and result.not_read == 0
+
+
+def test_a_path_the_cut_does_not_hold_stops_the_import_and_every_one_is_named(xs_room):
+    text = report(
+        ("Gap", "high", [CORP, "01_corporate/1.1_constitutional/1.1.9_constitutional-09.md"]),
+        files_read=[CORP, "05_commercial/5.9_nowhere/5.9.1_nowhere-01.md"],
+    )
+    with pytest.raises(LegoraImportError) as caught:
+        import_review(write_report(xs_room, text), xs_room)
+    message = str(caught.value)
+    assert "1.1.9_constitutional-09.md" in message and "5.9.1_nowhere-01.md" in message
+    assert "--cut" in message and "--drop-unknown" in message
+
+
+def test_a_subset_run_citing_a_document_outside_the_subset_is_refused(xs_room):
+    text = report(("Closed enquiry", "low", [TAX]))
+    with pytest.raises(LegoraImportError, match="3.1.1_corporation-tax-01.md"):
+        import_review(write_report(xs_room, text), xs_room, cut="subset")
+    full = import_review(write_report(xs_room, text), xs_room)
+    assert full.output["findings"][0]["documents"] == [TAX]
+
+
+def test_drop_unknown_imports_the_rest_lists_what_it_dropped_and_withholds_the_stamp(xs_room):
+    add_manifest(xs_room)
+    bad = "01_corporate/1.1_constitutional/1.1.9_constitutional-09.md"
+    result = import_review(
+        write_report(xs_room, report(("Gap", "high", [CORP, bad]))), xs_room, drop_unknown=True
+    )
+    assert result.output["findings"][0]["documents"] == [CORP]
+    assert result.dropped == [bad]
+    assert result.output["room_hash"] == ""
+    assert "not stamped" in result.provenance
+
+
+def test_room_hash_is_left_empty_when_the_room_has_no_manifest(xs_room):
+    result = import_review(write_report(xs_room, report(("Gap", "high", [CORP]))), xs_room)
+    assert result.output["room_hash"] == ""
+    assert "manifest.json" in result.provenance
+
+
+def test_unread_documents_are_counted_and_the_ones_beside_read_ones_are_named(xs_room):
+    extra = "01_corporate/1.1_constitutional/1.1.2_constitutional-02.md"
+    (xs_room / "data-room" / extra).write_text("# Constitutional\n\nA second document.\n")
+    text = report(("Gap", "high", [CORP, COMM]), files_read=[CORP])
+    result = import_review(write_report(xs_room, text), xs_room)
+    assert result.files_read == 1
+    assert result.not_read == 40
+    assert result.unexplained == [extra]
+    assert result.cited_not_read == [COMM]
+
+
+def test_files_read_entries_outside_the_section_folders_are_ignored_not_refused(xs_room):
+    text = report(("Gap", "high", [CORP]), files_read=[CORP, "_review/review-earlier.md"])
+    result = import_review(write_report(xs_room, text), xs_room)
+    assert result.ignored == ["_review/review-earlier.md"]
+    assert result.files_read == 1
+
+
+def test_a_document_cited_twice_in_two_forms_is_cited_once(xs_room):
+    text = report(("Gap", "high", [CORP, f"data-room/{CORP}", CORP[:-3] + ".pdf"]))
+    result = import_review(write_report(xs_room, text), xs_room)
+    assert result.output["findings"][0]["documents"] == [CORP]
+
+
+def test_a_report_without_a_files_read_section_is_imported_and_says_so(xs_room):
+    result = import_review(write_report(xs_room, report(("Gap", "high", [CORP]))), xs_room)
+    assert result.files_read is None
+    assert "no '# Files read' section" in render_summary(result, xs_room.parent / "out.json")
+
+
+def test_a_report_with_no_issue_headings_is_refused_in_the_hand_backs_terms(xs_room):
+    with pytest.raises(LegoraImportError, match="'##' headings"):
+        import_review(write_report(xs_room, "# Review\n\nNothing found.\n"), xs_room)
+
+
+def test_bold_severity_lines_are_read(xs_room):
+    text = f"## Gap\n\n**Severity:** Critical\n\nDocuments:\n- `{CORP}`\n"
+    result = import_review(write_report(xs_room, text), xs_room)
+    assert result.output["findings"][0]["severity"] == "critical"
+
+
+def test_a_missing_cut_folder_is_refused(xs_room):
+    with pytest.raises(LegoraImportError, match="data-room-pdf"):
+        import_review(
+            write_report(xs_room, report(("Gap", "high", [CORP]))), xs_room, cut="data-room-pdf"
+        )
+
+
+def test_the_output_has_the_tool_output_schemas_shape(xs_room):
+    schema = json.loads((ROOT / "schemas" / "tool-output.schema.json").read_text(encoding="utf-8"))
+    text = report(("Gap", "high", [CORP]), ("Other", "low", [COMM]))
+    output = import_review(write_report(xs_room, text), xs_room).output
+    assert set(schema["required"]) <= set(output) <= set(schema["properties"])
+    finding_schema = schema["definitions"]["finding"]
+    for finding in output["findings"]:
+        assert set(finding_schema["required"]) <= set(finding) <= set(finding_schema["properties"])
+        assert finding["severity"] in finding_schema["properties"]["severity"]["enum"]
+    assert output["tool"] == "legora/model-not-stated"
+
+
+def test_the_summary_ends_with_the_score_command(xs_room, tmp_path):
+    result = import_review(write_report(xs_room, report(("Gap", "high", [CORP]))), xs_room)
+    out = tmp_path / "legora.json"
+    summary = render_summary(result, out)
+    assert summary.splitlines()[-1] == f"  python3 -m synthvdr score {out} --room {xs_room}"
+    assert "critical 0, high 1, medium 0, low 0" in summary
