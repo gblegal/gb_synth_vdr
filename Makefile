@@ -12,7 +12,7 @@ PY    := $(VENV)/bin/python
 STAMP := $(VENV)/.deps-installed
 
 .DEFAULT_GOAL := test
-.PHONY: test lint venv clean tag
+.PHONY: test lint venv clean tag legora legora-check
 
 # Run the full suite. ARGS passes through, so `make test ARGS="-k twin -x"`
 # reaches pytest unchanged rather than needing a target per invocation.
@@ -25,6 +25,16 @@ test: $(STAMP)
 # where flags get chosen.
 lint: $(STAMP)
 	$(PY) -m ruff check $(ARGS) .
+
+# The Legora pack (legora/README.md), written to dist/legora. The Word copies of
+# the references need pandoc; `make legora ARGS=--no-docx` skips them. The check
+# fails if a built pack lags its sources, which is the line to run before
+# uploading one.
+legora: $(STAMP)
+	$(PY) tools/build_legora_pack.py $(ARGS)
+
+legora-check: $(STAMP)
+	$(PY) tools/build_legora_pack.py --check $(ARGS)
 
 # The environment on its own, for driving the CLIs by hand afterwards.
 venv: $(STAMP)

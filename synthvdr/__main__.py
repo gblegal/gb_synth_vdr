@@ -1,4 +1,4 @@
-"""CLI: python3 -m synthvdr {score|score-classification|answerkey|corrupt|manifest|pages} ...
+"""CLI: python3 -m synthvdr {score|score-classification|answerkey|corrupt|manifest|pages|import-legora-review|export-key} ...
 
 `score <tool-output> --room PATH [--baseline FILE]` scores a findings report;
 `score-classification <output> --room PATH [--key FILE]` scores a
@@ -11,6 +11,12 @@ verified rather than only assumed; `manifest` writes `_key/manifest.json`,
 the clean room's content hash, which is /vdr-package's step 4; `pages` reports
 a long room's rendered page counts per length band, or with `--estimate` the
 size of its scan trees before rendering.
+
+`import-legora-review <report.md|.docx> --room PATH --out FILE [--cut DIR]
+[--tool NAME] [--drop-unknown]` turns a report from Legora's
+`review-a-test-data-room` skill into a tool output `score` reads (see
+synthvdr.legora_import); `export-key --room PATH --out DIR` writes a room's
+key, and only its key, for a Legora explain project (see synthvdr.export_key).
 
 This is the package-level entry point (`python3 -m synthvdr ...`), distinct
 from `synthvdr/qa/__main__.py` (`python3 -m synthvdr.qa`, the room QA gate

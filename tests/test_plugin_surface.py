@@ -2884,3 +2884,11 @@ def test_each_legora_skill_exists_with_frontmatter_naming_its_folder(name):
 def test_the_legora_skills_are_exactly_the_declared_set():
     found = sorted(p.parent.name for p in (ROOT / "legora" / "skills").glob("*/SKILL.md"))
     assert found == sorted(LEGORA_SKILL_NAMES)
+
+
+def test_version_check_surface_includes_the_legora_pack():
+    # legora/ is served to Legora from a tag, and a pack built from an unmoved version
+    # would carry a "Built from" line naming a build it is not.
+    script = _read(ROOT / "tools" / "version-check.sh")
+    surface = re.search(r"^SURFACE=\((.*?)^\)", script, re.DOTALL | re.MULTILINE).group(1)
+    assert "legora" in surface.split()

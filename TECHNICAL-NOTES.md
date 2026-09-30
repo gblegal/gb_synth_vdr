@@ -141,6 +141,37 @@ loaded, if the blind tree is missing (a manifest there would certify an empty ro
 The corrupted twin's manifest, written by `corrupt`, carries no date at all — it must stay
 byte-identical for a given room, seed and profile.
 
+### `python3 -m synthvdr import-legora-review` — a Legora review, made scoreable
+
+```bash
+python3 -m synthvdr import-legora-review <report.md|.docx> --room <room-dir> --out <file.json> \
+    [--cut subset|data-room|data-room-pdf|data-room-docx] [--tool NAME] [--drop-unknown]
+```
+
+Reads the report Legora's `review-a-test-data-room` skill saves (`legora/README.md`) and
+writes a tool output for `score`. Legora cites the path it saw — a mount, the tree it was
+uploaded as, `.pdf` or `.docx` on a rendered cut — and `prematch` joins on exact `.md`
+paths, so every citation is cut back at the first folder in `SECTION_DIRS` and a render is
+mapped to its `.md`. The `# Files read` list is cut off before parsing: left in, it would
+be read as part of the last issue and pre-match every finding. `--cut` names the folder that
+was uploaded (default `BLIND_TREE`); any path the report names that the cut does not hold
+stops the import, listed, because that is how a wrong cut or a stale copy shows itself, and
+`--drop-unknown` imports the rest instead. Documents the files-read list leaves out are
+reported, never refused. `room_hash` is stamped from `_key/manifest.json` only when every
+path resolved. Exit **2** on any refusal, an unreadable report or room, or an `--out` inside
+a room tree, which would change the tree it was written into.
+
+### `python3 -m synthvdr export-key` — the key, for a Legora explain project
+
+```bash
+python3 -m synthvdr export-key --room <room-dir> --out <new-folder>
+```
+
+Writes `findings.md`, `distractors.md` and `flagged/` — only the flagged documents that
+carry a finding's evidence or a distractor — into a folder that must not exist yet and must
+sit outside every room tree. That folder is the whole upload for `explain-a-planted-finding`.
+Exit **2** if it exists, sits inside a tree, or the flagged tree lacks a document it needs.
+
 ---
 
 ## 3. File formats
