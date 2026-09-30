@@ -46,7 +46,9 @@ skill's name, and that name is the only record in Legora of which build ran.
    `data-room-docx/` to test Legora on rendered documents. Never `_key/`, and
    never anything with "flagged" in its path: those are the answers.
 2. **Name the project** with the room and the cut: "Tarnwold subset",
-   "Quern data-room-pdf".
+   "Quern data-room-pdf". The skill copies the project's name into the
+   report's title, and the importer stamps provenance only when that title
+   names the room: rooms share their folder names, so paths alone cannot.
 3. **Run it.** In a new conversation: "Review this test data room and list the
    issues." Accept the save when it is suggested; the report goes to
    `_review/`.
@@ -60,9 +62,12 @@ skill's name, and that name is the only record in Legora of which build ran.
 
    It refuses on any path the cut does not hold, whether from a wrong
    `--cut`, a stale copy in Legora or an invented path, and lists every one;
-   `--drop-unknown` imports the rest and leaves the run UNVERIFIED. It reports
-   what the files-read list leaves out. If the report says the model is "not
-   known", `--tool legora/<model>` records the one Legora's settings show.
+   `--drop-unknown` imports the rest and leaves the run UNVERIFIED. It refuses
+   outright a report citing anything from `_key/` or a flagged tree, and an
+   issue citing more than 20 documents unless `--allow-wide-issues`. It
+   reports what the files-read list leaves out, and which issues cite nothing.
+   If the report says the model is "not known", `--tool legora/<model>`
+   records the one Legora's settings show.
 6. **Score it:** `python3 -m synthvdr score <the --out file> --room <the room>`.
 7. **Adjudicate** what the pre-match left unresolved, with `/vdr-score`.
 
@@ -75,10 +80,11 @@ reads their manifest as it is.
 python3 -m synthvdr export-key --room ~/Dev/ll_vdr_09 --out ~/Desktop/tarnwold-key
 ```
 
-Upload that folder, and only that folder, to a project of its own, and use
-`explain-a-planted-finding` there. It holds `findings.md`, `distractors.md`
-and the flagged copies of the documents that carry evidence or a red herring.
-Never put it in a project that holds a blind room.
+The folder must sit outside the room. Upload it, and only it, to a project
+of its own, and use `explain-a-planted-finding` there. It holds
+`findings.md`, `distractors.md` and the flagged copies of the documents that
+carry evidence or a red herring. Never put it in a project that holds a blind
+room.
 
 ## Building a room in Legora
 

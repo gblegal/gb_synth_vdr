@@ -29,6 +29,7 @@ does, so the shape matters as much as the reading.
   shape, with the list of files it read. Then read their issues together:
   merge any two that are the same issue, and where issues in different
   sections turn out to be one issue, report it once, citing every document.
+  Merge their lists into one `# Files read` at the end of the report.
 
 ## What to hand back
 

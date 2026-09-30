@@ -59,6 +59,12 @@ RENDERED_SUFFIXES = (".pdf", ".docx")
 # How many paths a summary or a refusal names before it says "and N more".
 LIST_LIMIT = 20
 
+# The most documents one issue may cite before the import refuses it. The
+# longest evidence chain in any room built so far is five documents; an issue
+# citing dozens is almost always a list of paths read as part of it, which
+# pre-matches every finding it touches. --allow-wide-issues overrides.
+MAX_CITATIONS = 20
+
 
 def as_markdown(rel: str) -> str:
     """A rendered document's path mapped back to the `.md` it was rendered from."""
@@ -80,43 +86,105 @@ def normalise_path(raw: str, section_dirs: Sequence[str]) -> str:
     return raw.strip()
 
 
-# A backticked span, or a bare path token. The bare token's edges exclude a
-# trailing full stop so a path ending a sentence is still read, but not a dot
-# followed by more name (".md.bak").
-_CITATION = re.compile(
-    r"`([^`\n]+)`"
-    r"|(?<![\w./-])([\w./-]+\.(?:md|pdf|docx|csv))(?![\w/-]|\.\w)",
-    re.IGNORECASE,
-)
+# A bare path token, optionally wrapped in Markdown emphasis (`_x.pdf_`). Its
+# edges exclude a trailing full stop so a path ending a sentence is still read,
+# but not a dot followed by more name (".md.bak").
+_BARE = r"(?<![\w./-])[*_]*([\w./-]+\.(?:md|pdf|docx|csv))[*_]*(?![\w/-]|\.\w)"
+_BARE_PATH = re.compile(_BARE, re.IGNORECASE)
+# A backticked span, or a bare path token.
+_CITATION = re.compile(r"`([^`\n]+)`|" + _BARE, re.IGNORECASE)
 
 
-def _citation(match: "re.Match[str]", section_dirs: Sequence[str]) -> Optional[str]:
-    """The normalised path one match cites, or None if it cites nothing."""
-    backticked, bare = match.group(1), match.group(2)
-    raw = backticked if backticked is not None else bare
-    if not raw.strip().lower().endswith(DOCUMENT_SUFFIXES):
-        return None
+def _unescape(text: str) -> str:
+    """Markdown escapes a model or a Word export may put in a path: `01\\_corporate`."""
+    return text.replace("\\_", "_").replace("\\*", "*")
+
+
+def _anchored(raw: str, section_dirs: Sequence[str]) -> Optional[str]:
+    """A bare token's normalised path, or None when it does not start at a
+    section folder: a file name in prose, not a citation."""
     path = normalise_path(raw, section_dirs)
-    if bare is not None and path.split("/", 1)[0] not in set(section_dirs):
-        return None
-    return path
+    return path if path.split("/", 1)[0] in set(section_dirs) else None
+
+
+def _cited(match: "re.Match[str]", section_dirs: Sequence[str]) -> List[Tuple[str, str]]:
+    """What one match cites, as (as written, normalised) pairs — none, one, or
+    several.
+
+    A backticked span that is a path is one citation, spaces and mount
+    included. A span holding a path and more — `x.pdf#page=3`, `x.pdf, clause
+    4.2`, `x.md:12` — is searched for bare paths, or the citation inside it is
+    lost and its finding silently missed. A backticked document name that
+    starts at no section folder is still returned, so the room check refuses
+    it rather than the import dropping it unseen."""
+    backticked, bare = match.group(1), match.group(2)
+    if bare is not None:
+        path = _anchored(bare, section_dirs)
+        return [(bare, path)] if path else []
+    path = normalise_path(backticked, section_dirs)
+    if path.split("/", 1)[0] in set(section_dirs) and path.lower().endswith(DOCUMENT_SUFFIXES):
+        return [(backticked, path)]
+    inner = []
+    for found in _BARE_PATH.finditer(backticked):
+        anchored = _anchored(found.group(1), section_dirs)
+        if anchored:
+            inner.append((found.group(1), anchored))
+    if inner:
+        return inner
+    if backticked.strip().lower().endswith(DOCUMENT_SUFFIXES):
+        return [(backticked, path)]
+    return []
 
 
 def normalise_citations(text: str, section_dirs: Sequence[str]) -> str:
     """`text` with every citation rewritten as its normalised path in backticks,
-    the form `parse_markdown_report` reads. Everything else is left as it is."""
+    the form `parse_markdown_report` reads. Everything else is left as it is,
+    bar the Markdown escapes inside paths."""
+
+    def rewrite_inside(found: "re.Match[str]") -> str:
+        anchored = _anchored(found.group(1), section_dirs)
+        return found.group(0) if anchored is None else f"`{anchored}`"
 
     def replace(match: "re.Match[str]") -> str:
-        path = _citation(match, section_dirs)
-        return match.group(0) if path is None else f"`{path}`"
+        cited = _cited(match, section_dirs)
+        if not cited:
+            return match.group(0)
+        if match.group(1) is not None and len(cited) == 1 and cited[0][0] == match.group(1):
+            return f"`{cited[0][1]}`"
+        if match.group(1) is not None:
+            # A span with more than a path: keep its words, lift the paths out.
+            return _BARE_PATH.sub(rewrite_inside, match.group(1))
+        return f"`{cited[0][1]}`"
 
-    return _CITATION.sub(replace, text)
+    return _CITATION.sub(replace, _unescape(text))
+
+
+def citation_pairs(text: str, section_dirs: Sequence[str]) -> List[Tuple[str, str]]:
+    """Every citation in `text` as (as written, normalised), in order."""
+    pairs: List[Tuple[str, str]] = []
+    for match in _CITATION.finditer(_unescape(text)):
+        pairs.extend(_cited(match, section_dirs))
+    return pairs
 
 
 def citations_in(text: str, section_dirs: Sequence[str]) -> List[str]:
     """Every document `text` cites, normalised, in the order cited."""
-    found = (_citation(match, section_dirs) for match in _CITATION.finditer(text))
-    return [path for path in found if path is not None]
+    return [path for _, path in citation_pairs(text, section_dirs)]
+
+
+def key_side(raw: str, section_dirs: Sequence[str], markers: Set[str]) -> bool:
+    """Whether a cited path came from the answer-key side of a room: a folder
+    before its section folder is the key root, the flagged tree, or any folder
+    named for a flagged copy (`data-room-subset-flagged`). Normalising would
+    otherwise throw that evidence away."""
+    sections = set(section_dirs)
+    for part in raw.strip().replace("\\", "/").split("/"):
+        if part in sections:
+            return False
+        folded = part.casefold()
+        if folded in markers or "flagged" in folded:
+            return True
+    return False
 
 
 def cut_documents(cut_root: Path) -> Set[str]:
@@ -136,10 +204,20 @@ def cut_documents(cut_root: Path) -> Set[str]:
     return documents
 
 
-# The files-read heading, at any level from 1 to 4, in any case, with or
-# without a colon. The section runs to the next heading of the same level or
-# higher, so a `## Files read` placed among the issues ends at the next one.
-_FILES_READ = re.compile(r"^(#{1,4})[ \t]*files[ \t]+read[ \t]*:?[ \t]*$", re.IGNORECASE | re.MULTILINE)
+# The files-read list, which must never reach the parser: glued to the last
+# issue it would cite every document in the room and pre-match every finding.
+# A model will not always call it "Files read", so the phrase is matched
+# loosely: files or documents, then read, reviewed or opened.
+_HEADING = re.compile(r"^(#{1,6})[ \t]*(.*?)[ \t]*#*[ \t]*$")
+_FILES_PHRASE = re.compile(r"\b(?:files|documents)[ \t]+(?:read|reviewed|opened)\b", re.IGNORECASE)
+# A level 2-4 heading, or a line on its own, that is only the label: the
+# phrase, an optional bracketed note, an optional colon, optional emphasis.
+# Only the label, so an issue titled "Documents reviewed by the board were
+# unsigned" stays an issue.
+_FILES_LABEL = re.compile(
+    r"^[*_]*(?:files|documents)[ \t]+(?:read|reviewed|opened)[*_]*[ \t]*(?:\([^)\n]*\))?[ \t]*:?[*_]*$",
+    re.IGNORECASE,
+)
 _FIRST_ISSUE = re.compile(r"^#{2,4}(?!#)", re.MULTILINE)
 # `Model: x`, `**Model:** x`, `- **Skill**: x` — the hand-back asks for the
 # plain form, and a model reaching for emphasis should not lose the line.
@@ -161,6 +239,9 @@ class SplitReport:
     `issues` runs from the first `##`–`####` heading and is all the parser
     sees. `files_read` is None when the report has no files-read section,
     which the summary says out loud rather than treating as "read nothing".
+    `set_aside` names any level-1 section after the issues that is not a
+    files-read list: the hand-back allows none, and its paths must not be
+    credited to the last issue.
     """
 
     preamble: str
@@ -168,20 +249,55 @@ class SplitReport:
     files_read: Optional[str]
     model: str
     skill: str
+    set_aside: List[str]
 
 
 def split_report(text: str) -> SplitReport:
-    files_read = None
-    heading = _FILES_READ.search(text)
-    if heading:
-        level = len(heading.group(1))
-        following = re.compile(rf"^#{{1,{level}}}(?!#)", re.MULTILINE).search(text, heading.end())
-        end = following.start() if following else len(text)
-        files_read = text[heading.end():end]
-        text = text[: heading.start()] + text[end:]
-    first = _FIRST_ISSUE.search(text)
-    preamble = text[: first.start()] if first else text
-    issues = text[first.start():] if first else ""
+    """Cut the files-read list, and any other trailing section, away from the
+    issues.
+
+    - A level-1 heading after the first issue ends the issues: the hand-back
+      puts only `# Files read` there. If it names files read (in any wording
+      `_FILES_PHRASE` knows) it is a files-read list; otherwise it is set
+      aside. Every such section runs to the next level-1 heading, so two
+      lists are both read.
+    - A level 2-4 heading, or a line on its own, that is only the files-read
+      label starts a list too. The heading's list runs to the next heading of
+      its level or higher; the line's to the next heading of any level.
+    """
+    kept: List[str] = []
+    files: List[str] = []
+    set_aside: List[str] = []
+    files_seen = seen_issue = False
+    mode, ends_at = "keep", 0  # a files or aside section ends at a heading of level <= ends_at
+    for line in text.split("\n"):
+        heading = _HEADING.match(line)
+        level = len(heading.group(1)) if heading else 0
+        title = heading.group(2) if heading else ""
+        if mode != "keep" and heading and level <= ends_at:
+            mode = "keep"
+        if mode == "files":
+            files.append(line)
+            continue
+        if mode == "aside":
+            continue
+        if heading and level == 1 and _FILES_PHRASE.search(title) and (seen_issue or _FILES_LABEL.match(title)):
+            mode, ends_at, files_seen = "files", 1, True
+        elif heading and level == 1 and seen_issue:
+            mode, ends_at = "aside", 1
+            set_aside.append(line.strip())
+        elif heading and 2 <= level <= 4 and _FILES_LABEL.match(title):
+            mode, ends_at, files_seen = "files", level, True
+        elif not heading and seen_issue and _FILES_LABEL.match(line.strip()):
+            mode, ends_at, files_seen = "files", 6, True
+        else:
+            if heading and 2 <= level <= 4:
+                seen_issue = True
+            kept.append(line)
+    remaining = "\n".join(kept)
+    first = _FIRST_ISSUE.search(remaining)
+    preamble = remaining[: first.start()] if first else remaining
+    issues = remaining[first.start():] if first else ""
     fields = {
         match.group(1).lower(): match.group(2).strip().strip("*_").strip()
         for match in _FIELD.finditer(preamble)
@@ -189,9 +305,10 @@ def split_report(text: str) -> SplitReport:
     return SplitReport(
         preamble=preamble,
         issues=issues,
-        files_read=files_read,
+        files_read="\n".join(files) if files_seen else None,
         model=fields.get("model", ""),
         skill=fields.get("skill", ""),
+        set_aside=set_aside,
     )
 
 
@@ -283,6 +400,7 @@ class ImportResult:
     cited_not_read: List[str]
     ignored: List[str]
     dropped: List[str]
+    uncited: List[str]
     provenance: str
     notes: List[str]
 
@@ -311,12 +429,16 @@ def _unknown_message(unknown: Sequence[str], cut: str, room: Path) -> str:
     )
 
 
-def _provenance(room: Path, conf: RoomConf, unknown: Sequence[str]) -> Tuple[str, str]:
+def _provenance(room: Path, conf: RoomConf, unknown: Sequence[str], preamble: str) -> Tuple[str, str]:
     """The room_hash to stamp, and one sentence saying why or why not.
 
-    The stamp vouches that this report was made on this room. Legora never saw
-    the manifest, so what vouches is the path check: every path the report
-    names is in the room. When any was dropped, nothing vouches."""
+    The stamp vouches that this report was made on this room, and Legora never
+    saw the manifest, so two things must vouch together. Every path the report
+    names is in the room — necessary, but not enough: rooms are built from
+    shared slot names, so every path of a smaller room exists in a larger one,
+    and a path check alone verified a Quern review scored against Tarnwold's
+    key. And the report's title names the room: the skill puts the Legora
+    project's name there, and the README names projects after their room."""
     manifest = PurePosixPath(conf.get_relative_path("KEY_ROOT")) / MANIFEST_NAME
     if unknown:
         return "", (
@@ -324,13 +446,24 @@ def _provenance(room: Path, conf: RoomConf, unknown: Sequence[str]) -> Tuple[str
             "and were dropped, so it cannot be vouched for as a run on this room. The "
             "scorecard will say UNVERIFIED."
         )
+    name = re.sub(r"^project\s+", "", conf.get("ROOM_CODENAME").strip(), flags=re.IGNORECASE)
+    if not re.search(rf"\b{re.escape(name)}\b", preamble, re.IGNORECASE):
+        return "", (
+            f"not stamped — the report's title does not name {name}, and rooms share their "
+            "folder names, so the paths alone cannot tie it to this room. Name the Legora "
+            "project after the room and its cut (legora/README.md); the skill copies that "
+            "name into the title. The scorecard will say UNVERIFIED."
+        )
     content_hash = read_content_hash(room / manifest)
     if not content_hash:
         return "", (
             f"not stamped — no content_hash in {manifest} (it is written by /vdr-package). "
             "The scorecard will say UNVERIFIED."
         )
-    return content_hash, f"room_hash stamped from {manifest}: every path the report names is in this room."
+    return content_hash, (
+        f"room_hash stamped from {manifest}: every path the report names is in this room, "
+        f"and its title names {name}."
+    )
 
 
 def import_review(
@@ -339,6 +472,7 @@ def import_review(
     cut: Optional[str] = None,
     tool: Optional[str] = None,
     drop_unknown: bool = False,
+    allow_wide: bool = False,
 ) -> ImportResult:
     """Read a Legora review and build the tool output for `score`.
 
@@ -346,9 +480,11 @@ def import_review(
     to BLIND_TREE and cannot be inferred, because a subset run and a
     full-room run cite identical paths. Every path the report names — in an
     issue or in the files-read list — must be a document in the cut, or the
-    import is refused (LegoraImportError), unless `drop_unknown`. Documents
-    the files-read list leaves out are reported, never refused: the output is
-    a true record of what was found either way."""
+    import is refused (LegoraImportError), unless `drop_unknown`. A path from
+    the answer-key side of the room is refused always: that run was not blind.
+    An issue citing more than MAX_CITATIONS documents is refused unless
+    `allow_wide`. Documents the files-read list leaves out are reported, never
+    refused: the output is a true record of what was found either way."""
     conf = load_room_conf(room / "room.conf")
     section_dirs = conf.get_list("SECTION_DIRS")
     cut_name = (cut or conf.get("BLIND_TREE")).strip("/")
@@ -371,6 +507,25 @@ def import_review(
             "score. The hand-back puts each issue under its own '##' heading; a report "
             "in another shape has to be fixed at the skill, not guessed at here."
         ) from None
+
+    markers = {part.casefold() for part in PurePosixPath(conf.get_relative_path("KEY_ROOT")).parts}
+    markers.add(PurePosixPath(conf.get_relative_path("FLAGGED_TREE")).name.casefold())
+    written = citation_pairs(split.issues, section_dirs)
+    if split.files_read is not None:
+        written += citation_pairs(split.files_read, section_dirs)
+    answers = sorted({raw for raw, _ in written if key_side(raw, section_dirs, markers)})
+    if answers:
+        raise LegoraImportError(
+            "\n".join(
+                [f"the report cites {len(answers)} path(s) from the answer-key side of the room:"]
+                + _named(answers)
+                + [
+                    "The Legora project held the answers, so this was not a blind review and "
+                    "cannot be scored. Upload only a blind cut — data-room/, subset/, "
+                    "data-room-pdf/ or data-room-docx/ — to a fresh project (legora/README.md)."
+                ]
+            )
+        )
 
     documents = cut_documents(cut_root)
     sections = set(section_dirs)
@@ -398,6 +553,24 @@ def import_review(
                 "summary": finding.summary,
             }
         )
+    wide = [(f["title"], len(f["documents"])) for f in findings if len(f["documents"]) > MAX_CITATIONS]
+    if wide and not allow_wide:
+        raise LegoraImportError(
+            "\n".join(
+                [
+                    f"{len(wide)} issue(s) cite more documents than any evidence chain in a "
+                    f"synthetic room (the most so far is five; the limit here is {MAX_CITATIONS}):"
+                ]
+                + [f"  '{title}' cites {count} documents" for title, count in wide[:LIST_LIMIT]]
+                + [
+                    "Nothing was written. The usual cause is a list of paths — a files-read "
+                    "list under a heading the importer does not know — read as part of an "
+                    "issue, which would pre-match every finding it touches. Check the "
+                    "report's headings against the hand-back. If an issue really rests on "
+                    "that many documents, --allow-wide-issues imports it."
+                ]
+            )
+        )
     cited_known = {d for finding in findings for d in finding["documents"]}
 
     if split.files_read is None:
@@ -410,7 +583,12 @@ def import_review(
         cited_not_read = sorted(cited_known - read)
         files_read, not_read = len(read), len(missed)
 
-    room_hash, provenance = _provenance(room, conf, unknown)
+    room_hash, provenance = _provenance(room, conf, unknown, split.preamble)
+    notes = notes + [
+        f"set aside the section '{heading}' after the issues: the hand-back allows only "
+        "'# Files read' there, and its paths were credited to no issue"
+        for heading in split.set_aside
+    ]
     output = {
         "tool": tool_name(split.model, split.skill, tool),
         "room_hash": room_hash,
@@ -430,6 +608,7 @@ def import_review(
         cited_not_read=cited_not_read,
         ignored=sorted(ignored),
         dropped=unknown,
+        uncited=[f["title"] for f in findings if not f["documents"]],
         provenance=provenance,
         notes=notes,
     )
@@ -473,6 +652,12 @@ def render_summary(result: ImportResult, out: Path) -> str:
     if result.dropped:
         lines.append(f"Dropped under --drop-unknown, not in {result.cut}/: {len(result.dropped)}")
         lines += _named(result.dropped)
+    if result.uncited:
+        lines.append(
+            f"{len(result.uncited)} issue(s) cite no document in {result.cut}/, so the pre-match "
+            "cannot place them; /vdr-score's adjudication will:"
+        )
+        lines += _named(result.uncited)
     lines.append(f"Provenance: {result.provenance}")
     lines.append(f"Tool: {result.output['tool']}")
     lines += [f"Note: {note}" for note in result.notes]

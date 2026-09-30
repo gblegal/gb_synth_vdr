@@ -42,8 +42,9 @@ worse, read as something it is not.
 
 ## A worked example
 
-The shape, with the words in angle brackets standing for your own. It says
-nothing about what is in any room.
+The shape, with the words in angle brackets standing for your own. The paths
+are invented, numbered past any real document: it says nothing about what is
+in any room.
 
 ```markdown
 # Review of <project name>
@@ -59,8 +60,8 @@ Severity: high
 the figure, the date, and which document shows each.>
 
 Documents:
-- `09_employment/9.2_policies/9.2.1_policies-01.md`
-- `12_insurance/12.1_schedule/12.1.1_schedule-01.md`
+- `09_employment/9.2_policies/9.2.99_policies-99.md`
+- `12_insurance/12.1_schedule/12.1.99_schedule-99.md`
 
 ## <One line naming the second issue>
 
@@ -69,13 +70,13 @@ Severity: low
 <What the issue is and why it matters.>
 
 Documents:
-- `16_operations-quality/16.1_qms/16.1.1_qms-01.md`
+- `16_operations-quality/16.1_qms/16.1.99_qms-99.md`
 
 # Files read
 
-- `09_employment/9.2_policies/9.2.1_policies-01.md`
-- `12_insurance/12.1_schedule/12.1.1_schedule-01.md`
-- `16_operations-quality/16.1_qms/16.1.1_qms-01.md`
+- `09_employment/9.2_policies/9.2.99_policies-99.md`
+- `12_insurance/12.1_schedule/12.1.99_schedule-99.md`
+- `16_operations-quality/16.1_qms/16.1.99_qms-99.md`
 ```
 
 On a room of PDFs the same paths end `.pdf`, and on a room of Word files

@@ -64,22 +64,27 @@ def assert_carries_no_key_material(texts: dict) -> None:
             assert not pattern.search(text), f"{name} carries {pattern.pattern!r}"
 
 
+# The worked example cites slot 99 of three subfolders, a slot no room reaches, so
+# an agent that echoes the example earns no credit and is pointed at no real
+# document (final review: 12.1.1_schedule-01 is INS-2's source in Tarnwold).
+EXAMPLE_PATHS = [
+    "09_employment/9.2_policies/9.2.99_policies-99.md",
+    "12_insurance/12.1_schedule/12.1.99_schedule-99.md",
+    "16_operations-quality/16.1_qms/16.1.99_qms-99.md",
+]
+
+
 def test_the_worked_example_imports_to_exactly_the_issues_it_shows(xs_room):
+    for rel in EXAMPLE_PATHS:
+        (xs_room / "data-room" / rel).write_text("# Stand-in\n", encoding="utf-8")
     example = EXAMPLE.search(HAND_BACK.read_text(encoding="utf-8")).group(1)
     path = xs_room.parent / "example.md"
     path.write_text(example + "\n", encoding="utf-8")
     result = import_review(path, xs_room)
     shown = [(f["title"], f["severity"], f["documents"]) for f in result.output["findings"]]
     assert shown == [
-        (
-            "<One line naming the first issue>",
-            "high",
-            [
-                "09_employment/9.2_policies/9.2.1_policies-01.md",
-                "12_insurance/12.1_schedule/12.1.1_schedule-01.md",
-            ],
-        ),
-        ("<One line naming the second issue>", "low", ["16_operations-quality/16.1_qms/16.1.1_qms-01.md"]),
+        ("<One line naming the first issue>", "high", EXAMPLE_PATHS[:2]),
+        ("<One line naming the second issue>", "low", EXAMPLE_PATHS[2:]),
     ]
     assert result.files_read == 3
     assert result.output["tool"].startswith("legora/model-not-stated")
@@ -101,6 +106,11 @@ def test_the_review_skill_rules_out_reading_beyond_the_project():
     assert "CUAD Database" in skill
     assert "not known" in skill
     assert "_review" in skill
+
+
+def test_the_review_skill_asks_for_one_files_read_list():
+    # Final review C1: sub-agents each return a list; the report must carry one.
+    assert "one `# Files read`" in (REVIEW / "SKILL.md").read_text(encoding="utf-8")
 
 
 def test_no_legora_source_carries_a_table():

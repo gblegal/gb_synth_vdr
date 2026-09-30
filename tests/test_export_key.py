@@ -75,3 +75,12 @@ def test_export_key_cli(xs_room, tmp_path, capsys):
     assert "only this folder" in capsys.readouterr().out
     assert main(["export-key", "--room", str(xs_room), "--out", str(out)]) == 2
     assert "already exists" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("inside", ["subset/key", "legora-key"])
+def test_export_key_refuses_a_folder_anywhere_inside_the_room(xs_room, inside):
+    # Final review I2: subset/ is not a configured tree, but it is a cut that gets
+    # uploaded for review — the key must never be written anywhere in the room.
+    with pytest.raises(ExportKeyError, match="inside the room"):
+        export_key(xs_room, xs_room / inside)
+    assert not (xs_room / inside).exists()

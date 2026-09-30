@@ -156,10 +156,14 @@ mapped to its `.md`. The `# Files read` list is cut off before parsing: left in,
 be read as part of the last issue and pre-match every finding. `--cut` names the folder that
 was uploaded (default `BLIND_TREE`); any path the report names that the cut does not hold
 stops the import, listed, because that is how a wrong cut or a stale copy shows itself, and
-`--drop-unknown` imports the rest instead. Documents the files-read list leaves out are
-reported, never refused. `room_hash` is stamped from `_key/manifest.json` only when every
-path resolved. Exit **2** on any refusal, an unreadable report or room, or an `--out` inside
-a room tree, which would change the tree it was written into.
+`--drop-unknown` imports the rest instead. A path from the answer-key side — under `_key/`
+or any `flagged` folder — is refused always: that run read the answers. An issue citing more
+than 20 documents is refused unless `--allow-wide-issues`, because it is almost always a list
+of paths read as part of the issue. Documents the files-read list leaves out are reported,
+never refused. `room_hash` is stamped from `_key/manifest.json` only when every path resolved
+*and* the report's title names the room: rooms share their folder names, so paths alone
+cannot tell one room from another. Exit **2** on any refusal, an unreadable report or room,
+or an `--out` inside a room tree, which would change the tree it was written into.
 
 ### `python3 -m synthvdr export-key` — the key, for a Legora explain project
 
@@ -169,8 +173,9 @@ python3 -m synthvdr export-key --room <room-dir> --out <new-folder>
 
 Writes `findings.md`, `distractors.md` and `flagged/` — only the flagged documents that
 carry a finding's evidence or a distractor — into a folder that must not exist yet and must
-sit outside every room tree. That folder is the whole upload for `explain-a-planted-finding`.
-Exit **2** if it exists, sits inside a tree, or the flagged tree lacks a document it needs.
+sit outside the room altogether, since a cut such as `subset/` is uploaded for review. That
+folder is the whole upload for `explain-a-planted-finding`. Exit **2** if it exists, sits
+inside the room, or the flagged tree lacks a document it needs.
 
 ---
 

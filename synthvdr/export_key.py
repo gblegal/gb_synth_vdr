@@ -16,7 +16,10 @@ than by remembering which folders to leave out:
   byte-for-byte copy of its blind twin with nothing to explain. On a
   2,000-document room that is a couple of hundred files, not two thousand.
 
-The folder must not exist, and must sit outside every tree of the room.
+The folder must not exist, and must sit outside the room altogether: a cut
+such as `subset/` is not a configured tree, but it is uploaded for review, and
+a key written into it would travel with it. Paths are compared case-folded,
+because macOS will happily write `Data-Room/` into `data-room/`.
 """
 
 from __future__ import annotations
@@ -45,20 +48,19 @@ def export_key(room: Path, out: Path) -> ExportReport:
     conf = load_room_conf(room / "room.conf")
     key_root = room / conf.get_relative_path("KEY_ROOT")
     flagged_root = room / conf.get_relative_path("FLAGGED_TREE")
-    blind_root = room / conf.get_relative_path("BLIND_TREE")
 
     if out.exists():
         raise ExportKeyError(
             f"{out} already exists — export-key writes a fresh folder and never over one"
         )
-    target = out.resolve()
-    for key, tree in (("BLIND_TREE", blind_root), ("FLAGGED_TREE", flagged_root), ("KEY_ROOT", key_root)):
-        resolved = tree.resolve()
-        if target == resolved or resolved in target.parents:
-            raise ExportKeyError(
-                f"{out} is inside the room's {key} ({tree}) — the export must sit outside "
-                "every tree of the room"
-            )
+    target = [part.casefold() for part in out.resolve().parts]
+    inside = [part.casefold() for part in room.resolve().parts]
+    if target[: len(inside)] == inside:
+        raise ExportKeyError(
+            f"{out} is inside the room ({room}) — the key must never be written into the "
+            "room, where a cut uploaded for review could carry it. Write it outside, for "
+            "example ~/Desktop/<room>-key"
+        )
 
     findings = load_findings(key_root / "findings.yaml")
     distractors_path = key_root / "distractors.yaml"

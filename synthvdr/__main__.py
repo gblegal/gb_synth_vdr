@@ -13,7 +13,7 @@ a long room's rendered page counts per length band, or with `--estimate` the
 size of its scan trees before rendering.
 
 `import-legora-review <report.md|.docx> --room PATH --out FILE [--cut DIR]
-[--tool NAME] [--drop-unknown]` turns a report from Legora's
+[--tool NAME] [--drop-unknown] [--allow-wide-issues]` turns a report from Legora's
 `review-a-test-data-room` skill into a tool output `score` reads (see
 synthvdr.legora_import); `export-key --room PATH --out DIR` writes a room's
 key, and only its key, for a Legora explain project (see synthvdr.export_key).
@@ -394,7 +394,7 @@ def _run_pages(args) -> int:
 
 def _run_import_legora_review(args) -> int:
     """`import-legora-review <report> --room . --out FILE [--cut DIR] [--tool NAME]
-    [--drop-unknown]` — see synthvdr.legora_import.
+    [--drop-unknown] [--allow-wide-issues]` — see synthvdr.legora_import.
 
     Its own refusals are printed as written rather than flattened onto one
     line like the other commands' errors: a refusal lists every path the cut
@@ -410,7 +410,12 @@ def _run_import_legora_review(args) -> int:
     try:
         check_out(args.out, args.room, args.cut)
         result = import_review(
-            args.report, args.room, cut=args.cut, tool=args.tool, drop_unknown=args.drop_unknown
+            args.report,
+            args.room,
+            cut=args.cut,
+            tool=args.tool,
+            drop_unknown=args.drop_unknown,
+            allow_wide=args.allow_wide_issues,
         )
     except RoomConfError as exc:
         print(f"synthvdr import-legora-review: {exc}".replace("\n", " "), file=sys.stderr)
@@ -558,6 +563,12 @@ def main(argv=None) -> int:
         action="store_true",
         help="Import even if the report names paths the cut does not hold: drop and list "
         "them, and leave room_hash empty so the scorecard says UNVERIFIED.",
+    )
+    legora_parser.add_argument(
+        "--allow-wide-issues",
+        action="store_true",
+        help="Import an issue citing more than 20 documents, which is otherwise refused as "
+        "most likely a list of paths read as part of it.",
     )
 
     export_parser = subparsers.add_parser(

@@ -451,3 +451,136 @@ def test_cli_requires_out(xs_room, capsys):
         run_cli(report_path, "--room", xs_room)
     assert exited.value.code == 2
     assert "required: --out" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Final-review fixes. Each test reproduces a finding shown on a real room.
+# ---------------------------------------------------------------------------
+
+def everything_in(room: Path):
+    return sorted(cut_documents(room / "data-room"))
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "# Files read (40 documents)",
+        "# Files Reviewed",
+        "# Documents read",
+        "**Files read**",
+        "# Appendix: Files read",
+        "Files read:",
+    ],
+)
+def test_a_files_read_list_under_a_variant_heading_never_reaches_the_last_issue(xs_room, heading):
+    # Final review C1: any of these used to glue 1,000 paths to the last issue.
+    text = report(("Consent gap", "critical", [CORP])) + f"\n{heading}\n\n" + "".join(
+        f"- `{d}`\n" for d in everything_in(xs_room)
+    )
+    result = import_review(write_report(xs_room, text), xs_room)
+    assert result.findings == 1
+    assert result.output["findings"][0]["documents"] == [CORP]
+    assert result.files_read == 40
+
+
+def test_two_files_read_lists_are_both_read_and_neither_joins_an_issue(xs_room):
+    half = len(everything_in(xs_room)) // 2
+    text = (
+        report(("Consent gap", "critical", [CORP]))
+        + "\n# Files read\n\n" + "".join(f"- `{d}`\n" for d in everything_in(xs_room)[:half])
+        + "\n# Files read\n\n" + "".join(f"- `{d}`\n" for d in everything_in(xs_room)[half:])
+    )
+    result = import_review(write_report(xs_room, text), xs_room)
+    assert result.output["findings"][0]["documents"] == [CORP]
+    assert result.files_read == 40
+
+
+def test_a_level_three_files_read_list_is_not_an_issue(xs_room):
+    text = report(("Consent gap", "critical", [CORP])) + "\n### Files read (corporate)\n\n" + f"- `{COMM}`\n"
+    result = import_review(write_report(xs_room, text), xs_room)
+    assert result.findings == 1
+    assert result.output["findings"][0]["documents"] == [CORP]
+
+
+def test_a_trailing_level_one_section_is_set_aside_not_credited_to_the_last_issue(xs_room):
+    text = report(("Consent gap", "critical", [CORP])) + f"\n# Limitations\n\nWe did not open `{COMM}`.\n"
+    result = import_review(write_report(xs_room, text), xs_room)
+    assert result.output["findings"][0]["documents"] == [CORP]
+    assert any("# Limitations" in note for note in result.notes)
+
+
+def test_an_issue_citing_more_documents_than_any_evidence_chain_is_refused(xs_room):
+    # Final review C1's backstop: whatever shape leaks a list into an issue, an
+    # issue citing more than MAX_CITATIONS documents is refused unless allowed.
+    many = everything_in(xs_room)[:21]
+    text = report(("Everything", "high", many))
+    with pytest.raises(LegoraImportError, match="21 documents"):
+        import_review(write_report(xs_room, text), xs_room)
+    result = import_review(write_report(xs_room, text), xs_room, allow_wide=True)
+    assert len(result.output["findings"][0]["documents"]) == 21
+
+
+def test_provenance_is_not_stamped_when_the_report_does_not_name_the_room(xs_room):
+    # Final review I1: path resolution cannot tell rooms apart, so the title must name the room.
+    add_manifest(xs_room)
+    text = report(("Gap", "high", [CORP]), preamble="# Review of Quern subset\n\nModel: not known\n")
+    result = import_review(write_report(xs_room, text), xs_room)
+    assert result.output["room_hash"] == ""
+    assert "Testbed" in result.provenance
+
+
+def test_provenance_is_stamped_when_the_title_names_the_room_in_any_case(xs_room):
+    content_hash = add_manifest(xs_room)
+    text = report(("Gap", "high", [CORP]), preamble="# Review of TESTBED data-room\n\nModel: not known\n")
+    assert import_review(write_report(xs_room, text), xs_room).output["room_hash"] == content_hash
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "/workspace/documents/projects/Testbed/_key/flagged",
+        "/workspace/documents/projects/Testbed/data-room-subset-flagged",
+    ],
+)
+def test_a_report_citing_the_answer_key_side_is_refused(xs_room, prefix):
+    # Final review I3: a run that read the flagged tree is not a blind review.
+    text = report(("Gap", "high", [f"{prefix}/{CORP}"]))
+    with pytest.raises(LegoraImportError, match="answer-key side"):
+        import_review(write_report(xs_room, text), xs_room, drop_unknown=True)
+
+
+def test_a_files_read_entry_from_the_answer_key_side_is_refused(xs_room):
+    text = report(("Gap", "high", [CORP]), files_read=[f"_key/flagged/{CORP}"])
+    with pytest.raises(LegoraImportError, match="answer-key side"):
+        import_review(write_report(xs_room, text), xs_room)
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "`01_corporate/1.1_constitutional/1.1.1_constitutional-01.pdf#page=3`",
+        "`01_corporate/1.1_constitutional/1.1.1_constitutional-01.pdf (p. 3)`",
+        "`01_corporate/1.1_constitutional/1.1.1_constitutional-01.pdf, clause 4.2`",
+        "`01_corporate/1.1_constitutional/1.1.1_constitutional-01.md:12`",
+        "`01_corporate/1.1_constitutional/1.1.1_constitutional-01.pdf.`",
+        "_01_corporate/1.1_constitutional/1.1.1_constitutional-01.pdf_",
+        "01\\_corporate/1.1\\_constitutional/1.1.1\\_constitutional-01.pdf",
+    ],
+)
+def test_a_citation_with_trailing_text_emphasis_or_escapes_is_still_read(written):
+    # Final review I4: each of these used to vanish, silently understating recall.
+    assert citations_in(f"See {written} for the consent.", SECTIONS) == [DOC]
+
+
+def test_issues_citing_no_document_in_the_cut_are_named_in_the_summary(xs_room):
+    text = report(("Gap", "high", [CORP])) + "\n## Unsourced worry\n\nSeverity: low\n\nNo document.\n"
+    result = import_review(write_report(xs_room, text), xs_room)
+    assert result.uncited == ["Unsourced worry"]
+    assert "Unsourced worry" in render_summary(result, xs_room.parent / "o.json")
+
+
+def test_cli_allow_wide_issues_imports_a_wide_issue(xs_room, tmp_path):
+    out = tmp_path / "wide.json"
+    report_path = write_report(xs_room, report(("Everything", "high", everything_in(xs_room)[:21])))
+    assert run_cli(report_path, "--room", xs_room, "--out", out) == 2
+    assert run_cli(report_path, "--room", xs_room, "--out", out, "--allow-wide-issues") == 0
