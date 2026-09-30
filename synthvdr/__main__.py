@@ -1,4 +1,4 @@
-"""CLI: python3 -m synthvdr {score|score-classification|answerkey|corrupt|manifest|pages} ...
+"""CLI: python3 -m synthvdr {score|score-classification|answerkey|corrupt|manifest|pages|import-legora-review|export-key} ...
 
 `score <tool-output> --room PATH [--baseline FILE]` scores a findings report;
 `score-classification <output> --room PATH [--key FILE]` scores a
@@ -11,6 +11,12 @@ verified rather than only assumed; `manifest` writes `_key/manifest.json`,
 the clean room's content hash, which is /vdr-package's step 4; `pages` reports
 a long room's rendered page counts per length band, or with `--estimate` the
 size of its scan trees before rendering.
+
+`import-legora-review <report.md|.docx> --room PATH --out FILE [--cut DIR]
+[--tool NAME] [--drop-unknown] [--allow-wide-issues]` turns a report from Legora's
+`review-a-test-data-room` skill into a tool output `score` reads (see
+synthvdr.legora_import); `export-key --room PATH --out DIR` writes a room's
+key, and only its key, for a Legora explain project (see synthvdr.export_key).
 
 This is the package-level entry point (`python3 -m synthvdr ...`), distinct
 from `synthvdr/qa/__main__.py` (`python3 -m synthvdr.qa`, the room QA gate
@@ -386,6 +392,67 @@ def _run_pages(args) -> int:
     return 0
 
 
+def _run_import_legora_review(args) -> int:
+    """`import-legora-review <report> --room . --out FILE [--cut DIR] [--tool NAME]
+    [--drop-unknown] [--allow-wide-issues]` — see synthvdr.legora_import.
+
+    Its own refusals are printed as written rather than flattened onto one
+    line like the other commands' errors: a refusal lists every path the cut
+    does not hold, and a list is only readable one to a line."""
+    from .legora_import import (
+        LegoraImportError,
+        check_out,
+        import_review,
+        render_summary,
+        write_output,
+    )
+
+    try:
+        check_out(args.out, args.room, args.cut)
+        result = import_review(
+            args.report,
+            args.room,
+            cut=args.cut,
+            tool=args.tool,
+            drop_unknown=args.drop_unknown,
+            allow_wide=args.allow_wide_issues,
+        )
+    except RoomConfError as exc:
+        print(f"synthvdr import-legora-review: {exc}".replace("\n", " "), file=sys.stderr)
+        return 2
+    except LegoraImportError as exc:
+        print(f"synthvdr import-legora-review: {exc}", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(f"synthvdr import-legora-review: could not read {args.report}: {exc}", file=sys.stderr)
+        return 2
+    try:
+        write_output(result, args.out)
+    except OSError as exc:
+        print(f"synthvdr import-legora-review: could not write {args.out}: {exc}", file=sys.stderr)
+        return 2
+    print(render_summary(result, args.out))
+    return 0
+
+
+def _run_export_key(args) -> int:
+    """`export-key --room . --out DIR` — see synthvdr.export_key."""
+    from .export_key import ExportKeyError, export_key
+
+    try:
+        report = export_key(args.room, args.out)
+    except (RoomConfError, SchemaError, ExportKeyError) as exc:
+        print(f"synthvdr export-key: {exc}".replace("\n", " "), file=sys.stderr)
+        return 2
+    print(
+        f"Answer key exported to {report.out}: findings.md ({report.findings} findings), "
+        f"distractors.md ({report.distractors}), flagged/ ({report.flagged} documents).\n"
+        "Upload this folder, and only this folder, to a Legora project of its own for "
+        "explain-a-planted-finding. Never put it beside a blind room."
+    )
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="synthvdr", description="synth-vdr tools.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -474,6 +541,49 @@ def main(argv=None) -> int:
     pages_parser.add_argument("--room", type=Path, default=Path("."))
     pages_parser.add_argument("--estimate", action="store_true")
 
+    legora_parser = subparsers.add_parser(
+        "import-legora-review",
+        help="Turn a Legora review (Markdown or Word) into a tool output `score` reads: "
+        "paths mapped back onto the room, checked against the uploaded cut, provenance "
+        "stamped only when every path resolves.",
+    )
+    legora_parser.add_argument("report", type=Path)
+    legora_parser.add_argument("--room", type=Path, default=Path("."))
+    legora_parser.add_argument("--out", type=Path, required=True)
+    legora_parser.add_argument(
+        "--cut",
+        default=None,
+        help="The folder uploaded to Legora, relative to the room — data-room, subset, "
+        "data-room-pdf or data-room-docx (default: BLIND_TREE).",
+    )
+    legora_parser.add_argument(
+        "--tool",
+        default=None,
+        help="The tool name to record, e.g. legora/claude-opus-5-5, when the report says "
+        "the model is not known.",
+    )
+    legora_parser.add_argument(
+        "--drop-unknown",
+        action="store_true",
+        help="Import even if the report names paths the cut does not hold: drop and list "
+        "them, and leave room_hash empty so the scorecard says UNVERIFIED.",
+    )
+    legora_parser.add_argument(
+        "--allow-wide-issues",
+        action="store_true",
+        help="Import an issue citing more than 20 documents, which is otherwise refused as "
+        "most likely a list of paths read as part of it.",
+    )
+
+    export_parser = subparsers.add_parser(
+        "export-key",
+        help="Write a fresh folder holding a room's answer key for a Legora explain "
+        "project: findings.md, distractors.md and the flagged copies of every evidence "
+        "and distractor document.",
+    )
+    export_parser.add_argument("--room", type=Path, default=Path("."))
+    export_parser.add_argument("--out", type=Path, required=True)
+
     args = parser.parse_args(argv)
 
     if args.command == "answerkey":
@@ -488,6 +598,10 @@ def main(argv=None) -> int:
         return _run_manifest(args)
     if args.command == "pages":
         return _run_pages(args)
+    if args.command == "import-legora-review":
+        return _run_import_legora_review(args)
+    if args.command == "export-key":
+        return _run_export_key(args)
     parser.error(f"unknown command {args.command!r}")  # pragma: no cover - argparse exits first
     return 2  # pragma: no cover
 

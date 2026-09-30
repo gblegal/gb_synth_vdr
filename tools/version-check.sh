@@ -23,6 +23,7 @@ SURFACE=(
     .claude-plugin
     agents
     domain
+    legora
     schemas
     skills
     synthvdr

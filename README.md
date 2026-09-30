@@ -155,6 +155,8 @@ Working on the plugin itself, from a checkout? See
   workflow.
 - [TECHNICAL-NOTES.md](TECHNICAL-NOTES.md) — installation, commands, file formats, the test
   fixture, and the known limits of what this project can check.
+- [legora/README.md](legora/README.md) — reviewing a room with Legora and scoring what it
+  hands back.
 
 ## Licence, and where the vocabulary came from
 
