@@ -5,10 +5,14 @@ from __future__ import annotations
 import pytest
 
 from synthvdr.legora_import import (
+    LegoraImportError,
     citations_in,
     cut_documents,
     normalise_citations,
     normalise_path,
+    read_report,
+    split_report,
+    tool_name,
 )
 
 SECTIONS = ["01_corporate", "05_commercial", "11_environmental-hs"]
@@ -86,3 +90,112 @@ def test_cut_documents_maps_renders_to_md_and_skips_dotfiles(tmp_path):
     (cut / ".synthvdr-subset").write_text("marker")
     (cut / "01_corporate" / ".DS_Store").write_bytes(b"")
     assert cut_documents(cut) == {DOC}
+
+
+def test_split_report_cuts_the_files_read_list_away_from_the_issues():
+    report = (
+        "# Review of Testbed\n\nModel: not known\n"
+        "Skill: Built from synth-vdr 0.20.0 · domain pack ma\n\n"
+        "## First issue\n\nSeverity: high\n\nDocuments:\n- `01_corporate/x.md`\n\n"
+        "# Files read\n\n- `01_corporate/x.md`\n- `05_commercial/y.md`\n"
+    )
+    split = split_report(report)
+    assert split.issues.startswith("## First issue")
+    assert "Files read" not in split.issues and "05_commercial/y.md" not in split.issues
+    assert "05_commercial/y.md" in split.files_read
+    assert split.preamble.startswith("# Review of Testbed")
+    assert split.model == "not known"
+    assert split.skill == "Built from synth-vdr 0.20.0 · domain pack ma"
+
+
+@pytest.mark.parametrize("heading", ["# Files read", "## Files read", "# Files Read:", "### files read"])
+def test_split_report_finds_the_files_read_heading_at_any_level_and_case(heading):
+    split = split_report(f"## Issue\n\nSeverity: low\n\n{heading}\n\n- `01_corporate/x.md`\n")
+    assert split.files_read is not None and "01_corporate/x.md" in split.files_read
+    assert "01_corporate/x.md" not in split.issues
+
+
+def test_a_level_two_files_read_section_ends_at_the_next_issue():
+    split = split_report("## Files read\n\n- `01_corporate/x.md`\n\n## Issue\n\nSeverity: low\n")
+    assert split.issues.startswith("## Issue")
+    assert "01_corporate/x.md" not in split.issues
+
+
+def test_split_report_without_a_files_read_section_says_so():
+    assert split_report("## Issue\n\nSeverity: low\n").files_read is None
+
+
+def test_split_report_reads_bold_and_bulleted_field_lines():
+    split = split_report(
+        "# Review\n\n**Model:** claude-opus-5-5\n- **Skill**: Built from synth-vdr 0.20.0\n\n"
+        "## Issue\n\nSeverity: low\n"
+    )
+    assert split.model == "claude-opus-5-5"
+    assert split.skill == "Built from synth-vdr 0.20.0"
+
+
+def test_read_report_strips_a_bom_and_windows_line_endings(tmp_path):
+    path = tmp_path / "review.md"
+    path.write_bytes(
+        "\ufeff## Issue\r\n\r\nSeverity: high\r\n\r\n# Files read\r\n\r\n- `01_corporate/x.md`\r\n".encode(
+            "utf-8"
+        )
+    )
+    text, notes = read_report(path)
+    assert text.startswith("## Issue\n") and "\r" not in text
+    assert notes == []
+    split = split_report(text)
+    assert split.issues.startswith("## Issue") and split.files_read is not None
+
+
+def test_read_report_turns_word_headings_and_lists_into_markdown(tmp_path):
+    docx = pytest.importorskip("docx")
+    document = docx.Document()
+    document.add_heading("Review of Testbed", level=0)
+    document.add_paragraph("Model: not known")
+    document.add_heading("Consent not obtained", level=2)
+    document.add_paragraph("Severity: critical")
+    document.add_paragraph(
+        "data-room-pdf/01_corporate/1.1_constitutional/1.1.1_constitutional-01.pdf", style="List Bullet"
+    )
+    document.add_heading("Files read", level=1)
+    document.add_paragraph(
+        "01_corporate/1.1_constitutional/1.1.1_constitutional-01.pdf", style="List Bullet"
+    )
+    document.add_table(rows=1, cols=2)
+    path = tmp_path / "review.docx"
+    document.save(str(path))
+    text, notes = read_report(path)
+    lines = text.splitlines()
+    assert "# Review of Testbed" in lines
+    assert "## Consent not obtained" in lines
+    assert "- data-room-pdf/01_corporate/1.1_constitutional/1.1.1_constitutional-01.pdf" in lines
+    assert "# Files read" in lines
+    assert len(notes) == 1 and "1 table" in notes[0]
+
+
+def test_read_report_refuses_anything_but_markdown_or_word(tmp_path):
+    path = tmp_path / "review.txt"
+    path.write_text("## Issue\n")
+    with pytest.raises(LegoraImportError, match="Markdown"):
+        read_report(path)
+
+
+@pytest.mark.parametrize(
+    "model, skill, override, expected",
+    [
+        ("not known", "", None, "legora/model-not-stated"),
+        ("", "", None, "legora/model-not-stated"),
+        ("Not known.", "", None, "legora/model-not-stated"),
+        ("claude-sonnet-5-5", "", None, "legora/claude-sonnet-5-5"),
+        (
+            "not known",
+            "Built from synth-vdr 0.20.0 · domain pack ma",
+            None,
+            "legora/model-not-stated (Built from synth-vdr 0.20.0 · domain pack ma)",
+        ),
+        ("claude-sonnet-5-5", "Built from x", "legora/claude-opus-5-5", "legora/claude-opus-5-5"),
+    ],
+)
+def test_tool_name(model, skill, override, expected):
+    assert tool_name(model, skill, override) == expected

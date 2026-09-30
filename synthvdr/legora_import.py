@@ -31,8 +31,9 @@ as it reads any tool's JSON.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Sequence, Set
+from typing import List, Optional, Sequence, Set, Tuple
 
 
 class LegoraImportError(Exception):
@@ -124,3 +125,133 @@ def cut_documents(cut_root: Path) -> Set[str]:
             continue
         documents.add(as_markdown(rel.as_posix()))
     return documents
+
+
+# The files-read heading, at any level from 1 to 4, in any case, with or
+# without a colon. The section runs to the next heading of the same level or
+# higher, so a `## Files read` placed among the issues ends at the next one.
+_FILES_READ = re.compile(r"^(#{1,4})[ \t]*files[ \t]+read[ \t]*:?[ \t]*$", re.IGNORECASE | re.MULTILINE)
+_FIRST_ISSUE = re.compile(r"^#{2,4}(?!#)", re.MULTILINE)
+# `Model: x`, `**Model:** x`, `- **Skill**: x` — the hand-back asks for the
+# plain form, and a model reaching for emphasis should not lose the line.
+_FIELD = re.compile(
+    r"^[ \t]*(?:[-*][ \t]+)?[*_]*(model|skill)[*_]*[ \t]*:[*_]*[ \t]*(.*?)[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_HEADING_STYLE = re.compile(r"^heading\s+([1-9])$", re.IGNORECASE)
+
+# Model lines that mean the agent did not know. The skill asks for "not known":
+# the probe found that an example identifier in a skill is handed straight back.
+_NOT_STATED = {"", "not known", "unknown", "not stated", "n/a", "none"}
+
+
+@dataclass(frozen=True)
+class SplitReport:
+    """A report cut into the parts the importer treats differently.
+
+    `issues` runs from the first `##`–`####` heading and is all the parser
+    sees. `files_read` is None when the report has no files-read section,
+    which the summary says out loud rather than treating as "read nothing".
+    """
+
+    preamble: str
+    issues: str
+    files_read: Optional[str]
+    model: str
+    skill: str
+
+
+def split_report(text: str) -> SplitReport:
+    files_read = None
+    heading = _FILES_READ.search(text)
+    if heading:
+        level = len(heading.group(1))
+        following = re.compile(rf"^#{{1,{level}}}(?!#)", re.MULTILINE).search(text, heading.end())
+        end = following.start() if following else len(text)
+        files_read = text[heading.end():end]
+        text = text[: heading.start()] + text[end:]
+    first = _FIRST_ISSUE.search(text)
+    preamble = text[: first.start()] if first else text
+    issues = text[first.start():] if first else ""
+    fields = {
+        match.group(1).lower(): match.group(2).strip().strip("*_").strip()
+        for match in _FIELD.finditer(preamble)
+    }
+    return SplitReport(
+        preamble=preamble,
+        issues=issues,
+        files_read=files_read,
+        model=fields.get("model", ""),
+        skill=fields.get("skill", ""),
+    )
+
+
+def _docx_to_markdown(path: Path) -> Tuple[str, List[str]]:
+    """A Word report as Markdown: `Title` and `Heading 1`–`9` become `#` runs
+    (5 and deeper stay too deep for the parser, as in Markdown), list
+    paragraphs become `- ` lines, and everything else is its text. Tables are
+    not read — the hand-back asks for none — and are counted in a note so
+    their loss is said, not silent."""
+    try:
+        import docx
+    except ImportError:
+        raise LegoraImportError(
+            "reading a Word report needs python-docx — install the docx extra: "
+            "pip install -e '.[docx]'"
+        ) from None
+    try:
+        document = docx.Document(str(path))
+    except Exception as exc:  # python-docx raises its own types for a bad package
+        raise LegoraImportError(f"{path} could not be read as a Word document: {exc}") from None
+    lines: List[str] = []
+    for paragraph in document.paragraphs:
+        text = paragraph.text.strip()
+        style = (paragraph.style.name if paragraph.style is not None else "") or ""
+        heading = _HEADING_STYLE.match(style.strip())
+        if not text:
+            lines.append("")
+        elif style.strip().lower() == "title":
+            lines.append(f"# {text}")
+        elif heading:
+            lines.append("#" * int(heading.group(1)) + f" {text}")
+        elif "list" in style.lower():
+            lines.append(f"- {text}")
+        else:
+            lines.append(text)
+    notes = []
+    if document.tables:
+        notes.append(
+            f"the Word report has {len(document.tables)} table(s); their contents were "
+            "not read — the hand-back asks for none"
+        )
+    return "\n".join(lines) + "\n", notes
+
+
+def read_report(path: Path) -> Tuple[str, List[str]]:
+    """The report as Markdown with LF line endings, and any reader notes.
+
+    `utf-8-sig` drops a byte-order mark, which would otherwise sit in front of
+    a first `##` and hide it; line endings are unified because the heading
+    patterns anchor on `$`, which does not match before a `\\r`."""
+    suffix = path.suffix.lower()
+    if suffix == ".md":
+        text, notes = path.read_text(encoding="utf-8-sig"), []
+    elif suffix == ".docx":
+        text, notes = _docx_to_markdown(path)
+    else:
+        raise LegoraImportError(
+            f"{path.name}: a Legora review is read as Markdown (.md) or Word (.docx), "
+            f"not {path.suffix or 'a file with no extension'}"
+        )
+    return text.replace("\r\n", "\n").replace("\r", "\n"), notes
+
+
+def tool_name(model: str, skill: str, override: Optional[str] = None) -> str:
+    """The `tool` field: `--tool` when given, else `legora/<model>` from the
+    report's Model line, with the skill build in brackets when the report
+    names it — the only record in the output of which build ran."""
+    if override:
+        return override
+    stated = model.strip().rstrip(".").strip()
+    name = "legora/" + (stated if stated.lower() not in _NOT_STATED else "model-not-stated")
+    return f"{name} ({skill})" if skill else name
