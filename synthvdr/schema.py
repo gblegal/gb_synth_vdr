@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Set
+from typing import Dict, Iterable, List, Optional, Sequence, Set
 
 import yaml
 
@@ -277,6 +277,34 @@ def render_findings_md(findings: FindingSet, room_codename: str) -> str:
             ],
             "",
         ]
+    return "\n".join(lines)
+
+
+def render_distractors_md(distractors: Sequence[Distractor], room_codename: str) -> str:
+    """The distractors as a page a person — or Legora's explain skill — can
+    read, in the same form as `render_findings_md`. YAML stays canonical."""
+    lines = [
+        f"# {room_codename} — distractors",
+        "",
+        "**Generated from `distractors.yaml`. Do not hand-edit; edit the YAML and regenerate.**",
+        "",
+        "**Answer-key material. Never fed to a tool under test.**",
+        "",
+        "Each distractor looks as alarming as a real finding at its location. Its "
+        "resolution is a different document carrying the benign explanation.",
+        "",
+    ]
+    for distractor in distractors:
+        lines += [
+            f"## {distractor.id} — {distractor.title}",
+            "",
+            f"- **Location:** `{distractor.location}`",
+            f"- **Resolution:** `{distractor.resolution}`",
+            f"- **Imitates:** {distractor.shape_matches or '—'}",
+            "",
+        ]
+    if not distractors:
+        lines += ["No distractors are planted in this room.", ""]
     return "\n".join(lines)
 
 

@@ -420,6 +420,24 @@ def _run_import_legora_review(args) -> int:
     return 0
 
 
+def _run_export_key(args) -> int:
+    """`export-key --room . --out DIR` — see synthvdr.export_key."""
+    from .export_key import ExportKeyError, export_key
+
+    try:
+        report = export_key(args.room, args.out)
+    except (RoomConfError, SchemaError, ExportKeyError) as exc:
+        print(f"synthvdr export-key: {exc}".replace("\n", " "), file=sys.stderr)
+        return 2
+    print(
+        f"Answer key exported to {report.out}: findings.md ({report.findings} findings), "
+        f"distractors.md ({report.distractors}), flagged/ ({report.flagged} documents).\n"
+        "Upload this folder, and only this folder, to a Legora project of its own for "
+        "explain-a-planted-finding. Never put it beside a blind room."
+    )
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="synthvdr", description="synth-vdr tools.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -536,6 +554,15 @@ def main(argv=None) -> int:
         "them, and leave room_hash empty so the scorecard says UNVERIFIED.",
     )
 
+    export_parser = subparsers.add_parser(
+        "export-key",
+        help="Write a fresh folder holding a room's answer key for a Legora explain "
+        "project: findings.md, distractors.md and the flagged copies of every evidence "
+        "and distractor document.",
+    )
+    export_parser.add_argument("--room", type=Path, default=Path("."))
+    export_parser.add_argument("--out", type=Path, required=True)
+
     args = parser.parse_args(argv)
 
     if args.command == "answerkey":
@@ -552,6 +579,8 @@ def main(argv=None) -> int:
         return _run_pages(args)
     if args.command == "import-legora-review":
         return _run_import_legora_review(args)
+    if args.command == "export-key":
+        return _run_export_key(args)
     parser.error(f"unknown command {args.command!r}")  # pragma: no cover - argparse exits first
     return 2  # pragma: no cover
 
