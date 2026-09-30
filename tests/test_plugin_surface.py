@@ -70,6 +70,11 @@ ROOT = Path(__file__).resolve().parent.parent
 SKILL_NAMES = ("vdr-scope", "vdr-findings", "vdr-build", "vdr-qa", "vdr-package", "vdr-score")
 AGENT_NAMES = ("vdr-author", "vdr-auditor")
 
+# Legora's skills live apart from the plugin's, under legora/skills/, and are built into a
+# pack by tools/build_legora_pack.py (legora/README.md). Named here for the same reason as
+# SKILL_NAMES: nothing else would notice one going missing.
+LEGORA_SKILL_NAMES = ("review-a-test-data-room", "explain-a-planted-finding")
+
 # Arrive in Task 18 ("/vdr-build" + the two subagents) and Task 19 ("/vdr-qa",
 # "/vdr-package", "/vdr-score"). Remove each name from here in the same commit that adds
 # its skill/agent file — leaving it in place after the file exists is a hard failure
@@ -2864,3 +2869,18 @@ def test_docs_name_gates_21_and_22_where_the_gates_are_listed():
         in notes
     )
     assert "Frithcombe (`ll_vdr_08`)" in notes
+
+
+@pytest.mark.parametrize("name", LEGORA_SKILL_NAMES)
+def test_each_legora_skill_exists_with_frontmatter_naming_its_folder(name):
+    path = ROOT / "legora" / "skills" / name / "SKILL.md"
+    assert path.is_file(), f"{path} is missing"
+    meta = frontmatter(path)
+    assert meta["name"] == name
+    assert len(str(meta.get("description", ""))) > 30
+    assert body_after_frontmatter(path).strip()
+
+
+def test_the_legora_skills_are_exactly_the_declared_set():
+    found = sorted(p.parent.name for p in (ROOT / "legora" / "skills").glob("*/SKILL.md"))
+    assert found == sorted(LEGORA_SKILL_NAMES)
