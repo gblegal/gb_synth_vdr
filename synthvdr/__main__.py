@@ -426,7 +426,11 @@ def _run_import_legora_review(args) -> int:
     except OSError as exc:
         print(f"synthvdr import-legora-review: could not read {args.report}: {exc}", file=sys.stderr)
         return 2
-    write_output(result, args.out)
+    try:
+        write_output(result, args.out)
+    except OSError as exc:
+        print(f"synthvdr import-legora-review: could not write {args.out}: {exc}", file=sys.stderr)
+        return 2
     print(render_summary(result, args.out))
     return 0
 

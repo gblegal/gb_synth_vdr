@@ -156,14 +156,19 @@ mapped to its `.md`. The `# Files read` list is cut off before parsing: left in,
 be read as part of the last issue and pre-match every finding. `--cut` names the folder that
 was uploaded (default `BLIND_TREE`); any path the report names that the cut does not hold
 stops the import, listed, because that is how a wrong cut or a stale copy shows itself, and
-`--drop-unknown` imports the rest instead. A path from the answer-key side — under `_key/`
+`--drop-unknown` imports the rest instead. So does a report whose paths name a different
+tree from `--cut`, or that cites `.pdf` or `.docx` files the cut holds none of; the refusal
+names the `--cut` to pass. A path from the answer-key side — under `_key/`
 or any `flagged` folder — is refused always: that run read the answers. An issue citing more
 than 20 documents is refused unless `--allow-wide-issues`, because it is almost always a list
 of paths read as part of the issue. Documents the files-read list leaves out are reported,
 never refused. `room_hash` is stamped from `_key/manifest.json` only when every path resolved
 *and* the report's title names the room: rooms share their folder names, so paths alone
-cannot tell one room from another. Exit **2** on any refusal, an unreadable report or room,
-or an `--out` inside a room tree, which would change the tree it was written into.
+cannot tell one room from another. A report is read as UTF-8, or as UTF-16 when it carries a
+byte-order mark, as Word's "save as text" writes it. Exit **2** on any refusal, an unreadable
+report or room, an `--out` that is a folder, or an `--out` inside any tree of the room —
+compared case-folded, and covering every cut, not only the uploaded one — which would change
+the tree it was written into.
 
 ### `python3 -m synthvdr export-key` — the key, for a Legora explain project
 

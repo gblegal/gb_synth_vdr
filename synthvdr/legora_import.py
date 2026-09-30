@@ -172,6 +172,38 @@ def citations_in(text: str, section_dirs: Sequence[str]) -> List[str]:
     return [path for _, path in citation_pairs(text, section_dirs)]
 
 
+def room_trees(room: Path, section_dirs: Sequence[str]) -> Set[str]:
+    """The room's top-level folders that hold section folders: every cut of it
+    — data-room/, subset/, data-room-pdf/, data-room-docx/, a corrupted twin."""
+    return {
+        entry.name
+        for entry in room.iterdir()
+        if entry.is_dir()
+        and not entry.name.startswith(".")
+        and any((entry / section).is_dir() for section in section_dirs)
+    }
+
+
+def tree_named(raw: str, section_dirs: Sequence[str], trees: Set[str]) -> Optional[str]:
+    """The room tree a cited path names just before its section folder, if any:
+    `…/data-room-pdf/01_corporate/…` names data-room-pdf."""
+    sections = set(section_dirs)
+    by_fold = {tree.casefold(): tree for tree in trees}
+    parts = [p for p in raw.strip().replace("\\", "/").split("/") if p]
+    for index, part in enumerate(parts):
+        if part in sections:
+            return by_fold.get(parts[index - 1].casefold()) if index else None
+    return None
+
+
+def _within(path: Path, tree: Path) -> bool:
+    """Whether `path` is `tree` or inside it, compared case-folded: macOS will
+    happily write `Data-Room/` into `data-room/`."""
+    inner = [part.casefold() for part in path.resolve().parts]
+    outer = [part.casefold() for part in tree.resolve().parts]
+    return inner[: len(outer)] == outer
+
+
 def key_side(raw: str, section_dirs: Sequence[str], markers: Set[str]) -> bool:
     """Whether a cited path came from the answer-key side of a room: a folder
     before its section folder is the key root, the flagged tree, or any folder
@@ -225,6 +257,9 @@ _FIELD = re.compile(
     r"^[ \t]*(?:[-*][ \t]+)?[*_]*(model|skill)[*_]*[ \t]*:[*_]*[ \t]*(.*?)[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
+# The next field's label inside a field's value: Word joins consecutive lines
+# into one paragraph, so "Model: not known Skill: Built from …" arrives whole.
+_INLINE_FIELD = re.compile(r"[ \t]+[*_]*(model|skill)[*_]*[ \t]*:[*_]*[ \t]*", re.IGNORECASE)
 _HEADING_STYLE = re.compile(r"^heading\s+([1-9])$", re.IGNORECASE)
 
 # Model lines that mean the agent did not know. The skill asks for "not known":
@@ -298,10 +333,14 @@ def split_report(text: str) -> SplitReport:
     first = _FIRST_ISSUE.search(remaining)
     preamble = remaining[: first.start()] if first else remaining
     issues = remaining[first.start():] if first else ""
-    fields = {
-        match.group(1).lower(): match.group(2).strip().strip("*_").strip()
-        for match in _FIELD.finditer(preamble)
-    }
+    fields = {}
+    for match in _FIELD.finditer(preamble):
+        value = match.group(2)
+        joined = _INLINE_FIELD.search(value)
+        if joined:
+            fields.setdefault(joined.group(1).lower(), value[joined.end():].strip().strip("*_").strip())
+            value = value[: joined.start()]
+        fields[match.group(1).lower()] = value.strip().strip("*_").strip()
     return SplitReport(
         preamble=preamble,
         issues=issues,
@@ -332,6 +371,15 @@ def _docx_to_markdown(path: Path) -> Tuple[str, List[str]]:
     lines: List[str] = []
     for paragraph in document.paragraphs:
         text = paragraph.text.strip()
+        # A link's target can be the only place a path is written: the
+        # paragraph's text holds the link's words, not where it points.
+        targets = [
+            link.address
+            for link in getattr(paragraph, "hyperlinks", [])
+            if link.address and link.address not in text
+        ]
+        if targets:
+            text = f"{text} ({', '.join(targets)})".strip()
         style = (paragraph.style.name if paragraph.style is not None else "") or ""
         heading = _HEADING_STYLE.match(style.strip())
         if not text:
@@ -357,11 +405,23 @@ def read_report(path: Path) -> Tuple[str, List[str]]:
     """The report as Markdown with LF line endings, and any reader notes.
 
     `utf-8-sig` drops a byte-order mark, which would otherwise sit in front of
-    a first `##` and hide it; line endings are unified because the heading
-    patterns anchor on `$`, which does not match before a `\\r`."""
+    a first `##` and hide it; UTF-16, which Word's "save as text" writes, is
+    read by its mark; anything else not UTF-8 is refused rather than guessed
+    at. Line endings are unified because the heading patterns anchor on `$`,
+    which does not match before a `\\r`."""
     suffix = path.suffix.lower()
     if suffix == ".md":
-        text, notes = path.read_text(encoding="utf-8-sig"), []
+        data, notes = path.read_bytes(), []
+        if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+            text = data.decode("utf-16")  # Word's "save as text"; the mark says which way round
+        else:
+            try:
+                text = data.decode("utf-8-sig")
+            except UnicodeDecodeError as exc:
+                raise LegoraImportError(
+                    f"{path.name} is not UTF-8 text (byte {exc.start} is {data[exc.start]:#04x}). "
+                    "Save the report as UTF-8 Markdown, or as Word, and import it again."
+                ) from None
     elif suffix == ".docx":
         text, notes = _docx_to_markdown(path)
     else:
@@ -502,6 +562,12 @@ def import_review(
     try:
         parsed = parse_markdown_report(issues)
     except ToolOutputError:
+        if split.files_read is not None and _FIRST_ISSUE.search(split.files_read):
+            raise LegoraImportError(
+                f"{report.name}'s files-read section comes before its issues and runs over "
+                "them, so no issues are left to score. '# Files read' must come last, as the "
+                "hand-back says: move it to the end of the report and import again."
+            ) from None
         raise LegoraImportError(
             f"{report.name} has no issues under '##' headings, so there is nothing to "
             "score. The hand-back puts each issue under its own '##' heading; a report "
@@ -525,6 +591,28 @@ def import_review(
                     "data-room-pdf/ or data-room-docx/ — to a fresh project (legora/README.md)."
                 ]
             )
+        )
+
+    # The cut must be the folder Legora saw, or every coverage figure is
+    # counted against the wrong one. Two tells: the tree a path names before
+    # its section folder, and a rendered file type the cut does not hold.
+    trees = room_trees(room, section_dirs)
+    named = sorted({t for t in (tree_named(raw, section_dirs, trees) for raw, _ in written) if t})
+    if named and cut_name.casefold() not in {tree.casefold() for tree in named}:
+        raise LegoraImportError(
+            f"the report's paths name {', '.join(t + '/' for t in named)} but --cut is "
+            f"{cut_name}/, so what was and was not read would be counted against the wrong "
+            f"folder. Pass --cut {named[0]}."
+        )
+    kinds = {PurePosixPath(raw.strip()).suffix.lower() for raw, _ in written} & set(RENDERED_SUFFIXES)
+    held = {p.suffix.lower() for p in cut_root.rglob("*") if p.is_file() and not p.name.startswith(".")}
+    unheld = sorted(kinds - held)
+    if unheld:
+        holders = sorted(t for t in trees if any(next((room / t).rglob(f"*{k}"), None) for k in unheld))
+        hint = f"Pass --cut {holders[0]}." if holders else "Pass --cut with the folder that was uploaded."
+        raise LegoraImportError(
+            f"the report cites {' and '.join(unheld)} files, but {cut_name}/ holds none: "
+            f"Legora read a rendered cut of the room. {hint}"
         )
 
     documents = cut_documents(cut_root)
@@ -669,21 +757,27 @@ def render_summary(result: ImportResult, out: Path) -> str:
 
 
 def check_out(out: Path, room: Path, cut: Optional[str] = None) -> None:
-    """Refuse an `--out` inside the uploaded cut or any room tree.
+    """Refuse an `--out` that is a folder, or that sits inside any tree of the
+    room: the uploaded cut, the blind and flagged trees, the key, and every
+    other cut.
 
     A tool output written into the blind tree becomes a document in it and
     changes the tree's content hash — the room would no longer be the room
-    its manifest certifies. Into the key it would sit among the answers."""
+    its manifest certifies. Into another cut it is uploaded as a document next
+    time; into the key it would sit among the answers. `eval-runs/` and the
+    like stay open."""
     conf = load_room_conf(room / "room.conf")
-    target = out.resolve()
-    trees = [("the uploaded cut", cut or conf.get("BLIND_TREE"))] + [
-        (key, conf.get_relative_path(key)) for key in ("BLIND_TREE", "FLAGGED_TREE", "KEY_ROOT")
-    ]
-    for label, rel in trees:
-        tree = (room / rel).resolve()
-        if target == tree or tree in target.parents:
+    if out.is_dir():
+        raise LegoraImportError(
+            f"--out {out} is a folder; name the file to write, for example {out / 'legora.json'}"
+        )
+    protected = {cut or conf.get("BLIND_TREE")}
+    protected |= {conf.get_relative_path(key) for key in ("BLIND_TREE", "FLAGGED_TREE", "KEY_ROOT")}
+    protected |= room_trees(room, conf.get_list("SECTION_DIRS"))
+    for rel in sorted(protected):
+        if _within(out, room / rel):
             raise LegoraImportError(
-                f"--out {out} is inside {rel}/ ({label}). A tool output written into a room "
-                "tree changes what that tree holds, and the blind tree's content hash with it. "
-                "Write it beside the room instead, for example in eval-runs/."
+                f"--out {out} is inside {rel}/, a tree of the room. A tool output written into "
+                "a room tree changes what that tree holds, and the blind tree's content hash "
+                "with it. Write it beside the trees instead, for example in eval-runs/."
             )

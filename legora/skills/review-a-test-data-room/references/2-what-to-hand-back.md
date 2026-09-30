@@ -8,7 +8,8 @@ worse, read as something it is not.
 ## The shape
 
 - A title line: `# Review of` and the project's name.
-- `Model:` and `Skill:`, as the skill describes.
+- `Model:` and `Skill:`, as the skill describes, each on its own line with a
+  blank line between them, so that Word keeps them apart.
 - One issue per `##` heading. The heading names the issue in one line. No
   other headings inside an issue: use plain paragraphs and lists.
 - The first line of each issue's body is `Severity:` and one word: critical,
@@ -50,6 +51,7 @@ in any room.
 # Review of <project name>
 
 Model: not known
+
 Skill: <the line beneath the skill's heading that begins "Built from">
 
 ## <One line naming the first issue>

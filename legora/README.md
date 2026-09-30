@@ -62,7 +62,9 @@ skill's name, and that name is the only record in Legora of which build ran.
 
    It refuses on any path the cut does not hold, whether from a wrong
    `--cut`, a stale copy in Legora or an invented path, and lists every one;
-   `--drop-unknown` imports the rest and leaves the run UNVERIFIED. It refuses
+   `--drop-unknown` imports the rest and leaves the run UNVERIFIED. If the
+   paths name another tree, or cite PDFs the cut does not hold, it says which
+   `--cut` to pass. It refuses
    outright a report citing anything from `_key/` or a flagged tree, and an
    issue citing more than 20 documents unless `--allow-wide-issues`. It
    reports what the files-read list leaves out, and which issues cite nothing.

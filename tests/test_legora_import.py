@@ -350,8 +350,9 @@ def test_files_read_entries_outside_the_section_folders_are_ignored_not_refused(
 
 
 def test_a_document_cited_twice_in_two_forms_is_cited_once(xs_room):
-    text = report(("Gap", "high", [CORP, f"data-room/{CORP}", CORP[:-3] + ".pdf"]))
-    result = import_review(write_report(xs_room, text), xs_room)
+    add_pdf_cut(xs_room)
+    text = report(("Gap", "high", [CORP, f"data-room-pdf/{CORP[:-3]}.pdf", CORP[:-3] + ".pdf"]))
+    result = import_review(write_report(xs_room, text), xs_room, cut="data-room-pdf")
     assert result.output["findings"][0]["documents"] == [CORP]
 
 
@@ -584,3 +585,113 @@ def test_cli_allow_wide_issues_imports_a_wide_issue(xs_room, tmp_path):
     report_path = write_report(xs_room, report(("Everything", "high", everything_in(xs_room)[:21])))
     assert run_cli(report_path, "--room", xs_room, "--out", out) == 2
     assert run_cli(report_path, "--room", xs_room, "--out", out, "--allow-wide-issues") == 0
+
+
+# ---------------------------------------------------------------------------
+# The final review's deferred minors, fixed at Greg's request.
+# ---------------------------------------------------------------------------
+
+
+def test_a_model_and_skill_line_merged_into_one_paragraph_are_read_apart():
+    # Word joins consecutive lines into one paragraph.
+    split = split_report(
+        "# Review of Testbed\n\nModel: not known Skill: Built from synth-vdr 0.20.0 · domain pack ma\n\n"
+        "## Issue\n\nSeverity: low\n"
+    )
+    assert split.model == "not known"
+    assert split.skill == "Built from synth-vdr 0.20.0 · domain pack ma"
+
+
+def test_a_utf16_report_with_a_byte_order_mark_is_read(tmp_path):
+    # Word's "save as text" writes UTF-16 with a byte-order mark.
+    path = tmp_path / "review.md"
+    path.write_bytes("## Issue\n\nSeverity: high\n".encode("utf-16"))
+    text, _ = read_report(path)
+    assert text.startswith("## Issue\n")
+
+
+def test_a_report_that_is_not_utf8_is_refused_not_a_traceback(xs_room, tmp_path, capsys):
+    path = xs_room.parent / "review.md"
+    path.write_bytes(b"## Issue\n\nSeverity: high\n\nThe seller\x92s consent.\n")
+    assert run_cli(path, "--room", xs_room, "--out", tmp_path / "o.json") == 2
+    assert "UTF-8" in capsys.readouterr().err
+
+
+def test_an_out_path_that_is_a_folder_is_refused_not_a_traceback(xs_room, tmp_path, capsys):
+    report_path = write_report(xs_room, report(("Gap", "high", [CORP])))
+    assert run_cli(report_path, "--room", xs_room, "--out", tmp_path) == 2
+    assert "folder" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "inside", ["Data-Room/legora.json", "subset/legora.json", "data-room-pdf/legora.json"]
+)
+def test_cli_refuses_an_out_path_in_any_room_tree_whatever_its_case(xs_room, capsys, inside):
+    # macOS writes Data-Room/ into data-room/; subset/ is a cut even when it
+    # was not the one uploaded, and gets uploaded next time.
+    add_pdf_cut(xs_room)
+    report_path = write_report(xs_room, report(("Gap", "high", [CORP])))
+    assert run_cli(report_path, "--room", xs_room, "--out", xs_room / inside) == 2
+    assert not (xs_room / inside).exists()
+    assert "inside" in capsys.readouterr().err
+
+
+def test_cli_writes_into_the_rooms_eval_runs_folder(xs_room):
+    out = xs_room / "eval-runs" / "legora.json"
+    report_path = write_report(xs_room, report(("Gap", "high", [CORP])))
+    assert run_cli(report_path, "--room", xs_room, "--out", out) == 0
+    assert out.is_file()
+
+
+def test_a_files_read_list_before_the_issues_is_named_in_the_refusal(xs_room):
+    text = (
+        "# Review of Project Testbed\n\n# Files read\n\n"
+        f"- `{CORP}`\n\n## Gap\n\nSeverity: high\n\nDocuments:\n- `{CORP}`\n"
+    )
+    with pytest.raises(LegoraImportError, match="must come last"):
+        import_review(write_report(xs_room, text), xs_room)
+
+
+def test_a_report_naming_another_tree_than_the_cut_is_refused(xs_room):
+    # Paths from data-room-pdf/ imported with --cut subset: recall would be
+    # right and every coverage figure wrong.
+    add_pdf_cut(xs_room)
+    with pytest.raises(LegoraImportError, match="--cut data-room-pdf"):
+        import_review(write_report(xs_room, report(("Gap", "high", [pdf(CORP)]))), xs_room, cut="subset")
+
+
+def test_a_report_citing_pdfs_against_a_cut_of_markdown_is_refused(xs_room):
+    text = report(("Gap", "high", [CORP[:-3] + ".pdf"]))
+    with pytest.raises(LegoraImportError, match=r"\.pdf"):
+        import_review(write_report(xs_room, text), xs_room, cut="subset")
+
+
+def test_markdown_citations_against_a_pdf_cut_are_accepted(xs_room):
+    add_pdf_cut(xs_room)
+    text = report(("Gap", "high", [CORP]))
+    result = import_review(write_report(xs_room, text), xs_room, cut="data-room-pdf")
+    assert result.output["findings"][0]["documents"] == [CORP]
+
+
+def test_a_word_hyperlink_target_is_read_as_a_citation(tmp_path):
+    docx = pytest.importorskip("docx")
+    from docx.opc.constants import RELATIONSHIP_TYPE
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    document = docx.Document()
+    document.add_heading("Gap", level=2)
+    paragraph = document.add_paragraph("See ")
+    target = "data-room-pdf/01_corporate/1.1_constitutional/1.1.1_constitutional-01.pdf"
+    rel = document.part.relate_to(target, RELATIONSHIP_TYPE.HYPERLINK, is_external=True)
+    link = OxmlElement("w:hyperlink")
+    link.set(qn("r:id"), rel)
+    run, words = OxmlElement("w:r"), OxmlElement("w:t")
+    words.text = "the constitution"
+    run.append(words)
+    link.append(run)
+    paragraph._p.append(link)
+    path = tmp_path / "review.docx"
+    document.save(str(path))
+    text, _ = read_report(path)
+    assert citations_in(text, SECTIONS) == [DOC]

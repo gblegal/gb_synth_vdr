@@ -11,10 +11,13 @@ than by remembering which folders to leave out:
 - `distractors.md`, rendered from `distractors.yaml`;
 - `flagged/`, holding only the flagged documents that carry a finding's
   evidence or sit at a distractor's location or resolution. Those are the
-  only documents a question can be about: the flagged tree's carriers are
-  exactly the evidence paths, and every other flagged document is a
-  byte-for-byte copy of its blind twin with nothing to explain. On a
-  2,000-document room that is a couple of hundred files, not two thousand.
+  only documents a question can be about. The evidence documents carry a
+  "Key diligence points" block, since the flagged tree's carriers are exactly
+  the evidence paths; a distractor's documents are byte-for-byte copies of
+  their blind twins, there so a question about one can quote it, with
+  `distractors.md` the record of why. Every other flagged document is a plain
+  copy with nothing to explain. On a 2,000-document room that is a couple of
+  hundred files, not two thousand.
 
 The folder must not exist, and must sit outside the room altogether: a cut
 such as `subset/` is not a configured tree, but it is uploaded for review, and

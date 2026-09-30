@@ -113,6 +113,18 @@ def test_the_review_skill_asks_for_one_files_read_list():
     assert "one `# Files read`" in (REVIEW / "SKILL.md").read_text(encoding="utf-8")
 
 
+def test_the_explain_skill_does_not_claim_every_flagged_document_carries_a_block():
+    # Final review minor 7: a red herring's documents carry no "Key diligence points".
+    skill = (LEGORA / "skills" / "explain-a-planted-finding" / "SKILL.md").read_text(encoding="utf-8")
+    assert "no such block" in skill
+
+
+def test_the_hand_back_keeps_model_and_skill_in_separate_paragraphs():
+    # Final review minor 1: consecutive lines become one Word paragraph.
+    example = EXAMPLE.search(HAND_BACK.read_text(encoding="utf-8")).group(1)
+    assert "Model: not known\n\nSkill:" in example
+
+
 def test_no_legora_source_carries_a_table():
     for path in sorted((LEGORA / "skills").rglob("*.md")) + [LEGORA / "README.md"]:
         assert not TABLE_ROW.search(path.read_text(encoding="utf-8")), f"{path} has a table"

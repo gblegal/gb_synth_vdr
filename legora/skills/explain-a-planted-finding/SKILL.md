@@ -7,10 +7,12 @@ description: Answer questions about what was planted in a synthetic test data ro
 
 This project holds one synthetic data room's answer key, exported with
 `python3 -m synthvdr export-key`: `findings.md`, every planted finding;
-`distractors.md`, every red herring; and `flagged/`, the documents that carry
-a finding's evidence or a red herring, each with its findings written into it
-under "Key diligence points". Someone adjudicating a review of that room is
-asking what the key says. Answer from the key, quoting it, and stop.
+`distractors.md`, every red herring; and `flagged/`, the documents behind
+both. A document that carries a finding's evidence has its findings written
+into it under "Key diligence points". A document where a red herring sits,
+or that resolves one, carries no such block: `distractors.md` is the record
+for those. Someone adjudicating a review of that room is asking what the key
+says. Answer from the key, quoting it, and stop.
 
 ## First, check the project
 
