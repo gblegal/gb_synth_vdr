@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from synthvdr.__main__ import main
 from synthvdr.legora_import import (
     LegoraImportError,
     citations_in,
@@ -396,3 +397,57 @@ def test_the_summary_ends_with_the_score_command(xs_room, tmp_path):
     summary = render_summary(result, out)
     assert summary.splitlines()[-1] == f"  python3 -m synthvdr score {out} --room {xs_room}"
     assert "critical 0, high 1, medium 0, low 0" in summary
+
+
+def run_cli(*args):
+    return main(["import-legora-review", *map(str, args)])
+
+
+def test_cli_writes_the_tool_output_and_prints_the_score_command(xs_room, tmp_path, capsys):
+    report_path = write_report(xs_room, report(("Gap", "high", [CORP]), files_read=[CORP]))
+    out = tmp_path / "runs" / "legora.json"
+    assert run_cli(report_path, "--room", xs_room, "--out", out) == 0
+    written = json.loads(out.read_text(encoding="utf-8"))
+    assert written["findings"][0]["documents"] == [CORP]
+    assert "python3 -m synthvdr score" in capsys.readouterr().out
+
+
+def test_cli_names_the_tool_when_told(xs_room, tmp_path):
+    out = tmp_path / "legora.json"
+    report_path = write_report(xs_room, report(("Gap", "high", [CORP])))
+    assert run_cli(report_path, "--room", xs_room, "--out", out, "--tool", "legora/claude-opus-5-5") == 0
+    assert json.loads(out.read_text(encoding="utf-8"))["tool"] == "legora/claude-opus-5-5"
+
+
+def test_cli_refuses_an_unknown_path_writes_nothing_and_lists_it_on_its_own_line(xs_room, tmp_path, capsys):
+    bad = "01_corporate/1.1_constitutional/1.1.9_constitutional-09.md"
+    out = tmp_path / "legora.json"
+    report_path = write_report(xs_room, report(("Gap", "high", [bad])))
+    assert run_cli(report_path, "--room", xs_room, "--out", out) == 2
+    assert not out.exists()
+    assert f"  {bad}" in capsys.readouterr().err.splitlines()
+
+
+@pytest.mark.parametrize("inside, cut", [("data-room", None), ("subset", "subset"), ("_key", None)])
+def test_cli_refuses_an_out_path_inside_a_room_tree(xs_room, capsys, inside, cut):
+    out = xs_room / inside / "legora.json"
+    report_path = write_report(xs_room, report(("Gap", "high", [CORP])))
+    args = [report_path, "--room", xs_room, "--out", out] + (["--cut", cut] if cut else [])
+    assert run_cli(*args) == 2
+    assert not out.exists()
+    assert "inside" in capsys.readouterr().err
+
+
+def test_cli_refuses_a_text_report(xs_room, tmp_path, capsys):
+    path = xs_room.parent / "review.txt"
+    path.write_text("## Gap\n\nSeverity: high\n")
+    assert run_cli(path, "--room", xs_room, "--out", tmp_path / "o.json") == 2
+    assert "Markdown" in capsys.readouterr().err
+
+
+def test_cli_requires_out(xs_room, capsys):
+    report_path = write_report(xs_room, report(("Gap", "high", [CORP])))
+    with pytest.raises(SystemExit) as exited:
+        run_cli(report_path, "--room", xs_room)
+    assert exited.value.code == 2
+    assert "required: --out" in capsys.readouterr().err

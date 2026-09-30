@@ -386,6 +386,40 @@ def _run_pages(args) -> int:
     return 0
 
 
+def _run_import_legora_review(args) -> int:
+    """`import-legora-review <report> --room . --out FILE [--cut DIR] [--tool NAME]
+    [--drop-unknown]` — see synthvdr.legora_import.
+
+    Its own refusals are printed as written rather than flattened onto one
+    line like the other commands' errors: a refusal lists every path the cut
+    does not hold, and a list is only readable one to a line."""
+    from .legora_import import (
+        LegoraImportError,
+        check_out,
+        import_review,
+        render_summary,
+        write_output,
+    )
+
+    try:
+        check_out(args.out, args.room, args.cut)
+        result = import_review(
+            args.report, args.room, cut=args.cut, tool=args.tool, drop_unknown=args.drop_unknown
+        )
+    except RoomConfError as exc:
+        print(f"synthvdr import-legora-review: {exc}".replace("\n", " "), file=sys.stderr)
+        return 2
+    except LegoraImportError as exc:
+        print(f"synthvdr import-legora-review: {exc}", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(f"synthvdr import-legora-review: could not read {args.report}: {exc}", file=sys.stderr)
+        return 2
+    write_output(result, args.out)
+    print(render_summary(result, args.out))
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="synthvdr", description="synth-vdr tools.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -474,6 +508,34 @@ def main(argv=None) -> int:
     pages_parser.add_argument("--room", type=Path, default=Path("."))
     pages_parser.add_argument("--estimate", action="store_true")
 
+    legora_parser = subparsers.add_parser(
+        "import-legora-review",
+        help="Turn a Legora review (Markdown or Word) into a tool output `score` reads: "
+        "paths mapped back onto the room, checked against the uploaded cut, provenance "
+        "stamped only when every path resolves.",
+    )
+    legora_parser.add_argument("report", type=Path)
+    legora_parser.add_argument("--room", type=Path, default=Path("."))
+    legora_parser.add_argument("--out", type=Path, required=True)
+    legora_parser.add_argument(
+        "--cut",
+        default=None,
+        help="The folder uploaded to Legora, relative to the room — data-room, subset, "
+        "data-room-pdf or data-room-docx (default: BLIND_TREE).",
+    )
+    legora_parser.add_argument(
+        "--tool",
+        default=None,
+        help="The tool name to record, e.g. legora/claude-opus-5-5, when the report says "
+        "the model is not known.",
+    )
+    legora_parser.add_argument(
+        "--drop-unknown",
+        action="store_true",
+        help="Import even if the report names paths the cut does not hold: drop and list "
+        "them, and leave room_hash empty so the scorecard says UNVERIFIED.",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "answerkey":
@@ -488,6 +550,8 @@ def main(argv=None) -> int:
         return _run_manifest(args)
     if args.command == "pages":
         return _run_pages(args)
+    if args.command == "import-legora-review":
+        return _run_import_legora_review(args)
     parser.error(f"unknown command {args.command!r}")  # pragma: no cover - argparse exits first
     return 2  # pragma: no cover
 

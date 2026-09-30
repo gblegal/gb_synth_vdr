@@ -481,3 +481,24 @@ def render_summary(result: ImportResult, out: Path) -> str:
         f"  python3 -m synthvdr score {out} --room {result.room}",
     ]
     return "\n".join(lines)
+
+
+def check_out(out: Path, room: Path, cut: Optional[str] = None) -> None:
+    """Refuse an `--out` inside the uploaded cut or any room tree.
+
+    A tool output written into the blind tree becomes a document in it and
+    changes the tree's content hash — the room would no longer be the room
+    its manifest certifies. Into the key it would sit among the answers."""
+    conf = load_room_conf(room / "room.conf")
+    target = out.resolve()
+    trees = [("the uploaded cut", cut or conf.get("BLIND_TREE"))] + [
+        (key, conf.get_relative_path(key)) for key in ("BLIND_TREE", "FLAGGED_TREE", "KEY_ROOT")
+    ]
+    for label, rel in trees:
+        tree = (room / rel).resolve()
+        if target == tree or tree in target.parents:
+            raise LegoraImportError(
+                f"--out {out} is inside {rel}/ ({label}). A tool output written into a room "
+                "tree changes what that tree holds, and the blind tree's content hash with it. "
+                "Write it beside the room instead, for example in eval-runs/."
+            )
