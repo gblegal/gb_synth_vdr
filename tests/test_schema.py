@@ -446,6 +446,8 @@ def _existing(tmp_path):
 
 
 def test_derive_prefix_for_workstream_accepts_the_correct_correspondence(tmp_path):
+    # "operations" has no existing finding to cross-check against — only
+    # length is checked for it, and it must not be blocked.
     mapping = derive_prefix_for_workstream(
         ["environmental", "financial", "operations"], ["ENV", "FIN", "OPS"], _existing(tmp_path)
     )
@@ -468,16 +470,6 @@ def test_derive_prefix_for_workstream_rejects_a_reordered_list(tmp_path):
         derive_prefix_for_workstream(
             ["environmental", "financial"], ["FIN", "ENV"], _existing(tmp_path)
         )
-
-
-def test_derive_prefix_for_workstream_does_not_block_a_workstream_with_no_existing_finding(
-    tmp_path,
-):
-    # "operations" has no existing finding to cross-check against — only length is checked.
-    mapping = derive_prefix_for_workstream(
-        ["environmental", "financial", "operations"], ["ENV", "FIN", "OPS"], _existing(tmp_path)
-    )
-    assert mapping["operations"] == "OPS"
 
 
 def test_derive_prefix_for_workstream_against_the_real_domain_pack_and_room_conf():

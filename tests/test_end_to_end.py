@@ -44,15 +44,8 @@ def test_the_cli_runs_against_the_fixture(xs_room):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_repeat_builds_are_byte_identical(xs_room, build_xs_room, tmp_path):
-    second = build_xs_room(tmp_path / "second")
-    for original in sorted((xs_room / "data-room").rglob("*.md")):
-        rel = original.relative_to(xs_room / "data-room")
-        assert original.read_bytes() == (second / "data-room" / rel).read_bytes()
-
-
 def test_build_is_byte_identical_across_processes_with_different_hash_seeds(tmp_path):
-    """A same-process comparison (the previous test) shares one interpreter's
+    """A same-process comparison shares one interpreter's
     PYTHONHASHSEED for both builds, so it cannot see a set/dict-ordering
     dependence — Python salts hash() once per process, not once per call. This
     drives the build from two SEPARATE interpreter processes under two

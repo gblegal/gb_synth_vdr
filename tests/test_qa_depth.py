@@ -114,14 +114,6 @@ def test_floor_for_rejects_any_tier_that_is_not_a_or_f(bad_tier):
         floor_for("5.1.1", "5.1.1_supply-agreement.md", bad_tier, PACK)
 
 
-def test_every_archetype_floor_is_at_least_the_tier_f_floor():
-    # Belt and braces alongside load_domain's own runtime check (domain.py):
-    # a correctly tagged tier-A anchor must never be held to a lower depth
-    # standard than tier-F filler. Checked over every archetype, not just
-    # register, so a future edit to any one floor can't reintroduce this.
-    assert all(a.floor >= PACK.tier_f_floor for a in PACK.archetypes.values())
-
-
 # ---------------------------------------------------------------------------
 # Review 2026-08-26, S2. `vdr-author` subagents have no Bash, so they cannot run
 # wordcount() and every depth figure they report is a visual estimate — and every

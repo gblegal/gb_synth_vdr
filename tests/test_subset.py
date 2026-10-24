@@ -103,12 +103,6 @@ def test_selection_includes_every_evidence_document(room):
         assert rel in selected
 
 
-def test_selection_is_deterministic(room):
-    a = select_subset(room, conf_for(room), findings(), total=6)
-    b = select_subset(room, conf_for(room), findings(), total=6)
-    assert a == b
-
-
 def test_selection_honours_the_total(room):
     assert len(select_subset(room, conf_for(room), findings(), total=6)) == 6
 

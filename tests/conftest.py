@@ -42,7 +42,7 @@ def build_fixture_room(dest: Path) -> Path:
     `test_end_to_end.py`'s cross-process determinism test, which is the only
     way to observe a set/dict-ordering dependence: two calls inside the same
     pytest process always share one interpreter's hash seed, so a same-process
-    comparison (`test_repeat_builds_are_byte_identical`) cannot see it.
+    comparison cannot see it.
     """
     shutil.copytree(FIXTURE, dest)
     conf = load_room_conf(dest / "room.conf")
@@ -72,7 +72,7 @@ def build_fixture_room(dest: Path) -> Path:
     return dest
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def build_xs_room():
     return build_fixture_room
 

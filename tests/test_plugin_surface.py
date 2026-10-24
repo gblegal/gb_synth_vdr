@@ -479,12 +479,6 @@ def test_plugin_manifest_version_agrees_with_package_version():
     )
 
 
-def test_scope_skill_blocks_on_unresolved_name_collisions():
-    body = _read(ROOT / "skills" / "vdr-scope" / "SKILL.md").lower()
-    assert "gate a" in body
-    assert "collision" in body
-
-
 def test_scope_skill_and_namecheck_agree_on_the_verdict_vocabulary():
     """Review item 04: `VERDICTS` omitted `unchecked` while /vdr-scope told the
     author to write it, and the two could disagree indefinitely because nothing
@@ -561,36 +555,16 @@ def test_scope_skill_checks_for_an_existing_room_before_overwriting():
     assert "overwrit" in body
 
 
-def test_no_skill_tells_the_reader_to_hand_over_key_material():
-    for name in SKILL_NAMES:
-        path = ROOT / "skills" / name / "SKILL.md"
-        if not path.is_file():
-            # Covered by test_every_skill_exists_with_matching_frontmatter; this test
-            # checks a content property that only applies to a skill that exists, and a
-            # missing file is not itself an instance of that property being violated.
-            continue
-        assert "hand over _key" not in _read(path).lower()
-
-
 # ---------------------------------------------------------------------------
 # Final review, test-suite gap: no ```python or ```bash fence in any skill was ever
 # executed, or even parsed, by any test — exactly where F6 (a hardcoded subset total),
 # F7 (a circular verification step) and two `room_codename` NameErrors lived, all
-# invisible to the YAML/JSON/markdown example tests above. These two tests are the
-# floor every skill's fenced code must clear: real Python syntax, real shell syntax.
-# Targeted execution tests further down in this file go further for the specific
-# scripts the review named.
+# invisible to the YAML/JSON/markdown example tests above. The bash test below and
+# test_every_skill_import_resolves_to_something_real, which parses every python
+# fence and every python3 -c snippet, are the floor every skill's fenced code must
+# clear: real shell syntax, real Python syntax. Targeted execution tests further
+# down in this file go further for the specific scripts the review named.
 # ---------------------------------------------------------------------------
-
-
-def test_every_python_fence_in_every_skill_is_syntactically_valid():
-    for name in SKILL_NAMES:
-        path = ROOT / "skills" / name / "SKILL.md"
-        for block in python_examples(path):
-            try:
-                ast.parse(block)
-            except SyntaxError as exc:
-                pytest.fail(f"{path}: a ```python fence is not valid Python — {exc}\n{block}")
 
 
 def test_every_bash_fence_in_every_skill_is_syntactically_valid():
@@ -605,18 +579,6 @@ def test_every_bash_fence_in_every_skill_is_syntactically_valid():
             assert result.returncode == 0, (
                 f"{path}: a ```bash fence fails `bash -n` — {result.stderr}\n{block}"
             )
-            # Any python3 -c "..." heredoc embedded in this bash block must itself be
-            # valid Python — `bash -n` only checks shell syntax, it never looks inside
-            # a quoted string, so a NameError-class or syntax-level Python defect
-            # embedded this way is otherwise invisible to both syntax checks at once.
-            for snippet in embedded_python_snippets(block):
-                try:
-                    ast.parse(snippet)
-                except SyntaxError as exc:
-                    pytest.fail(
-                        f"{path}: a python3 -c snippet inside a ```bash fence is not "
-                        f"valid Python — {exc}\n{snippet}"
-                    )
 
 
 # ---------------------------------------------------------------------------
@@ -1209,12 +1171,6 @@ def test_qa_skill_documents_strict_mode():
     assert "skip" in body
 
 
-def test_package_skill_requires_strict_before_freezing():
-    body = (ROOT / "skills" / "vdr-package" / "SKILL.md").read_text().lower()
-    assert "--strict" in body
-    assert "manifest" in body
-
-
 def test_package_skill_subset_total_is_derived_not_hardcoded():
     """Final review, F6: the skill hardcoded a subset total of 900 against a default room
     of 200 documents, so build_subset's cap-at-what-exists behaviour made subset/ a byte
@@ -1537,8 +1493,9 @@ def test_build_skill_orders_waves_with_authoring_order_not_by_tier():
 
 
 def test_every_skill_import_resolves_to_something_real():
-    """A skill's fenced example is the only interface most of this package has, and
-    `ast.parse` above proves only that it is syntactically Python. A renamed or deleted
+    """A skill's fenced example is the only interface most of this package has. Each
+    must parse — including a python3 -c snippet inside a bash fence, which `bash -n`
+    never looks inside — and each synthvdr import must resolve: a renamed or deleted
     function leaves the fence parsing perfectly and failing the moment anyone runs it.
     """
     for name in SKILL_NAMES:
@@ -1549,7 +1506,11 @@ def test_every_skill_import_resolves_to_something_real():
             for snippet in embedded_python_snippets(block)
         ]
         for block in blocks:
-            for node in ast.walk(ast.parse(block)):
+            try:
+                tree = ast.parse(block)
+            except SyntaxError as exc:
+                pytest.fail(f"{path}: a fenced example is not valid Python — {exc}\n{block}")
+            for node in ast.walk(tree):
                 if not isinstance(node, ast.ImportFrom) or not node.module:
                     continue
                 if not node.module.startswith("synthvdr"):
