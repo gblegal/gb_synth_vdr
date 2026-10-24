@@ -99,7 +99,7 @@ def _run_score(args: argparse.Namespace) -> int:
     except (RoomConfError, SchemaError) as exc:
         print(f"synthvdr score: {exc}".replace("\n", " "), file=sys.stderr)
         return 2
-    del conf  # not needed beyond locating findings/distractors above
+    key_root = args.room / conf.get("KEY_ROOT")
 
     output, error = _load_output(args.tool_output)
     if error is not None:
@@ -107,13 +107,15 @@ def _run_score(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        provenance = check_provenance(args.room, output)
+        provenance = check_provenance(args.room, output, manifest_path=key_root / MANIFEST_NAME)
     except ProvenanceError as exc:
         print(f"synthvdr score: {exc}".replace("\n", " "), file=sys.stderr)
         return 2
 
     try:
-        adjudications, adjudication_summary = load_adjudications_for_room(args.room, output, findings)
+        adjudications, adjudication_summary = load_adjudications_for_room(
+            args.room, output, findings, key_root=key_root
+        )
     except AdjudicationError as exc:
         print(f"synthvdr score: {exc}".replace("\n", " "), file=sys.stderr)
         return 2
@@ -183,7 +185,7 @@ def _run_score_classification(args) -> int:
     # use — `corrupted-heavy/manifest.json` for a `--key
     # corrupted-heavy/answer-key.jsonl` run — which is what makes a twin run
     # verifiable at all rather than permanently UNVERIFIED.
-    manifest_path = args.key.parent / MANIFEST_NAME if args.key else None
+    manifest_path = (args.key.parent if args.key else args.room / conf.get("KEY_ROOT")) / MANIFEST_NAME
     try:
         provenance = check_provenance(args.room, output, manifest_path=manifest_path)
     except ProvenanceError as exc:

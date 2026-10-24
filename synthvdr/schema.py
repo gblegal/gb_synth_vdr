@@ -422,8 +422,10 @@ def derive_prefix_for_workstream(workstreams, prefixes, existing_findings=()):
     return mapping
 
 
+# The final id's prefix is the shape roomconf accepts in FINDING_PREFIXES: a
+# letter, then letters or digits.
 NEW_FINDING_LEDGER_ROW = re.compile(
-    r"^\|\s*([\w-]+)\s*\|\s*([A-Z]+-\d+)\s*\|\s*(\w+)\s*\|\s*$", re.MULTILINE
+    r"^\|\s*([\w-]+)\s*\|\s*([A-Z][A-Z0-9]*-\d+)\s*\|\s*(\w+)\s*\|\s*$", re.MULTILINE
 )
 
 

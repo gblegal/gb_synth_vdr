@@ -255,7 +255,7 @@ class AdjudicationSummary:
     detail: str
 
 
-_ADJUDICATIONS_RELATIVE_PATH = Path("_key") / "adjudications.yaml"
+ADJUDICATIONS_NAME = "adjudications.yaml"
 
 
 def _normalize_finding_ids(finding_id: Optional[Union[str, Sequence[str]]]) -> List[str]:
@@ -366,9 +366,10 @@ def validate_adjudications(
 
 
 def load_adjudications_for_room(
-    room: Path, output: ToolOutput, findings: FindingSet
+    room: Path, output: ToolOutput, findings: FindingSet, key_root: Optional[Path] = None
 ) -> Tuple[List[Adjudication], AdjudicationSummary]:
-    """Auto-load `_key/adjudications.yaml` from `room` if it exists.
+    """Auto-load `adjudications.yaml` from the room's key root (`key_root`,
+    by default `room / "_key"`) if it exists.
 
     No file is the normal case today (adjudication is a later step in the
     pipeline) and is not a warning — it returns an empty adjudication list
@@ -378,16 +379,14 @@ def load_adjudications_for_room(
     `output`/`findings`, raises AdjudicationError; it is never silently
     treated as "no adjudications".
     """
-    path = room / _ADJUDICATIONS_RELATIVE_PATH
+    path = (room / "_key" if key_root is None else key_root) / ADJUDICATIONS_NAME
+    shown = path.relative_to(room).as_posix() if path.is_relative_to(room) else path
     if not path.is_file():
-        return [], AdjudicationSummary(
-            0, f"no {_ADJUDICATIONS_RELATIVE_PATH} found in this room — 0 adjudications applied"
-        )
+        return [], AdjudicationSummary(0, f"no {shown} found in this room — 0 adjudications applied")
     adjudications = load_adjudications(path)
     validate_adjudications(adjudications, output, findings, source=str(path))
     return adjudications, AdjudicationSummary(
-        len(adjudications),
-        f"{len(adjudications)} adjudication(s) applied from {_ADJUDICATIONS_RELATIVE_PATH}",
+        len(adjudications), f"{len(adjudications)} adjudication(s) applied from {shown}"
     )
 
 

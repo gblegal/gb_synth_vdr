@@ -1,3 +1,4 @@
+import os
 import re
 import string
 
@@ -15,7 +16,7 @@ from synthvdr.qa.leakage import (
     gate_12_key_containment,
     gate_14_unchecked_names,
 )
-from synthvdr.qa.runner import GateContext
+from synthvdr.qa.runner import GateContext, run_gates
 from synthvdr.roomconf import load_room_conf
 from synthvdr.schema import FindingSet
 
@@ -123,6 +124,24 @@ def test_gate_14_skips_when_no_name_check_has_been_run(room):
 # read (with errors="replace"), never silently skipped and then folded into
 # a "clean" count for files that were never actually swept.
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "gate", [gate_03_flag_leakage, gate_04_vocabulary, gate_12_key_containment, gate_14_unchecked_names]
+)
+def test_a_leak_sweep_fails_on_a_file_it_cannot_read(room, gate, capsys):
+    # These gates used to skip a file they could not open and still count it
+    # in "N files clean" — the unsafe direction, since a leak can sit in a
+    # file nobody read. The runner turns the read error into a FAIL naming it.
+    doc = blind_doc(room)
+    doc.chmod(0)
+    try:
+        if os.access(doc, os.R_OK):
+            pytest.skip("running with permissions that ignore chmod")
+        assert run_gates(ctx_for(room), [gate]) == 1
+    finally:
+        doc.chmod(0o644)
+    assert "1.1.1_articles.md" in capsys.readouterr().out
 
 
 def test_gate_04_catches_a_leak_hidden_by_an_invalid_utf8_byte(room):
