@@ -59,6 +59,7 @@ masks with and vets is entity-scoped.
 
 from __future__ import annotations
 
+import functools
 import re
 from pathlib import Path
 from typing import List, Set
@@ -234,6 +235,36 @@ def _as_key(raw: str) -> str:
     return " ".join(words)
 
 
+# The only non-ASCII characters re.IGNORECASE lets match an ASCII letter (the
+# re module's documentation lists them under IGNORECASE, and
+# test_ascii_lookalikes_are_every_character_ignorecase_folds_to_ascii checks
+# the running interpreter against every code point), each mapped to the letter
+# it matches. Folded into the lower-cased text, they make "every word of an
+# ASCII name, lower-cased, occurs in it" a test the masking regex cannot pass
+# without: each character the regex matches for an ASCII word is then that
+# word's own letter or non-letter. Removing a name never makes another appear,
+# because a word holds no whitespace and the replacement is a space, so testing
+# the text as it arrived is safe for every name in the loop.
+_ASCII_LOOKALIKES = str.maketrans({"\u0130": "i", "\u0131": "i", "\u017f": "s", "\u212a": "k"})
+
+
+@functools.lru_cache(maxsize=8)
+def _cast_masks(cast: frozenset) -> tuple:
+    """Each cast name's mask pattern, longest name first, with its words
+    lower-cased for `mask_cast_names`' pre-test — or None in place of the
+    words when one is not ASCII, which the pre-test cannot speak for, so
+    that name is always substituted."""
+    masks = []
+    for name in sorted(cast, key=lambda entry: (-len(entry), entry)):
+        words = name.split()
+        if not words:
+            continue
+        pattern = re.compile(_WITHIN_NAME.join(re.escape(word) for word in words), re.IGNORECASE)
+        needles = tuple(word.lower() for word in words) if all(word.isascii() for word in words) else None
+        masks.append((pattern, needles))
+    return tuple(masks)
+
+
 def mask_cast_names(text: str, cast: Set[str]) -> str:
     """Remove every known cast name from `text`, longest entry first.
 
@@ -286,18 +317,20 @@ def mask_cast_names(text: str, cast: Set[str]) -> str:
     anyway; a genuinely unknown name in any case still survives to be
     reported, which the two all-caps controls in
     `test_gate_14_masks_the_cast_before_scanning_the_residue` pin.
+
+    A name is only substituted when every one of its words could be in the
+    text; see `_ASCII_LOOKALIKES` for why that test is exact. It is what
+    keeps gate 14 linear: a case-insensitive pattern gives the regex engine
+    no literal to skip ahead to, so each substitution costs a full pass, and
+    most cast names are absent from most documents.
     """
-    for name in sorted(cast, key=lambda entry: (-len(entry), entry)):
-        words = name.split()
-        if not words:
+    haystack = text.translate(_ASCII_LOOKALIKES).lower()
+    for pattern, needles in _cast_masks(frozenset(cast)):
+        if needles is not None and not all(needle in haystack for needle in needles):
             continue
-        text = re.sub(
-            _WITHIN_NAME.join(re.escape(word) for word in words),
-            " ",
-            text,
-            flags=re.IGNORECASE,
-        )
+        text = pattern.sub(" ", text)
     return text
+
 
 
 def malformed_cast_entries(cast: Set[str]) -> List[str]:

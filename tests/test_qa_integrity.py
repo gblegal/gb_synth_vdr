@@ -5,6 +5,7 @@ import pytest
 from synthvdr.qa.integrity import (
     _cell_has_no_superseded_values,
     _isolated_contains,
+    _room_search,
     gate_13_fact_sheet,
     gate_15_discoverability,
     gate_17_answer_key_validation,
@@ -351,6 +352,36 @@ def test_gate_13_fails_when_a_later_superseded_value_survives_not_just_the_first
 )
 def test_isolated_contains_matches_word_boundaries_not_embedded_tokens(needle, haystack, want):
     assert _isolated_contains(needle, haystack) is want
+
+
+ROOM_TEXTS = [
+    "Enterprise value of GBP 725m¹ at completion",
+    "ref_610m and 1725m and ７２５ and ٣725٤",
+    "Kessler’s 40% stake; the price ½ paid",
+    "ends with GBP",
+    "725m opens this one",
+    "31 March",
+    "2026 opens the next",
+    "Société générale: 12,500 shares — see note",
+]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "GBP 725m", "725m", "610m", "1725m", "725", "40%", "Kessler", "½", "—",
+        "31 March 2026", "générale", "12,500", "500", "Société", "", "zzz",
+    ],
+)
+def test_room_search_answers_what_one_search_of_the_joined_room_would(value):
+    # Gate 13 used to search the whole blind tree joined into one string. It
+    # now goes to the documents holding the figure's rarest run, so a run
+    # split differently from `_would_extend_a_token` (a footnote marker, an
+    # underscore, a fraction) or a document boundary read as anything other
+    # than a word boundary would change the verdict. Pinned to the old one,
+    # for every value a fact-sheet table row can produce — one holds no line
+    # break, the only thing that could reach across a document boundary.
+    assert _room_search(ROOM_TEXTS)(value) is _isolated_contains(value, "\n".join(ROOM_TEXTS))
 
 
 @pytest.mark.parametrize(

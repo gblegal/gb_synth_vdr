@@ -1,8 +1,9 @@
 import re
+import string
 
 import pytest
 
-from synthvdr.names import cast_list, entity_tokens, mask_cast_names
+from synthvdr.names import _ASCII_LOOKALIKES, cast_list, entity_tokens, mask_cast_names
 from synthvdr.qa.leakage import (
     ANSWER_KEY_NOUNS,
     BUILD_VOCABULARY,
@@ -406,6 +407,34 @@ def test_mask_cast_names_still_requires_whitespace_between_a_names_words():
     # no business touching.
     residue = mask_cast_names("AshfellHoldings Limited", {"Ashfell Holdings Limited"})
     assert "AshfellHoldings" in residue
+
+
+def test_ascii_lookalikes_are_every_character_ignorecase_folds_to_ascii():
+    # mask_cast_names skips a name whose lower-cased words are not all in the
+    # lower-cased text, which is exact only while _ASCII_LOOKALIKES holds
+    # every non-ASCII character re.IGNORECASE lets match an ASCII letter.
+    # Asked of the running interpreter, over every code point.
+    any_letter = re.compile("(?i:" + "|".join(string.ascii_lowercase) + ")")
+    folds = {chr(c) for c in range(128, 0x110000) if any_letter.fullmatch(chr(c))}
+    assert folds == {chr(c) for c in _ASCII_LOOKALIKES}
+    for code, letter in _ASCII_LOOKALIKES.items():
+        assert re.fullmatch(letter, chr(code), re.IGNORECASE), hex(code)
+
+
+def test_mask_cast_names_matches_a_cast_entry_spelt_with_a_lookalike_letter():
+    # The mask has always read dotless ı, İ and long ſ as i, i and s, because
+    # re.IGNORECASE does. The pre-test that lets it skip absent names has to
+    # agree, or a name it removed before comes back as unchecked.
+    for rendering in ("KİNGSWAY ISIS LIMITED", "Kingsway Iſiſ Limited", "Kingsway Isis Limıted"):
+        residue = mask_cast_names(rendering, {"Kingsway Isis Limited"})
+        assert entity_tokens(residue) == set(), rendering
+
+
+def test_mask_cast_names_matches_a_non_ascii_cast_entry_whatever_its_case():
+    # Why a name with a non-ASCII word is never pre-tested: "yıldırım" is not
+    # in "yildirim", but re.IGNORECASE matches the capital I to the dotless ı.
+    residue = mask_cast_names("YILDIRIM HOLDING LIMITED", {"Yıldırım Holding Limited"})
+    assert entity_tokens(residue) == set()
 
 
 def test_gate_14_reports_the_right_name_when_a_shorter_cast_entry_is_nested(room):

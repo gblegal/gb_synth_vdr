@@ -162,35 +162,22 @@ def _is_header_or_separator(first_cell: str) -> bool:
     return not first_cell or first_cell.lower() == "name" or set(first_cell) <= {"-", ":"}
 
 
-def _table_rows(fact_sheet_text: str, heading_prefix: str) -> Iterator[List[str]]:
-    """Yield the data-row cells of EVERY pipe table under a `##` heading
+def section_rows(fact_sheet_text: str, heading_prefix: str) -> Iterator[List[str]]:
+    """Yield the cells of every row of EVERY pipe table under a `##` heading
     whose lowercased text starts with `heading_prefix` — not just the first.
+    Header and separator rows are included; each reader drops them by its
+    own test, since a name table's header says "Name" and a figures table's
+    says "Key".
 
-    An unrelated `##` heading ends the current table (`in_section = False`)
-    but does not end the scan, so a later matching heading is picked back
-    up. Header and separator rows are dropped by the same test
-    `namecheck.load_name_check` and `names.cast_list` use: the first cell is
-    empty, reads "Name", or is made up only of the dash/colon characters a
-    markdown table separator uses.
-
-    This used to `break` on the first unrelated `##` heading, which silently
-    stopped the scan there. `integrity.parse_canonical_figures` had the
-    identical bug over the identical file and was fixed the identical way —
-    its docstring records it as "Final review, F3", where a fact sheet
-    grouping figures under more than one `## Canonical figures` heading had
-    "every figure after the first heading's table go unchecked, with gate 13
-    reporting a confident PASS on whatever fraction it happened to see". Two
-    parsers over the same file disagreeing about how much of it to read is a
-    defect in whichever one reads less.
-
-    It matters more here than it did there. A brand, product, site or domain
-    name carries no corporate suffix, so `entity_tokens` cannot find it and
-    the `## Invented names` table is its ONLY route into the name check —
-    drop the table and nothing downstream ever checks that name, which is
-    exactly the hole TECHNICAL-NOTES §6 already warns an omitted ROW opens.
-    An author who splits the table in two (invented companies under one
-    heading, brands and sites under another) is doing something entirely
-    reasonable, and used to lose the second half without a word.
+    An unrelated `##` heading ends the current table but does not end the
+    scan, so a later matching heading is picked back up. This used to
+    `break` there instead, in two parsers over the same fact sheet, and
+    both lost everything after the first table: gate 13 reported "a
+    confident PASS on whatever fraction it happened to see" of a fact sheet
+    that grouped its canonical figures under two headings ("Final review,
+    F3"), and the name check dropped whatever an author put in a second
+    `## Invented names` table. They read the file through this one walker
+    now, so they cannot disagree about how much of it there is.
     """
     in_section = False
     for line in fact_sheet_text.splitlines():
@@ -201,12 +188,28 @@ def _table_rows(fact_sheet_text: str, heading_prefix: str) -> Iterator[List[str]
         if in_section and stripped.startswith("##"):
             in_section = False
             continue
-        if not in_section or not stripped.startswith("|"):
-            continue
-        cells = [c.strip() for c in stripped.strip("|").split("|")]
-        if not cells or _is_header_or_separator(cells[0]):
-            continue
-        yield cells
+        if in_section and stripped.startswith("|"):
+            yield [c.strip() for c in stripped.strip("|").split("|")]
+
+
+def _table_rows(fact_sheet_text: str, heading_prefix: str) -> Iterator[List[str]]:
+    """The data rows of `section_rows`: header and separator rows are
+    dropped by the same test `load_name_check` and `names.cast_list` use —
+    the first cell is empty, reads "Name", or is made up only of the
+    dash/colon characters a markdown table separator uses.
+
+    Reading every table matters more for names than for figures. A brand, product, site or domain
+    name carries no corporate suffix, so `entity_tokens` cannot find it and
+    the `## Invented names` table is its ONLY route into the name check —
+    drop the table and nothing downstream ever checks that name, which is
+    exactly the hole TECHNICAL-NOTES §6 already warns an omitted ROW opens.
+    An author who splits the table in two (invented companies under one
+    heading, brands and sites under another) is doing something entirely
+    reasonable, and used to lose the second half without a word.
+    """
+    for cells in section_rows(fact_sheet_text, heading_prefix):
+        if not _is_header_or_separator(cells[0]):
+            yield cells
 
 
 def _declared_candidates(fact_sheet_text: str) -> List[CandidateName]:

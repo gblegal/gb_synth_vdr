@@ -6,10 +6,11 @@ from __future__ import annotations
 import json
 import unicodedata
 from dataclasses import dataclass, field
-from typing import List
+from typing import Dict, List, Set
 
 from ..answer_key import ANSWER_KEY_NAME, AnswerKeyError, answer_key_records
 from ..domain import DEFAULT_DOMAIN_ROOT, DomainError, load_domain
+from ..namecheck import section_rows
 from ..roomconf import RoomConfError
 from ..schema import validate as validate_answer_key
 from ..subset import check_subset
@@ -67,35 +68,20 @@ def _cell_has_no_superseded_values(cell: str) -> bool:
     return all(_is_dash_char(ch) or ch.isspace() for ch in cell)
 
 
+_CANONICAL_HEADING = "## canonical figures"
+
+
+def _is_figure_row(cells: List[str]) -> bool:
+    """False for a table's header ("Key") and separator rows."""
+    return cells[0].lower() != "key" and not set(cells[0]) <= {"-", ":"}
+
+
 def parse_canonical_figures(fact_sheet_text: str) -> List[CanonicalFigure]:
     """Every canonical figure declared under EVERY `## Canonical figures` heading
-    in the fact sheet, not just the first.
-
-    Final review, F3: this used to `break` out of the whole scan on the first
-    `##` heading following a canonical-figures table, which silently stopped
-    parsing at that point — a fact sheet that groups figures under more than
-    one `## Canonical figures` heading (financial figures first, commercial
-    figures under their own heading further down) had every figure after the
-    first heading's table go unchecked, with gate 13 reporting a confident
-    PASS on whatever fraction it happened to see. `continue` instead of
-    `break`: leaving the current table (`in_table = False`) on an unrelated
-    `##` heading, but carrying on scanning the rest of the file so a LATER
-    `## Canonical figures` heading is picked back up.
-    """
+    in the fact sheet, not just the first — see `namecheck.section_rows`."""
     figures: List[CanonicalFigure] = []
-    in_table = False
-    for line in fact_sheet_text.splitlines():
-        stripped = line.strip()
-        if stripped.lower().startswith("## canonical figures"):
-            in_table = True
-            continue
-        if in_table and stripped.startswith("##"):
-            in_table = False
-            continue
-        if not in_table or not stripped.startswith("|"):
-            continue
-        cells = [c.strip() for c in stripped.strip("|").split("|")]
-        if len(cells) < 3 or cells[0].lower() == "key" or set(cells[0]) <= {"-", ":"}:
+    for cells in section_rows(fact_sheet_text, _CANONICAL_HEADING):
+        if len(cells) < 3 or not _is_figure_row(cells):
             continue
         superseded = [] if _cell_has_no_superseded_values(cells[2]) else [
             s.strip() for s in cells[2].split(";") if s.strip()
@@ -106,7 +92,7 @@ def parse_canonical_figures(fact_sheet_text: str) -> List[CanonicalFigure]:
 
 def _has_canonical_figures_heading(fact_sheet_text: str) -> bool:
     return any(
-        line.strip().lower().startswith("## canonical figures")
+        line.strip().lower().startswith(_CANONICAL_HEADING)
         for line in fact_sheet_text.splitlines()
     )
 
@@ -118,26 +104,11 @@ def _diagnose_malformed_table(fact_sheet_text: str) -> str:
     than guessing "missing column" for every empty-figures result: that
     diagnosis is right for a 2-column header, but wrong — and misleading —
     for a well-formed 3-column header that simply has no data rows under
-    it yet, or for a heading with no table beneath it at all.
+    it yet, or for a heading with no table beneath it at all. It reads the
+    same rows `parse_canonical_figures` does, every table in the file, so a
+    diagnosis is never made against a truncated prefix of the fact sheet.
     """
-    # Mirrors parse_canonical_figures's continue-not-break fix (F3): scans
-    # every '## Canonical figures' table in the file, not just the first,
-    # so a diagnosis of "no rows"/"malformed header" is never reported
-    # against only a truncated prefix of the fact sheet.
-    in_table = False
-    rows: List[List[str]] = []
-    for line in fact_sheet_text.splitlines():
-        stripped = line.strip()
-        if stripped.lower().startswith("## canonical figures"):
-            in_table = True
-            continue
-        if in_table and stripped.startswith("##"):
-            in_table = False
-            continue
-        if not in_table or not stripped.startswith("|"):
-            continue
-        rows.append([c.strip() for c in stripped.strip("|").split("|")])
-
+    rows = list(section_rows(fact_sheet_text, _CANONICAL_HEADING))
     if not rows:
         return "'## Canonical figures' heading found but no table rows beneath it"
 
@@ -149,8 +120,7 @@ def _diagnose_malformed_table(fact_sheet_text: str) -> str:
             "missing column"
         )
 
-    data_rows = [r for r in rows if r[0].lower() != "key" and not (set(r[0]) <= {"-", ":"})]
-    if not data_rows:
+    if not any(_is_figure_row(r) for r in rows):
         return (
             "'## Canonical figures' table present with a valid 3-column header but "
             "no data rows beneath it"
@@ -208,6 +178,48 @@ def _isolated_contains(needle: str, haystack: str) -> bool:
         start = idx + 1
 
 
+def _runs(text: str) -> Set[str]:
+    """Every maximal run of characters `_would_extend_a_token` holds together.
+
+    An isolated occurrence of a figure lines up with whole runs of the text
+    it sits in: each run inside the figure ends at the figure's own
+    punctuation, or at a neighbour `_isolated_contains` has already required
+    not to extend it. So every run of a figure is a run of any document that
+    holds it, and a document lacking one of them cannot hold it — which is
+    what lets gate 13 search only the documents that might.
+    """
+    separators = {ord(ch): " " for ch in set(text) if not _would_extend_a_token(ch)}
+    return set(text.translate(separators).split())
+
+
+def _room_search(texts: List[str]):
+    """`_isolated_contains` over every text at once, answered from an index.
+
+    Searching the texts one by one is the same test as searching them
+    joined: a figure comes from one table row and so holds no line break,
+    which is the only thing that could span two documents. The index sends
+    each figure to the documents holding its rarest run, rather than through
+    the whole room, which scaled with figures times room size and was most
+    of the QA run's time on a 2,000-document room.
+    """
+    runs_of = [_runs(text) for text in texts]
+    holders: Dict[str, List[int]] = {}
+    for number, runs in enumerate(runs_of):
+        for run in runs:
+            holders.setdefault(run, []).append(number)
+
+    def search(value: str) -> bool:
+        runs = _runs(value)
+        if runs:
+            rarest = min(runs, key=lambda run: len(holders.get(run, ())))
+            candidates = [n for n in holders.get(rarest, ()) if runs <= runs_of[n]]
+        else:
+            candidates = range(len(texts))
+        return any(_isolated_contains(value, texts[number]) for number in candidates)
+
+    return search
+
+
 def gate_13_fact_sheet(ctx):
     """Canonical figures must appear in the room; superseded ones must not survive.
 
@@ -244,10 +256,10 @@ def gate_13_fact_sheet(ctx):
         if _has_canonical_figures_heading(text):
             return skip("13", "fact-sheet reconciliation", _diagnose_malformed_table(text))
         return skip("13", "fact-sheet reconciliation", "no '## Canonical figures' table in fact sheet")
-    corpus = "\n".join(p.read_text(encoding="utf-8", errors="ignore") for p in files)
+    in_room = _room_search([p.read_text(encoding="utf-8", errors="ignore") for p in files])
     problems = []
     for figure in figures:
-        if not _isolated_contains(figure.value, corpus):
+        if not in_room(figure.value):
             problems.append(f"{figure.key}: canonical value {figure.value!r} appears nowhere")
         for old in figure.superseded:
             if _isolated_contains(old, figure.value):
@@ -257,7 +269,7 @@ def gate_13_fact_sheet(ctx):
                     "(this can never pass), fix the fact sheet, not the room"
                 )
                 continue
-            if _isolated_contains(old, corpus):
+            if in_room(old):
                 problems.append(f"{figure.key}: superseded value {old!r} still present")
     if problems:
         return fail("13", "fact-sheet reconciliation", truncated(problems))
