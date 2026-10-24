@@ -154,16 +154,6 @@ def _is_inside(inner: Path, outer: Path) -> bool:
     return inner_parts[: len(outer_parts)] == outer_parts
 
 
-def _overlaps(a: Path, b: Path) -> bool:
-    """True if `a` and `b` name the same directory, or either is nested
-    under the other — they are not two genuinely separate trees by path
-    alone. This is a string comparison: it cannot see two differently
-    *spelled* paths that the filesystem itself resolves to one directory by
-    a route other than case (Unicode normalisation, a hardlink, a bind
-    mount). That is what _same_file is for."""
-    return _is_inside(a, b) or _is_inside(b, a)
-
-
 def _same_file(a: Path, b: Path) -> bool:
     """True if `a` and `b` are the same directory entry on disk — same
     device and inode, per os.path.samefile. Catches every aliasing route a

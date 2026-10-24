@@ -169,7 +169,7 @@ def authoring_order(
 
     `load_bearing` is a set of rel_paths — `synthvdr.schema.load_bearing_paths`
     over the room's findings and distractors. A path in it that matches no slot
-    is ignored here; that is a findings.yaml defect, and gate 12 and
+    is ignored here; that is a findings.yaml defect, and gate 8 and
     `build_flagged_tree` are the two things that already name it.
 
     WHY THIS IS NOT "SORT BY TIER". `/vdr-build` used to say exactly that, and

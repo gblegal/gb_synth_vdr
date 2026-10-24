@@ -80,9 +80,9 @@ def read_content_hash(path: Path) -> str:
     none to read — absent file, unreadable JSON, or no such key.
 
     Returning "" rather than raising is deliberate at both call sites: to
-    `check_provenance` a missing hash is UNVERIFIED, not an error, and to
-    the corrupted twin a clean room that has not been packaged yet simply
-    has no lineage to record.
+    the Legora importer a room with no hash is one whose output it does not
+    stamp, and to the corrupted twin a clean room that has not been
+    packaged yet simply has no lineage to record.
     """
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))

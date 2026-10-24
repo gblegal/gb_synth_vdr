@@ -106,12 +106,12 @@ class GateContext:
         """Every file under BLIND_TREE, unfiltered by suffix.
 
         Suffix filtering is the CALLER's job, not this method's — different
-        gates care about different suffixes, and handing back everything
-        keeps one implementation usable by all of them. A gate that walks
-        BLIND_TREE or FLAGGED_TREE with this same `rglob("*") if p.is_file()`
-        shape but skips adding its own suffix filter will pick up
-        synthvdr.twin.MARKER_NAME (suffix '') as if it were a document —
-        keep the filter gate 2 already applies.
+        gates care about different suffixes, and the leak sweeps (gates 3, 4,
+        12 and 14) deliberately take every file, since a leak can sit in any
+        of them. The flagged tree is the one to filter: its root holds
+        synthvdr.twin.MARKER_NAME (suffix ''), so a gate walking FLAGGED_TREE
+        with this same `rglob("*") if p.is_file()` shape must keep the filter
+        gate 2 applies, or it counts the marker as a document.
         """
         if not self.blind_root.is_dir():
             return []

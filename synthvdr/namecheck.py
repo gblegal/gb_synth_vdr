@@ -46,7 +46,7 @@ people by definition. If `## Invented names` also declares that same text with
 a non-person kind, the fact sheet is self-contradictory, and "declared table
 wins" would resolve it silently — masking that name out of the room as an
 entity and blinding gate 14 to genuinely unchecked names sitting next to it,
-exactly the hazard synthvdr/names.py:139-163 documents. There is no correct
+exactly the hazard `names.cast_list`'s docstring documents. There is no correct
 side to pick, so `extract_candidates` raises `NameCheckError` instead of
 choosing: the author must resolve the contradiction, and declaring the row as
 Kind "person" is how they say the overlap with `## Cast` is intentional
@@ -315,11 +315,6 @@ def extract_candidates(fact_sheet_text: str) -> List[CandidateName]:
     for candidate in declared:
         by_text[candidate.text] = candidate
     return sorted(by_text.values(), key=lambda c: c.text)
-
-
-def names_needing_check(candidates: List[CandidateName], existing: List[Verdict]) -> List[CandidateName]:
-    checked = {v.text for v in existing}
-    return [c for c in candidates if c.text not in checked]
 
 
 def unresolved(verdicts: List[Verdict]) -> List[Verdict]:

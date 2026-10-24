@@ -619,8 +619,9 @@ def score(
             trail_docs.setdefault(finding_id, set()).update(cited)
 
     partial: List[str] = []
+    by_id = findings.by_id
     for finding_id, cited_union in trail_docs.items():
-        finding = findings.by_id[finding_id]
+        finding = by_id[finding_id]
         if finding.multi_document and not set(finding.evidence_paths()) <= cited_union:
             partial.append(finding_id)
 
@@ -630,7 +631,7 @@ def score(
         precision=precision,
         false_alarms=sorted(set(false_alarms)),
         distractor_citations=sorted(set(distractor_citations)),
-        partial_trails=sorted(set(partial)),
+        partial_trails=sorted(partial),
         misses=sorted(f.id for f in findings.findings if f.id not in found_ids),
         hit_table=[(f.id, f.severity, f.id in found_ids) for f in findings.findings],
         unadjudicated=still_unmatched,

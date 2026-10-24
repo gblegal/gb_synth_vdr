@@ -296,9 +296,7 @@ def corrupt_room(
             continue
 
         applied = []
-        parent, name = (rel.rsplit("/", 1) + [""])[:2] if "/" in rel else ("", rel)
-        if not name:
-            parent, name = "", rel
+        parent, _, name = rel.rpartition("/")
         stem, suffix = Path(name).stem, Path(name).suffix
 
         if _hits(seed, rel, "rename", profile["rename_rate"]):

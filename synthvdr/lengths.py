@@ -12,9 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Mapping, Optional, Tuple
 
-import yaml
-
-from .domain import DEFAULT_DOMAIN_ROOT, DomainError, DomainPack
+from .domain import DEFAULT_DOMAIN_ROOT, DomainError, DomainPack, _read
 
 PAPERS = ("target", "counterparty")
 
@@ -154,12 +152,6 @@ def check_against_pack(lengths: Lengths, pack: DomainPack) -> None:
             )
 
 
-def _read_yaml(path: Path) -> dict:
-    if not path.is_file():
-        raise DomainError(f"domain pack file missing: {path}")
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
-
-
 def load_lengths(root: Path = DEFAULT_DOMAIN_ROOT, pack: Optional[DomainPack] = None) -> Lengths:
     """`lengths.yaml` and `anatomy.yaml` from `root`, validated.
 
@@ -167,8 +159,8 @@ def load_lengths(root: Path = DEFAULT_DOMAIN_ROOT, pack: Optional[DomainPack] = 
     is re-raised naming `root`, so a bad pack on disk says which pack.
     """
     try:
-        doc = _read_yaml(root / "lengths.yaml")
-        anatomy = _read_yaml(root / "anatomy.yaml")
+        doc = _read(root / "lengths.yaml")
+        anatomy = _read(root / "anatomy.yaml")
         lengths = Lengths(
             words_per_page=doc["words_per_page"],
             bands={

@@ -130,7 +130,7 @@ def test_build_writes_the_subset_and_reports_full_coverage(room):
 def test_check_reconciles_without_writing(room):
     build_subset(room, conf_for(room), findings(), total=6, out_dir=room / "subset")
     before = sorted(p.name for p in (room / "subset").rglob("*"))
-    report = check_subset(room, conf_for(room), findings())
+    report = check_subset(findings(), room / "subset")
     assert report.complete
     assert sorted(p.name for p in (room / "subset").rglob("*")) == before
 
@@ -138,14 +138,14 @@ def test_check_reconciles_without_writing(room):
 def test_check_detects_a_missing_evidence_document(room):
     build_subset(room, conf_for(room), findings(), total=6, out_dir=room / "subset")
     (room / "subset" / paths()[1]).unlink()
-    report = check_subset(room, conf_for(room), findings())
+    report = check_subset(findings(), room / "subset")
     assert not report.complete
     assert any("ENV-1" in e for e in report.errors)
 
 
 def test_check_refuses_to_report_success_with_zero_findings_parsed(room):
     build_subset(room, conf_for(room), findings(), total=6, out_dir=room / "subset")
-    report = check_subset(room, conf_for(room), FindingSet([], "Project Testbed"))
+    report = check_subset(FindingSet([], "Project Testbed"), room / "subset")
     assert not report.complete
     assert any("no findings" in e.lower() for e in report.errors)
 
@@ -306,7 +306,7 @@ def test_check_subset_writes_nothing(room, monkeypatch):
     monkeypatch.setattr(shutil, "rmtree", _forbidden("shutil.rmtree"), raising=True)
     monkeypatch.setattr(shutil, "move", _forbidden("shutil.move"), raising=True)
 
-    report = check_subset(room, conf_for(room), findings())
+    report = check_subset(findings(), room / "subset")
     assert report.complete
 
 
@@ -390,7 +390,7 @@ def test_marker_is_not_counted_in_the_report_and_is_not_a_subset_document(room, 
     assert report.evidence + report.filler == report.total
     # ...and check_subset's own recount agrees, whether or not the marker
     # is present in the directory it scans.
-    recheck = check_subset(room, conf_for(room), findings(), out_dir=foreign)
+    recheck = check_subset(findings(), foreign)
     assert recheck.total == 6
     # ...and it was never treated as a selectable document in the first
     # place, evidence or filler.

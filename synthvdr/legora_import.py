@@ -37,7 +37,7 @@ from pathlib import Path, PurePosixPath
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from .manifest import MANIFEST_NAME, read_content_hash
-from .roomconf import RoomConf, load_room_conf
+from .roomconf import RoomConf, _is_inside, load_room_conf
 from .schema import SEVERITIES
 from .score import ToolOutputError, parse_markdown_report
 
@@ -194,14 +194,6 @@ def tree_named(raw: str, section_dirs: Sequence[str], trees: Set[str]) -> Option
         if part in sections:
             return by_fold.get(parts[index - 1].casefold()) if index else None
     return None
-
-
-def _within(path: Path, tree: Path) -> bool:
-    """Whether `path` is `tree` or inside it, compared case-folded: macOS will
-    happily write `Data-Room/` into `data-room/`."""
-    inner = [part.casefold() for part in path.resolve().parts]
-    outer = [part.casefold() for part in tree.resolve().parts]
-    return inner[: len(outer)] == outer
 
 
 def key_side(raw: str, section_dirs: Sequence[str], markers: Set[str]) -> bool:
@@ -605,7 +597,13 @@ def import_review(
             f"folder. Pass --cut {named[0]}."
         )
     kinds = {PurePosixPath(raw.strip()).suffix.lower() for raw, _ in written} & set(RENDERED_SUFFIXES)
-    held = {p.suffix.lower() for p in cut_root.rglob("*") if p.is_file() and not p.name.startswith(".")}
+    # Walked only when the report cites a rendered file at all, which a
+    # review of a markdown cut never does.
+    held = (
+        {p.suffix.lower() for p in cut_root.rglob("*") if p.is_file() and not p.name.startswith(".")}
+        if kinds
+        else set()
+    )
     unheld = sorted(kinds - held)
     if unheld:
         holders = sorted(t for t in trees if any(next((room / t).rglob(f"*{k}"), None) for k in unheld))
@@ -771,11 +769,13 @@ def check_out(out: Path, room: Path, cut: Optional[str] = None) -> None:
         raise LegoraImportError(
             f"--out {out} is a folder; name the file to write, for example {out / 'legora.json'}"
         )
-    protected = {cut or conf.get("BLIND_TREE")}
+    protected = {cut} if cut else set()
     protected |= {conf.get_relative_path(key) for key in ("BLIND_TREE", "FLAGGED_TREE", "KEY_ROOT")}
     protected |= room_trees(room, conf.get_list("SECTION_DIRS"))
     for rel in sorted(protected):
-        if _within(out, room / rel):
+        # Case-folded, like every tree comparison: macOS will happily write
+        # `Data-Room/` into `data-room/`.
+        if _is_inside(out.resolve(), (room / rel).resolve()):
             raise LegoraImportError(
                 f"--out {out} is inside {rel}/, a tree of the room. A tool output written into "
                 "a room tree changes what that tree holds, and the blind tree's content hash "

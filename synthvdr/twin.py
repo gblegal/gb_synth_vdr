@@ -32,35 +32,20 @@ from .roomconf import (
     RoomConf,
     RoomConfError,
     _is_inside,
-    _overlaps,
     _same_file,
     check_tree_identity,
 )
 from .schema import Distractor, Finding, FindingSet
 
-# _is_inside / _overlaps / _same_file live in roomconf so that the
-# config-level and filesystem-level guards share one implementation of "are
-# these two paths the same tree?" — there is no second copy to drift out of
-# step. They are re-exported here because this module is where they get
-# applied to a destructive operation. _overlaps is not called by this module
-# itself; it is part of that shared vocabulary and is used by the tests that
-# prove the string-level comparison cannot see a same-inode alias.
-#
-# All three are named in __all__ below, which is where a re-export is
-# DECLARED rather than merely described. Naming them matters most for
-# _overlaps, the one this module never calls itself: without the entry it
-# reads to a linter as an unused import (ruff F401) and to the next reader as
-# a line to delete — and deleting it would not break anything here, only in
-# tests/test_twin.py, which is the worst possible place to find out.
+# _is_inside and _same_file live in roomconf so that the config-level and
+# filesystem-level guards share one implementation of "are these two paths
+# the same tree?" — there is no second copy to drift out of step.
 __all__ = [
     "MARKER_NAME",
     "MARKER_TEXT",
     "SUBJECT_KEY",
     "TwinError",
     "TwinReport",
-    "_is_inside",
-    "_overlaps",
-    "_same_file",
     "annotation_block",
     "assert_safe_delete_target",
     "assert_target_is_ours",
@@ -81,7 +66,7 @@ class TwinReport:
 
     `.carriers` counts *documents* that received an annotation block, not
     evidence paths. It is legitimately lower than
-    `len(FindingSet.carrier_paths())` whenever an evidence path names a
+    `len(FindingSet.all_evidence_paths())` whenever an evidence path names a
     non-markdown file (those are copied byte-for-byte and never annotated)
     or two findings share the same evidence document (one combined block,
     one carrier). Neither case is a bug — don't read an undercount here as

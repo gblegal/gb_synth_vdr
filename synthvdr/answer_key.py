@@ -101,9 +101,12 @@ def labels_outside_vocabulary(labels: Dict[str, str], vocabulary) -> Dict[str, l
     return {k: sorted(v) for k, v in sorted(out.items())}
 
 
-def _named(paths, limit: int = _SHOW) -> str:
-    shown = ", ".join(paths[:limit])
-    remaining = len(paths) - limit
+def _named(paths) -> str:
+    """Up to `_SHOW` paths, naming how many more were cut — the answer-key
+    modules' spelling of `qa.runner.truncated`, which they cannot import
+    without pulling in every gate."""
+    shown = ", ".join(paths[:_SHOW])
+    remaining = len(paths) - _SHOW
     if remaining > 0:
         shown += f" (+{remaining} more)"
     return shown

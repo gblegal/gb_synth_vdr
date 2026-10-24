@@ -21,7 +21,7 @@ def gate_11_subset(ctx):
     subset_dir = ctx.room / "subset"
     if not subset_dir.is_dir():
         return skip("11", "subset reconciliation", "subset/ not built")
-    report = check_subset(ctx.room, ctx.conf, ctx.findings, out_dir=subset_dir)
+    report = check_subset(ctx.findings, subset_dir)
     if not report.complete:
         return fail("11", "subset reconciliation", truncated(report.errors))
     return ok(

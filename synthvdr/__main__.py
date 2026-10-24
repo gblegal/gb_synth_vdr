@@ -74,6 +74,14 @@ from .score import (
 )
 
 
+def _refuse(command: str, message: object) -> int:
+    """Print `message` on stderr as one line, prefixed with the command, and
+    return 2, the could-not-run exit code. One line because room.conf and
+    answer-key errors can carry newlines, and this is what a user reads."""
+    print(f"synthvdr {command}: {message}".replace("\n", " "), file=sys.stderr)
+    return 2
+
+
 def _load_room(room: Path):
     conf = load_room_conf(room / "room.conf")
     key_root = room / conf.get("KEY_ROOT")
@@ -97,28 +105,24 @@ def _run_score(args: argparse.Namespace) -> int:
     try:
         conf, findings, distractors = _load_room(args.room)
     except (RoomConfError, SchemaError) as exc:
-        print(f"synthvdr score: {exc}".replace("\n", " "), file=sys.stderr)
-        return 2
+        return _refuse("score", exc)
     key_root = args.room / conf.get("KEY_ROOT")
 
     output, error = _load_output(args.tool_output)
     if error is not None:
-        print(f"synthvdr score: {error}".replace("\n", " "), file=sys.stderr)
-        return 2
+        return _refuse("score", error)
 
     try:
         provenance = check_provenance(args.room, output, manifest_path=key_root / MANIFEST_NAME)
     except ProvenanceError as exc:
-        print(f"synthvdr score: {exc}".replace("\n", " "), file=sys.stderr)
-        return 2
+        return _refuse("score", exc)
 
     try:
         adjudications, adjudication_summary = load_adjudications_for_room(
             args.room, output, findings, key_root=key_root
         )
     except AdjudicationError as exc:
-        print(f"synthvdr score: {exc}".replace("\n", " "), file=sys.stderr)
-        return 2
+        return _refuse("score", exc)
 
     card = score(output, findings, distractors, adjudications=adjudications)
     print(
@@ -130,8 +134,7 @@ def _run_score(args: argparse.Namespace) -> int:
     if args.baseline is not None:
         baseline_output, error = _load_output(args.baseline)
         if error is not None:
-            print(f"synthvdr score: baseline {error}".replace("\n", " "), file=sys.stderr)
-            return 2
+            return _refuse("score", f"baseline {error}")
         baseline_card = score(baseline_output, findings, distractors)
         print()
         print(diff_scorecards(baseline_card, card))
@@ -161,23 +164,14 @@ def _run_score_classification(args) -> int:
     try:
         conf = load_room_conf(args.room / "room.conf")
     except RoomConfError as exc:
-        print(f"synthvdr score-classification: {exc}".replace("\n", " "), file=sys.stderr)
-        return 2
+        return _refuse("score-classification", exc)
 
     try:
         output = load_classification_output(args.tool_output)
     except OSError as exc:
-        print(
-            f"synthvdr score-classification: could not read {args.tool_output}: {exc}".replace("\n", " "),
-            file=sys.stderr,
-        )
-        return 2
+        return _refuse("score-classification", f"could not read {args.tool_output}: {exc}")
     except (ValueError, ClassificationOutputError) as exc:
-        print(
-            f"synthvdr score-classification: could not parse {args.tool_output}: {exc}".replace("\n", " "),
-            file=sys.stderr,
-        )
-        return 2
+        return _refuse("score-classification", f"could not parse {args.tool_output}: {exc}")
 
     # A run scored against the corrupted twin is a run against a different
     # room: its documents were renamed, misfiled and noised, so its hash is
@@ -189,18 +183,13 @@ def _run_score_classification(args) -> int:
     try:
         provenance = check_provenance(args.room, output, manifest_path=manifest_path)
     except ProvenanceError as exc:
-        print(f"synthvdr score-classification: {exc}".replace("\n", " "), file=sys.stderr)
-        return 2
+        return _refuse("score-classification", exc)
 
     try:
         key = load_classification_key(args.room, conf, key_path=args.key)
         card = score_classification(output, key)
-    except ClassificationScoreError as exc:
-        print(f"synthvdr score-classification: {exc}".replace("\n", " "), file=sys.stderr)
-        return 2
-    except ClassificationOutputError as exc:
-        print(f"synthvdr score-classification: {exc}".replace("\n", " "), file=sys.stderr)
-        return 2
+    except (ClassificationScoreError, ClassificationOutputError) as exc:
+        return _refuse("score-classification", exc)
 
     print(render_classification_scorecard(card, output, provenance=provenance))
     return 0
@@ -231,8 +220,7 @@ def _run_corrupt(args) -> int:
             out_dir=args.out,
         )
     except (RoomConfError, CorruptError) as exc:
-        print(f"synthvdr corrupt: {exc}".replace("\n", " "), file=sys.stderr)
-        return 2
+        return _refuse("corrupt", exc)
     print(
         f"{conf.get('ROOM_CODENAME')} — corrupted twin written to "
         f"{report.out} (seed {args.seed}, profile {args.profile}): "
@@ -256,8 +244,7 @@ def _run_answerkey(args) -> int:
     try:
         conf = load_room_conf(args.room / "room.conf")
     except RoomConfError as exc:
-        print(f"synthvdr answerkey: {exc}".replace("\n", " "), file=sys.stderr)
-        return 2
+        return _refuse("answerkey", exc)
 
     # An explicit --vocabulary wins; otherwise the room's own copy is used when it
     # has one. Defaulting matters more than it looks: the check is the only thing
@@ -292,8 +279,7 @@ def _run_answerkey(args) -> int:
         pack = load_domain(DEFAULT_DOMAIN_ROOT)
         out = build_answer_key(args.room, conf, pack, vocabulary=vocabulary)
     except (RoomConfError, DomainError, AnswerKeyError) as exc:
-        print(f"synthvdr answerkey: {exc}".replace("\n", " "), file=sys.stderr)
-        return 2
+        return _refuse("answerkey", exc)
     lines = out.read_text(encoding="utf-8").count("\n")
     print(f"{conf.get('ROOM_CODENAME')} — answer key written to {out}: {lines} documents.")
     return 0
@@ -318,13 +304,11 @@ def _run_manifest(args) -> int:
     from datetime import date
 
     from .manifest import build_room_manifest, compute_content_hash, write_manifest
-    from .schema import SchemaError, load_findings
 
     try:
         conf = load_room_conf(args.room / "room.conf")
     except RoomConfError as exc:
-        print(f"synthvdr manifest: {exc}".replace("\n", " "), file=sys.stderr)
-        return 2
+        return _refuse("manifest", exc)
 
     blind_root = args.room / conf.get_relative_path("BLIND_TREE")
     if not blind_root.is_dir():
@@ -342,8 +326,7 @@ def _run_manifest(args) -> int:
         try:
             findings_count = len(load_findings(findings_path).findings)
         except SchemaError as exc:
-            print(f"synthvdr manifest: {exc}".replace("\n", " "), file=sys.stderr)
-            return 2
+            return _refuse("manifest", exc)
 
     content_hash, documents = compute_content_hash(blind_root)
     manifest = build_room_manifest(
@@ -375,8 +358,7 @@ def _run_pages(args) -> int:
     try:
         conf = load_room_conf(args.room / "room.conf")
     except RoomConfError as exc:
-        print(f"synthvdr pages: {exc}".replace("\n", " "), file=sys.stderr)
-        return 2
+        return _refuse("pages", exc)
     blind = args.room / conf.get("BLIND_TREE")
     if args.estimate:
         scanned = args.room / conf.get("KEY_ROOT") / "scanned.csv"
@@ -420,8 +402,7 @@ def _run_import_legora_review(args) -> int:
             allow_wide=args.allow_wide_issues,
         )
     except RoomConfError as exc:
-        print(f"synthvdr import-legora-review: {exc}".replace("\n", " "), file=sys.stderr)
-        return 2
+        return _refuse("import-legora-review", exc)
     except LegoraImportError as exc:
         print(f"synthvdr import-legora-review: {exc}", file=sys.stderr)
         return 2
@@ -444,8 +425,7 @@ def _run_export_key(args) -> int:
     try:
         report = export_key(args.room, args.out)
     except (RoomConfError, SchemaError, ExportKeyError) as exc:
-        print(f"synthvdr export-key: {exc}".replace("\n", " "), file=sys.stderr)
-        return 2
+        return _refuse("export-key", exc)
     print(
         f"Answer key exported to {report.out}: findings.md ({report.findings} findings), "
         f"distractors.md ({report.distractors}), flagged/ ({report.flagged} documents).\n"
