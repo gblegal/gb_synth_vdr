@@ -471,3 +471,11 @@ def test_build_refuses_a_directory_whose_marker_differs_only_in_case(room, tmp_p
         build_subset(room, conf_for(room), findings(), total=6, out_dir=foreign)
 
     assert victim.read_text(encoding="utf-8") == "someone else's data\n"
+
+
+def test_selection_never_picks_finder_litter(room, browse_in_finder):
+    # Asking for every document leaves no room for a .DS_Store to hide below
+    # the cut: before it was ignored, one took a real document's place.
+    never_opened = select_subset(room, conf_for(room), findings(), total=len(paths()))
+    browse_in_finder(room / "data-room")
+    assert select_subset(room, conf_for(room), findings(), total=len(paths())) == never_opened

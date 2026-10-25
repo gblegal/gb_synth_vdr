@@ -35,12 +35,14 @@ import json
 from pathlib import Path
 from typing import Optional, Tuple
 
+from .roomconf import room_files
+
 MANIFEST_NAME = "manifest.json"
 
 
 def compute_content_hash(root: Path) -> Tuple[str, int]:
     """sha256 over the sorted `rel_path + "\\0" + sha256(bytes)` of every
-    file under `root`, and the file count.
+    file under `root` but Finder's .DS_Store, and the file count.
 
     Sorting the per-file entries themselves (not the Path objects) before
     the final hash means the result depends only on file content and
@@ -53,11 +55,13 @@ def compute_content_hash(root: Path) -> Tuple[str, int]:
     hash built this way, and every tool output produced against one of
     them stamps it. A change here does not fail loudly: it silently turns
     every one of those into a "produced against a different room" refusal.
+    Leaving .DS_Store out (roomconf.FINDER_LITTER) was such a change, made
+    because Finder rewrites it whenever someone opens a folder: a tree that
+    holds none hashes exactly as before, and one that does now hashes as if
+    it held none.
     """
     entries = []
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
+    for path in room_files(root):
         rel_path = path.relative_to(root).as_posix()
         file_digest = hashlib.sha256(path.read_bytes()).hexdigest()
         entries.append(f"{rel_path}\0{file_digest}")

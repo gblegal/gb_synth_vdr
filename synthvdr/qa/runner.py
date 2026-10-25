@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List
 
+from ..roomconf import room_files
+
 PASS, FAIL, SKIP, WARN = "PASS", "FAIL", "SKIP", "WARN"
 
 
@@ -103,7 +105,8 @@ class GateContext:
         return self.room / self.conf.get("KEY_ROOT")
 
     def blind_files(self) -> List[Path]:
-        """Every file under BLIND_TREE, unfiltered by suffix.
+        """Every file under BLIND_TREE but Finder's .DS_Store
+        (roomconf.FINDER_LITTER), unfiltered by suffix.
 
         Suffix filtering is the CALLER's job, not this method's — different
         gates care about different suffixes, and the leak sweeps (gates 3, 4,
@@ -115,7 +118,7 @@ class GateContext:
         """
         if not self.blind_root.is_dir():
             return []
-        return sorted(p for p in self.blind_root.rglob("*") if p.is_file())
+        return room_files(self.blind_root)
 
 
 def _one_line(text: str) -> str:

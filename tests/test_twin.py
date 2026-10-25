@@ -1128,3 +1128,14 @@ def test_an_unreadable_blind_subdirectory_does_not_destroy_the_previous_flagged_
         locked.chmod(0o755)
 
     assert (previous / "previous.md").read_text(encoding="utf-8") == "from the last good build\n"
+
+
+def test_finder_litter_in_the_blind_tree_is_not_copied_into_the_flagged_tree(tmp_path, browse_in_finder):
+    room, conf = make_room(tmp_path)
+    write_blind(room, "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md", BLIND)
+    browse_in_finder(room / "data-room")
+
+    report = build_flagged_tree(room, conf, FindingSet(findings=[], room="Project Testbed"))
+
+    assert report.written == 1
+    assert not list((room / "_key/flagged").rglob(".DS_Store"))

@@ -77,6 +77,24 @@ def build_xs_room():
     return build_fixture_room
 
 
+# The opening bytes of a real Finder .DS_Store: binary, and not valid UTF-8.
+DS_STORE = b"\x00\x00\x00\x01Bud1\x00\x00\x10\x00\x00\x00\x08\x00\xff\xfe"
+
+
+def _browse_in_finder(*trees: Path) -> None:
+    """Leave a .DS_Store in each tree and every folder below it, as opening
+    each one in Finder does. Each records its own folder, as Finder's do, so
+    a blind folder and its flagged twin never hold the same bytes."""
+    for tree in trees:
+        for folder in [tree, *[p for p in tree.rglob("*") if p.is_dir()]]:
+            (folder / ".DS_Store").write_bytes(DS_STORE + str(folder).encode())
+
+
+@pytest.fixture(scope="session")
+def browse_in_finder():
+    return _browse_in_finder
+
+
 @pytest.fixture
 def xs_room(build_xs_room, tmp_path):
     return build_xs_room(tmp_path / "room")

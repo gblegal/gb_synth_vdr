@@ -85,7 +85,7 @@ from .ownership import (
     assert_target_is_ours,
     write_marker,
 )
-from .roomconf import RoomConf
+from .roomconf import RoomConf, room_files
 
 CORRUPTED_DIR = "corrupted"
 LOG_NAME = "log.jsonl"
@@ -248,7 +248,7 @@ def corrupt_room(
     key_rows = _load_key_rows(room, conf)
     key_by_path = {row["source_path"]: row for row in key_rows}
 
-    files = sorted(p for p in blind_root.rglob("*") if p.is_file())
+    files = room_files(blind_root)
     docs = [
         p.relative_to(blind_root).as_posix()
         for p in files
