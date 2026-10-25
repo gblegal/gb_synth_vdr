@@ -1,29 +1,25 @@
 import pytest
 
-from synthvdr.qa.runner import GateContext
 from synthvdr.qa.structural import (
     gate_06_dir_canon,
     gate_07_twin_diff,
     gate_08_carrier_census,
     gate_09_xrefs,
 )
-from synthvdr.roomconf import load_room_conf
 from synthvdr.schema import Distractor, Finding, FindingSet
 from synthvdr.twin import MARKER_NAME, MARKER_TEXT
+from tests.conftest import gate_ctx, room_conf_text
 
-CONF = '''ROOM_CODENAME="Project Testbed"
-INDEX_TOTAL=2
-BLIND_TOTAL=2
-FLAGGED_TOTAL=2
-BLIND_TREE="data-room"
-FLAGGED_TREE="_key/flagged"
-KEY_ROOT="_key"
-FLAG_STRING_1="Key diligence points"
-FLAG_STRING_2="DD flag"
-FINDING_PREFIXES="CORP|ENV|FIN"
-EXPECTED_KDP_CARRIERS=1
-SECTION_DIRS="01_corporate 02_financial"
-'''
+CONF_VALUES = dict(
+    INDEX_TOTAL=2,
+    BLIND_TOTAL=2,
+    FLAGGED_TOTAL=2,
+    FLAG_STRING_1="Key diligence points",
+    FINDING_PREFIXES="CORP|ENV|FIN",
+    EXPECTED_KDP_CARRIERS=1,
+    SECTION_DIRS="01_corporate 02_financial",
+)
+CONF = room_conf_text(**CONF_VALUES)
 
 BLOCK = "\n## Key diligence points\n\n- **ENV-1 (critical)** — an issue.\n"
 
@@ -55,13 +51,9 @@ def room(tmp_path):
     return tmp_path
 
 
-def ctx_for(room, findings=None, distractors=None):
-    return GateContext(
-        room=room,
-        conf=load_room_conf(room / "room.conf"),
-        findings=FindingSet(findings if findings is not None else [finding()], "Project Testbed"),
-        distractors=distractors if distractors is not None else [],
-    )
+def ctx_for(room, findings=None, distractors=()):
+    found = findings if findings is not None else [finding()]
+    return gate_ctx(room, FindingSet(found, "Project Testbed"), distractors)
 
 
 def test_gate_06_passes_on_canonical_directories(room):
@@ -324,7 +316,7 @@ def test_gate_08_flags_a_stale_expected_kdp_carriers_scalar(room):
     # room.conf disagrees with what the answer key implies. The key-derived
     # checks above find nothing wrong, so this only reaches the secondary
     # tripwire.
-    (room / "room.conf").write_text(CONF.replace("EXPECTED_KDP_CARRIERS=1", "EXPECTED_KDP_CARRIERS=2"))
+    (room / "room.conf").write_text(room_conf_text(**{**CONF_VALUES, "EXPECTED_KDP_CARRIERS": 2}))
     result = gate_08_carrier_census(ctx_for(room))
     assert result.status == "FAIL"
     assert "EXPECTED_KDP_CARRIERS" in result.detail

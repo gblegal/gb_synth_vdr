@@ -10,30 +10,8 @@ dump a traceback.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from synthvdr.qa.__main__ import main
-
-VALID_CONF = {
-    "ROOM_CODENAME": "Test Room",
-    "INDEX_TOTAL": "1",
-    "BLIND_TOTAL": "1",
-    "FLAGGED_TOTAL": "1",
-    "BLIND_TREE": "data-room",
-    "FLAGGED_TREE": "_key/flagged",
-    "KEY_ROOT": "_key",
-    "FLAG_STRING_1": "Key diligence points",
-    "FLAG_STRING_2": "DD flag",
-    "FINDING_PREFIXES": "CORP",
-    "SECTION_DIRS": "01_corporate",
-    "EXPECTED_KDP_CARRIERS": "0",
-}
-
-
-def write_conf(room: Path, **overrides) -> None:
-    values = {**VALID_CONF, **overrides}
-    text = "".join(f'{k}="{v}"\n' for k, v in values.items())
-    (room / "room.conf").write_text(text, encoding="utf-8")
+from tests.conftest import room_conf_text
 
 
 def test_missing_room_conf_exits_cleanly_without_a_traceback(tmp_path, capsys):
@@ -64,7 +42,7 @@ def test_room_conf_missing_required_keys_exits_cleanly_without_a_traceback(tmp_p
 
 
 def test_malformed_answer_key_exits_cleanly_without_a_traceback(tmp_path, capsys):
-    write_conf(tmp_path)
+    (tmp_path / "room.conf").write_text(room_conf_text(ROOM_CODENAME="Test Room"), encoding="utf-8")
     (tmp_path / "_key").mkdir()
     (tmp_path / "_key" / "findings.yaml").write_text(
         "findings:\n  - severity: critical\n    title: no id here\n", encoding="utf-8"

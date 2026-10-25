@@ -45,20 +45,15 @@ from synthvdr.subset import (
     select_subset,
 )
 from synthvdr.twin import MARKER_NAME, build_flagged_tree
+from tests.conftest import room_conf_text
 
-CONF = '''ROOM_CODENAME="Project Testbed"
-INDEX_TOTAL=12
-BLIND_TOTAL=12
-FLAGGED_TOTAL=12
-BLIND_TREE="data-room"
-FLAGGED_TREE="_key/flagged"
-KEY_ROOT="_key"
-FLAG_STRING_1="Key diligence points"
-FLAG_STRING_2="DD flag"
-FINDING_PREFIXES="ENV|FIN"
-EXPECTED_KDP_CARRIERS=2
-SECTION_DIRS="01_corporate"
-'''
+CONF = room_conf_text(
+    INDEX_TOTAL=12,
+    BLIND_TOTAL=12,
+    FLAGGED_TOTAL=12,
+    FINDING_PREFIXES="ENV|FIN",
+    EXPECTED_KDP_CARRIERS=2,
+)
 
 
 def paths():

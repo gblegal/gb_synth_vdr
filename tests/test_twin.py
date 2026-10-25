@@ -18,23 +18,21 @@ from synthvdr.twin import (
     is_valid_twin,
     split_twin,
 )
+from tests.conftest import room_conf_text
 
 FLAG = "Key diligence points"
 BLIND = "# Phase 2 report\n\nRemediation is estimated at GBP 18.6m.\n"
 
-CONF_TEMPLATE = '''ROOM_CODENAME="Project Testbed"
-INDEX_TOTAL=20
-BLIND_TOTAL=20
-FLAGGED_TOTAL=20
-BLIND_TREE="data-room"
-FLAGGED_TREE="_key/flagged"
-KEY_ROOT="_key"
-FLAG_STRING_1="Key diligence points"
-FLAG_STRING_2="DD flag"
-FINDING_PREFIXES="CORP|ENV|FIN"
-EXPECTED_KDP_CARRIERS=4
-SECTION_DIRS="01_corporate 11_environmental-hs"
-'''
+CONF_VALUES = dict(
+    INDEX_TOTAL=20,
+    BLIND_TOTAL=20,
+    FLAGGED_TOTAL=20,
+    FLAG_STRING_1=FLAG,
+    FINDING_PREFIXES="CORP|ENV|FIN",
+    EXPECTED_KDP_CARRIERS=4,
+    SECTION_DIRS="01_corporate 11_environmental-hs",
+)
+CONF = room_conf_text(**CONF_VALUES)
 
 
 def finding(fid="ENV-1", source=None, corroboration=None, multi_document=True):
@@ -56,7 +54,7 @@ def finding(fid="ENV-1", source=None, corroboration=None, multi_document=True):
     )
 
 
-def make_room(tmp_path, conf_text=CONF_TEMPLATE):
+def make_room(tmp_path, conf_text=CONF):
     """A room directory with a room.conf and an empty blind tree, ready for
     build_flagged_tree tests to populate with files under data-room/.
     """
@@ -438,7 +436,7 @@ def test_build_flagged_tree_refuses_an_alias_the_string_check_cannot_see(tmp_pat
 
     room = tmp_path
     conf_path = room / "room.conf"
-    conf_path.write_text(CONF_TEMPLATE.replace('BLIND_TREE="data-room"', f'BLIND_TREE="{nfc}"'))
+    conf_path.write_text(room_conf_text(**CONF_VALUES, BLIND_TREE=nfc))
     blind_root = room / nfc
     blind_root.mkdir()
     if not (room / nfd).exists():
@@ -596,7 +594,7 @@ def test_build_flagged_tree_refuses_a_unicode_alias_between_key_root_and_flagged
 
     room = tmp_path
     conf_path = room / "room.conf"
-    conf_path.write_text(CONF_TEMPLATE.replace('KEY_ROOT="_key"', f'KEY_ROOT="{nfc}"'))
+    conf_path.write_text(room_conf_text(**CONF_VALUES, KEY_ROOT=nfc))
     (room / "data-room").mkdir()
     write_blind(room, "01_corporate/1.1_articles/1.1.1_articles.md", "# Articles\n")
     (room / nfc).mkdir()
@@ -625,7 +623,7 @@ def test_build_flagged_tree_refuses_a_symlink_planted_after_the_config_was_loade
     # legitimate when it loads, and the redirect appears afterwards.
     room = tmp_path
     conf_path = room / "room.conf"
-    conf_path.write_text(CONF_TEMPLATE.replace('FLAGGED_TREE="_key/flagged"', 'FLAGGED_TREE="out/flagged"'))
+    conf_path.write_text(room_conf_text(**CONF_VALUES, FLAGGED_TREE="out/flagged"))
     (room / "data-room").mkdir()
     write_blind(room, "01_corporate/1.1_articles/1.1.1_articles.md", "# Articles\n")
     (room / "out").mkdir()
@@ -730,7 +728,7 @@ def _conf_with_flagged(room, flagged):
     """A loaded RoomConf whose FLAGGED_TREE is `flagged`, with a blind tree
     holding one document."""
     conf_path = room / "room.conf"
-    conf_path.write_text(CONF_TEMPLATE.replace('FLAGGED_TREE="_key/flagged"', f'FLAGGED_TREE="{flagged}"'))
+    conf_path.write_text(room_conf_text(**CONF_VALUES, FLAGGED_TREE=flagged))
     (room / "data-room").mkdir(exist_ok=True)
     write_blind(room, "01_corporate/1.1_articles/1.1.1_articles.md", "# Articles\n")
     return load_room_conf(conf_path)

@@ -4,24 +4,19 @@ from synthvdr.__main__ import main
 from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
 from synthvdr.lengths import load_lengths
 from synthvdr.pagereport import page_report, pdf_page_count, scan_estimate
+from tests.conftest import room_conf_text
 
 LENGTHS = load_lengths(DEFAULT_DOMAIN_ROOT, load_domain(DEFAULT_DOMAIN_ROOT))
 CUSTOMER = Path("05_commercial/5.1_customer-contracts/5.1.1_customer-contracts-01")
 MINUTES = Path("01_corporate/1.3_board-minutes/1.3.1_board-minutes-01")
 
-CONF = '''ROOM_CODENAME="Project Testbed"
-INDEX_TOTAL=2
-BLIND_TOTAL=2
-FLAGGED_TOTAL=2
-BLIND_TREE="data-room"
-FLAGGED_TREE="_key/flagged"
-KEY_ROOT="_key"
-FLAG_STRING_1="Key diligence points"
-FLAG_STRING_2="DD flag"
-FINDING_PREFIXES="CORP|COMM"
-EXPECTED_KDP_CARRIERS=0
-SECTION_DIRS="01_corporate 05_commercial"
-'''
+CONF_VALUES = dict(
+    INDEX_TOTAL=2,
+    BLIND_TOTAL=2,
+    FLAGGED_TOTAL=2,
+    FINDING_PREFIXES="CORP|COMM",
+    SECTION_DIRS="01_corporate 05_commercial",
+)
 
 
 def fake_pdf(path: Path, pages: int) -> None:
@@ -31,7 +26,7 @@ def fake_pdf(path: Path, pages: int) -> None:
 
 
 def room(tmp_path, long=True):
-    (tmp_path / "room.conf").write_text(CONF + ('DOC_LENGTH="long"\n' if long else ""))
+    (tmp_path / "room.conf").write_text(room_conf_text(**CONF_VALUES, DOC_LENGTH="long" if long else None))
     for stem, words in ((CUSTOMER, 11000), (MINUTES, 900)):
         md = tmp_path / "data-room" / (stem.as_posix() + ".md")
         md.parent.mkdir(parents=True, exist_ok=True)

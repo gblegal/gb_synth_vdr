@@ -31,6 +31,7 @@ from synthvdr.classify_score import (
     score_classification,
 )
 from synthvdr.score import check_provenance
+from tests.conftest import room_conf_text
 
 KEY = [
     {"source_path": "01_corporate/articles.md", "document_type": "Articles of association",
@@ -204,21 +205,7 @@ def test_the_scorecard_names_the_policy_boundary(tmp_path):
     assert "corporate" in text
 
 
-CONF = """\
-ROOM_CODENAME="Project Testbed"
-INDEX_TOTAL=1
-BLIND_TOTAL=1
-FLAGGED_TOTAL=1
-BLIND_TREE="data-room"
-FLAGGED_TREE="_key/flagged"
-KEY_ROOT="_key"
-FLAG_STRING_1="Key diligence points"
-FLAG_STRING_2="DD flag"
-FINDING_PREFIXES="CORP"
-SECTION_DIRS="01_corporate"
-EXPECTED_KDP_CARRIERS=0
-ROOM_ROLE="eval"
-"""
+CONF = room_conf_text(ROOM_ROLE="eval")
 
 
 def _cli_room(tmp_path: Path) -> Path:

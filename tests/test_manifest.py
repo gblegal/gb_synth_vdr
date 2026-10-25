@@ -17,22 +17,9 @@ import json
 from pathlib import Path
 
 from synthvdr.manifest import MANIFEST_NAME, compute_content_hash
+from tests.conftest import room_conf_text
 
-CONF = """\
-ROOM_CODENAME="Test Room"
-INDEX_TOTAL=1
-BLIND_TOTAL=1
-FLAGGED_TOTAL=1
-BLIND_TREE="data-room"
-FLAGGED_TREE="_key/flagged"
-KEY_ROOT="_key"
-FLAG_STRING_1="Key diligence points"
-FLAG_STRING_2="DD flag"
-FINDING_PREFIXES="CORP"
-SECTION_DIRS="01_corporate"
-EXPECTED_KDP_CARRIERS=0
-ROOM_ROLE="eval"
-"""
+CONF = room_conf_text(ROOM_CODENAME="Test Room", ROOM_ROLE="eval")
 
 
 def _tree(root: Path, files: dict) -> Path:

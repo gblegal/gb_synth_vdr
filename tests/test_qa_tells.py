@@ -6,7 +6,7 @@ import pytest
 import yaml
 
 from synthvdr.qa import ALL_GATES
-from synthvdr.qa.runner import GateContext, run_gates
+from synthvdr.qa.runner import run_gates
 from synthvdr.qa.tells import (
     BACKWARD,
     FORWARD,
@@ -27,22 +27,16 @@ from synthvdr.qa.tells import (
     selective_bold,
 )
 from synthvdr.qa.runner import warn
-from synthvdr.roomconf import load_room_conf
 from synthvdr.schema import load_distractors, load_findings
+from tests.conftest import gate_ctx, room_conf_text
 
-CONF = '''ROOM_CODENAME="Project Testbed"
-INDEX_TOTAL=0
-BLIND_TOTAL=0
-FLAGGED_TOTAL=0
-BLIND_TREE="data-room"
-FLAGGED_TREE="_key/flagged"
-KEY_ROOT="_key"
-FLAG_STRING_1="Key diligence points"
-FLAG_STRING_2="DD flag"
-FINDING_PREFIXES="COMM"
-EXPECTED_KDP_CARRIERS=0
-SECTION_DIRS="05_commercial"
-'''
+CONF = room_conf_text(
+    INDEX_TOTAL=0,
+    BLIND_TOTAL=0,
+    FLAGGED_TOTAL=0,
+    FINDING_PREFIXES="COMM",
+    SECTION_DIRS="05_commercial",
+)
 
 SUBSTANCE = (
     "Clause 9.4 makes the Supplier indemnify Wexcott against all recall losses, and "
@@ -409,10 +403,7 @@ def _room(tmp_path, documents, findings=(FINDING,), distractors=(DISTRACTOR,)):
         path.write_text(text)
     (tmp_path / "data-room").mkdir(exist_ok=True)
     found, distracting = _key(tmp_path, list(findings), distractors)
-    return GateContext(
-        room=tmp_path, conf=load_room_conf(tmp_path / "room.conf"),
-        findings=found, distractors=distracting,
-    )
+    return gate_ctx(tmp_path, found, distracting)
 
 
 BOLD_CLAUSE = (
@@ -538,9 +529,9 @@ def test_gate_20_is_registered_twentieth():
 
 
 def test_the_xs_fixture_room_carries_no_tells(xs_room):
-    ctx = GateContext(
-        room=xs_room, conf=load_room_conf(xs_room / "room.conf"),
-        findings=load_findings(xs_room / "_key" / "findings.yaml"),
-        distractors=load_distractors(xs_room / "_key" / "distractors.yaml"),
+    ctx = gate_ctx(
+        xs_room,
+        load_findings(xs_room / "_key" / "findings.yaml"),
+        load_distractors(xs_room / "_key" / "distractors.yaml"),
     )
     assert gate_20_tells(ctx).status == "PASS"
