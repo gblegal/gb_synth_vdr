@@ -25,20 +25,9 @@ import sys
 import pytest
 
 from synthvdr.__main__ import main
+from tests.conftest import room_conf_text
 
-CONF = '''ROOM_CODENAME="Project Testbed"
-INDEX_TOTAL=1
-BLIND_TOTAL=1
-FLAGGED_TOTAL=1
-BLIND_TREE="data-room"
-FLAGGED_TREE="_key/flagged"
-KEY_ROOT="_key"
-FLAG_STRING_1="Key diligence points"
-FLAG_STRING_2="DD flag"
-FINDING_PREFIXES="ENV"
-EXPECTED_KDP_CARRIERS=0
-SECTION_DIRS="11_environmental-hs"
-'''
+CONF = room_conf_text(FINDING_PREFIXES="ENV", SECTION_DIRS="11_environmental-hs")
 
 SRC = "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md"
 

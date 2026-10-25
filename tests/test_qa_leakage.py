@@ -16,23 +16,17 @@ from synthvdr.qa.leakage import (
     gate_12_key_containment,
     gate_14_unchecked_names,
 )
-from synthvdr.qa.runner import GateContext, run_gates
-from synthvdr.roomconf import load_room_conf
-from synthvdr.schema import FindingSet
+from synthvdr.qa.runner import run_gates
+from tests.conftest import gate_ctx, room_conf_text
 
-CONF = '''ROOM_CODENAME="Project Testbed"
-INDEX_TOTAL=2
-BLIND_TOTAL=2
-FLAGGED_TOTAL=2
-BLIND_TREE="data-room"
-FLAGGED_TREE="_key/flagged"
-KEY_ROOT="_key"
-FLAG_STRING_1="Key diligence points"
-FLAG_STRING_2="DD flag"
-FINDING_PREFIXES="CORP|ENV|FIN"
-EXPECTED_KDP_CARRIERS=0
-SECTION_DIRS="01_corporate"
-'''
+CONF = room_conf_text(
+    INDEX_TOTAL=2,
+    BLIND_TOTAL=2,
+    FLAGGED_TOTAL=2,
+    FLAG_STRING_1="Key diligence points",
+    FLAG_STRING_2="DD flag",
+    FINDING_PREFIXES="CORP|ENV|FIN",
+)
 
 
 @pytest.fixture
@@ -51,50 +45,45 @@ def room(tmp_path):
     return tmp_path
 
 
-def ctx_for(room, strict=False):
-    conf = load_room_conf(room / "room.conf")
-    return GateContext(room=room, conf=conf, findings=FindingSet([], ""), distractors=[], strict=strict)
-
-
 def blind_doc(room):
     return room / "data-room" / "01_corporate" / "1.1_constitutional" / "1.1.1_articles.md"
 
 
 def test_gate_03_passes_on_a_clean_room(room):
-    assert gate_03_flag_leakage(ctx_for(room)).status == "PASS"
+    assert gate_03_flag_leakage(gate_ctx(room)).status == "PASS"
 
 
 def test_gate_03_catches_an_annotation_heading_in_the_blind_tree(room):
     blind_doc(room).write_text("# Articles\n\n## Key diligence points\n\n- oops\n")
-    result = gate_03_flag_leakage(ctx_for(room))
+    result = gate_03_flag_leakage(gate_ctx(room))
     assert result.status == "FAIL"
     assert "1.1.1_articles.md" in result.detail
 
 
 def test_gate_04_catches_a_finding_id(room):
     blind_doc(room).write_text("# Articles\n\nSee ENV-1 for detail.\n")
-    assert gate_04_vocabulary(ctx_for(room)).status == "FAIL"
+    assert gate_04_vocabulary(gate_ctx(room)).status == "FAIL"
 
 
 def test_gate_04_catches_an_answer_key_noun(room):
     blind_doc(room).write_text("# Articles\n\nThis is a planted finding.\n")
-    assert gate_04_vocabulary(ctx_for(room)).status == "FAIL"
+    assert gate_04_vocabulary(gate_ctx(room)).status == "FAIL"
 
 
 def test_gate_04_does_not_trip_on_land_registry(room):
     blind_doc(room).write_text("# Articles\n\nRegistered at the Land Registry.\n")
-    assert gate_04_vocabulary(ctx_for(room)).status == "PASS"
+    assert gate_04_vocabulary(gate_ctx(room)).status == "PASS"
 
 
 def test_gate_05_catches_build_vocabulary_that_gate_04_would_miss(room):
     (room / "index.md").write_text("- 1.1.1 Articles\n\nNever renumber these entries.\n")
-    assert gate_04_vocabulary(ctx_for(room)).status == "PASS"
-    assert gate_05_index_vocabulary(ctx_for(room)).status == "FAIL"
+    assert gate_04_vocabulary(gate_ctx(room)).status == "PASS"
+    assert gate_05_index_vocabulary(gate_ctx(room)).status == "FAIL"
 
 
 def test_gate_12_catches_a_key_path_referenced_from_the_blind_tree(room):
     blind_doc(room).write_text("# Articles\n\nSee _key/findings.yaml.\n")
-    assert gate_12_key_containment(ctx_for(room)).status == "FAIL"
+    assert gate_12_key_containment(gate_ctx(room)).status == "FAIL"
 
 
 def test_entity_tokens_finds_corporate_names_only():
@@ -104,19 +93,19 @@ def test_entity_tokens_finds_corporate_names_only():
 
 def test_gate_14_flags_an_entity_absent_from_the_cast_list(room):
     blind_doc(room).write_text("# Articles\n\nA deed with Unlisted Trading Limited.\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "FAIL"
     assert "Unlisted Trading Limited" in result.detail
 
 
 def test_gate_14_passes_when_every_entity_is_on_the_cast_list(room):
     blind_doc(room).write_text("# Articles\n\nA deed with Ashfell Holdings Limited.\n")
-    assert gate_14_unchecked_names(ctx_for(room)).status == "PASS"
+    assert gate_14_unchecked_names(gate_ctx(room)).status == "PASS"
 
 
 def test_gate_14_skips_when_no_name_check_has_been_run(room):
     (room / "_key" / "name-check.md").unlink()
-    assert gate_14_unchecked_names(ctx_for(room)).status == "SKIP"
+    assert gate_14_unchecked_names(gate_ctx(room)).status == "SKIP"
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +127,7 @@ def test_a_leak_sweep_fails_on_a_file_it_cannot_read(room, gate, capsys):
     try:
         if os.access(doc, os.R_OK):
             pytest.skip("running with permissions that ignore chmod")
-        assert run_gates(ctx_for(room), [gate]) == 1
+        assert run_gates(gate_ctx(room), [gate]) == 1
     finally:
         doc.chmod(0o644)
     assert "1.1.1_articles.md" in capsys.readouterr().out
@@ -146,14 +135,14 @@ def test_a_leak_sweep_fails_on_a_file_it_cannot_read(room, gate, capsys):
 
 def test_gate_04_catches_a_leak_hidden_by_an_invalid_utf8_byte(room):
     blind_doc(room).write_bytes(b"# Articles\n\nSee \xffENV-1 for detail.\n")
-    result = gate_04_vocabulary(ctx_for(room))
+    result = gate_04_vocabulary(gate_ctx(room))
     assert result.status == "FAIL"
     assert "ENV-1" in result.detail
 
 
 def test_gate_04_reports_how_many_files_needed_lossy_decoding(room):
     blind_doc(room).write_bytes(b"# Articles\n\nOrdinary \xffcontent.\n")
-    result = gate_04_vocabulary(ctx_for(room))
+    result = gate_04_vocabulary(gate_ctx(room))
     assert result.status == "PASS"
     assert "1 file" in result.detail
     assert "lossy" in result.detail.lower()
@@ -180,7 +169,7 @@ def test_gate_04_catches_a_finding_id_that_appears_only_in_the_filename(room):
     (room / "data-room" / "01_corporate" / "1.1_constitutional" / "ENV-1_articles.md").write_text(
         "# Articles\n\nOrdinary content.\n"
     )
-    result = gate_04_vocabulary(ctx_for(room))
+    result = gate_04_vocabulary(gate_ctx(room))
     assert result.status == "FAIL"
     assert "ENV-1" in result.detail
 
@@ -189,7 +178,7 @@ def test_gate_14_flags_an_entity_named_only_in_the_filename(room):
     (room / "data-room" / "01_corporate" / "1.1_constitutional" / "Unlisted Trading Limited.md").write_text(
         "# Articles\n\nOrdinary content.\n"
     )
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "FAIL"
     assert "Unlisted Trading Limited" in result.detail
 
@@ -212,7 +201,7 @@ def test_gate_14_flags_an_entity_named_only_in_the_filename(room):
     ],
 )
 def test_finding_id_pattern_rejects_only_a_real_alphanumeric_continuation(room, candidate, should_match):
-    pattern = finding_id_pattern(ctx_for(room).conf)
+    pattern = finding_id_pattern(gate_ctx(room).conf)
     assert bool(pattern.search(candidate)) is should_match
 
 
@@ -320,7 +309,7 @@ def test_entity_tokens_still_detects_the_real_suffix_in_its_canonical_case():
 )
 def test_gate_14_masks_the_cast_before_scanning_the_residue(room, prose, expected):
     blind_doc(room).write_text(f"# Articles\n\n{prose}\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == expected, result.detail
 
 
@@ -335,7 +324,7 @@ def test_gate_14_property_any_one_two_or_three_leading_words_leave_the_room_clea
     for name in sorted(cast):
         for prefix in ("See", "As Noted", "Related Parties Under"):
             blind_doc(room).write_text(f"# Articles\n\n{prefix} {name} signed the deed.\n")
-            result = gate_14_unchecked_names(ctx_for(room))
+            result = gate_14_unchecked_names(gate_ctx(room))
             assert result.status == "PASS", f"{prefix} {name}: {result.detail}"
 
 
@@ -347,7 +336,7 @@ def test_gate_14_flags_an_unchecked_entity_in_the_same_room_as_covered_ones(room
         "See Kessler Werke GmbH for detail. Duly Registered Ashfell Holdings "
         "Limited filed. A deed with Unlisted Trading Limited.\n"
     )
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "FAIL"
     assert "Unlisted Trading Limited" in result.detail
     assert "Kessler" not in result.detail
@@ -360,7 +349,7 @@ def test_gate_14_masks_cast_names_in_the_filename_too(room):
     # slug must not fail the build either.
     (room / "data-room" / "01_corporate" / "1.1_constitutional" /
      "Executed Deed Ashfell Holdings Limited.md").write_text("# Deed\n\nOrdinary content.\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "PASS", result.detail
 
 
@@ -467,7 +456,7 @@ def test_gate_14_reports_the_right_name_when_a_shorter_cast_entry_is_nested(room
         "| Holdings Limited | entity | clear | 2026-08-24 |\n"
     )
     blind_doc(room).write_text("# Articles\n\nAshfell Holdings Limited Rival Trading Limited.\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "FAIL"
     assert result.detail.startswith("Rival Trading Limited —")
 
@@ -491,7 +480,7 @@ def test_gate_14_fails_on_a_malformed_cast_row(room, row):
         "| Ashfell Holdings Limited | entity | clear | 2026-08-24 |\n"
     )
     blind_doc(room).write_text("# Articles\n\nAshfell Trading GmbH signed.\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "FAIL"
     assert row in result.detail
     # The well-formed row alongside it is not the problem and must not be named.
@@ -510,7 +499,7 @@ def test_gate_14_fails_on_a_malformed_cast_row(room, row):
 )
 def test_gate_14_does_not_false_fail_on_an_arbitrary_leading_word(room, prose):
     blind_doc(room).write_text(f"# Articles\n\n{prose}\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "PASS", result.detail
 
 
@@ -518,19 +507,19 @@ def test_gate_14_still_flags_an_unchecked_entity_even_with_a_leading_word(room):
     # The property must not have been blunted into never flagging anything:
     # a leading word only excuses a name that IS on the cast list.
     blind_doc(room).write_text("# Articles\n\nSee Unlisted Trading Limited for detail.\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "FAIL"
     assert "Unlisted Trading Limited" in result.detail
 
 
 def test_gate_14_does_not_false_fail_on_a_name_at_the_start_of_a_file(room):
     blind_doc(room).write_text("Ashfell Holdings Limited is a company.\n")
-    assert gate_14_unchecked_names(ctx_for(room)).status == "PASS"
+    assert gate_14_unchecked_names(gate_ctx(room)).status == "PASS"
 
 
 def test_gate_14_does_not_false_fail_on_a_name_after_a_full_stop(room):
     blind_doc(room).write_text("Formation was complete. Ashfell Holdings Limited then traded.\n")
-    assert gate_14_unchecked_names(ctx_for(room)).status == "PASS"
+    assert gate_14_unchecked_names(gate_ctx(room)).status == "PASS"
 
 
 def test_entity_tokens_does_not_join_a_heading_and_body_across_a_blank_line():
@@ -546,7 +535,7 @@ def test_gate_14_does_not_false_fail_when_a_heading_precedes_a_covered_name(room
     # joined into the candidate, AND the leading word "See" must not stop
     # the (correctly isolated) candidate from being recognised as covered.
     blind_doc(room).write_text("# Supply\n\nSee Kessler Werke GmbH for detail.\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "PASS", result.detail
 
 
@@ -560,14 +549,14 @@ def test_gate_05_signals_when_hits_are_truncated(room):
     needles_to_plant = list(ANSWER_KEY_NOUNS[:3]) + list(BUILD_VOCABULARY[:4])
     body = "\n".join(needles_to_plant)
     (room / "index.md").write_text(f"- 1.1.1 Articles\n\n{body}\n")
-    result = gate_05_index_vocabulary(ctx_for(room))
+    result = gate_05_index_vocabulary(gate_ctx(room))
     assert result.status == "FAIL"
     assert "more" in result.detail
 
 
 def test_gate_05_detail_is_not_marked_truncated_when_hits_fit(room):
     (room / "index.md").write_text("- 1.1.1 Articles\n\nNever renumber these entries.\n")
-    result = gate_05_index_vocabulary(ctx_for(room))
+    result = gate_05_index_vocabulary(gate_ctx(room))
     assert result.status == "FAIL"
     assert "more" not in result.detail
 
@@ -605,7 +594,7 @@ def test_gate_14_flags_an_entity_whose_words_a_person_row_would_have_masked(room
         ("Ashfell Holdings Limited", "entity"),
     )
     blind_doc(room).write_text("# Articles\n\nA deed with Daniel Oyelaran Ltd.\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "FAIL", result.detail
     assert "Daniel Oyelaran Ltd" in result.detail
 
@@ -633,7 +622,7 @@ def test_cast_list_returns_only_entity_rows(room):
 def test_gate_14_hygiene_is_scoped_to_entity_rows(room, kind, expected):
     write_name_check(room, ("Cher", kind), ("Ashfell Holdings Limited", "entity"))
     blind_doc(room).write_text("# Articles\n\nA deed with Ashfell Holdings Limited.\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == expected, result.detail
 
 
@@ -663,7 +652,7 @@ def test_gate_14_does_not_report_a_separator_row_as_malformed(room):
         "| Ashfell Holdings Limited | entity | clear | 2026-08-24 |\n"
     )
     blind_doc(room).write_text("# Articles\n\nA deed with Ashfell Holdings Limited.\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "PASS", result.detail
 
 
@@ -690,7 +679,7 @@ def test_gate_14_fails_on_a_recorded_collision(room):
     a collision." A room built past that must not then pass QA."""
     _record(room, ("Ashfell Holdings Limited", "collision", "Real company, same sector."))
     blind_doc(room).write_text("# Articles\n\nA deed with Ashfell Holdings Limited.\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "FAIL"
     assert "Ashfell Holdings Limited" in result.detail
     assert "collision" in result.detail
@@ -703,7 +692,7 @@ def test_gate_14_reports_a_collision_even_with_no_documents_yet(room):
     which is the whole window in which regenerating the name is cheap."""
     _record(room, ("Ashfell Holdings Limited", "collision", "Real company."))
     blind_doc(room).unlink()
-    assert gate_14_unchecked_names(ctx_for(room)).status == "FAIL"
+    assert gate_14_unchecked_names(gate_ctx(room)).status == "FAIL"
 
 
 @pytest.mark.parametrize("verdict", ["ambiguous", "unchecked", "clera"])
@@ -715,7 +704,7 @@ def test_gate_14_warns_but_does_not_fail_on_a_non_clear_non_collision_verdict(ro
     typo, which must land here rather than be read as cleared."""
     _record(room, ("Ashfell Holdings Limited", verdict, "See note."))
     blind_doc(room).write_text("# Articles\n\nA deed with Ashfell Holdings Limited.\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "WARN", result.detail
     assert verdict in result.detail and "Ashfell Holdings Limited" in result.detail
 
@@ -726,7 +715,7 @@ def test_gate_14_prefers_the_collision_when_both_kinds_are_outstanding(room):
         ("Ashfell Holdings Limited", "collision", "Real company."),
         ("Kessler Werke GmbH", "ambiguous", "Unclear."),
     )
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "FAIL"
     assert "Ashfell Holdings Limited" in result.detail
 
@@ -737,7 +726,7 @@ def test_gate_14_still_reports_an_unchecked_name_alongside_an_outstanding_verdic
     room for it — a reader fixing one should see both."""
     _record(room, ("Ashfell Holdings Limited", "ambiguous", "Unclear."))
     blind_doc(room).write_text("# Articles\n\nA deed with Northgate Trading Limited.\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "FAIL"
     assert "Northgate Trading Limited" in result.detail
     assert "ambiguous" in result.detail
@@ -748,7 +737,7 @@ def test_gate_14_passes_when_every_verdict_is_clear(room):
     into a warning, or the WARN above carries no information."""
     _record(room, ("Ashfell Holdings Limited", "clear", "No collision found."))
     blind_doc(room).write_text("# Articles\n\nA deed with Ashfell Holdings Limited.\n")
-    assert gate_14_unchecked_names(ctx_for(room)).status == "PASS"
+    assert gate_14_unchecked_names(gate_ctx(room)).status == "PASS"
 
 
 # ---------------------------------------------------------------------------
@@ -794,12 +783,12 @@ def test_entity_tokens_keeps_the_when_dropping_it_would_leave_a_bare_suffix():
 
 def test_gate_14_passes_on_a_cast_name_wrapped_across_a_line_break(room):
     blind_doc(room).write_text("# Articles\n\nThe parties include Ashfell\nHoldings Limited.\n")
-    assert gate_14_unchecked_names(ctx_for(room)).status == "PASS"
+    assert gate_14_unchecked_names(gate_ctx(room)).status == "PASS"
 
 
 def test_gate_14_still_flags_an_unchecked_name_wrapped_across_a_line_break(room):
     blind_doc(room).write_text("# Articles\n\nA deed with Unlisted\nTrading Limited.\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "FAIL"
     assert "Unlisted Trading Limited" in result.detail, (
         "the reported name must be spelled the way the cast list spells it, "
@@ -847,7 +836,7 @@ def test_gate_14_still_flags_an_unchecked_name_wrapped_across_a_line_break(room)
 )
 def test_gate_14_does_not_fire_on_limited_used_as_an_adjective(room, prose):
     blind_doc(room).write_text(f"# Articles\n\n{prose}\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "PASS", result.detail
 
 
@@ -870,21 +859,21 @@ def test_gate_14_accepts_an_org_chart_abbreviation_of_a_cast_name(room):
         "│ Holdings Ltd │ │ Holdings Limited │\n"
         "```\n"
     )
-    assert gate_14_unchecked_names(ctx_for(room)).status == "PASS"
+    assert gate_14_unchecked_names(gate_ctx(room)).status == "PASS"
 
 
 def test_gate_14_still_flags_a_longer_name_ending_in_a_cast_name(room):
     # The rejected direction, pinned: a cast entry must never excuse a
     # DIFFERENT, longer name that merely ends with it.
     blind_doc(room).write_text("# Articles\n\nA deed with Ashfell Trading Holdings Limited.\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "FAIL"
     assert "Ashfell Trading Holdings Limited" in result.detail
 
 
 def test_gate_14_still_flags_an_abbreviation_of_nothing_on_the_cast_list(room):
     blind_doc(room).write_text("# Group structure\n\n│ Trading Ltd │\n")
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "FAIL"
     assert "Trading Ltd" in result.detail
 
@@ -956,7 +945,7 @@ def test_gate_14_does_not_fire_on_the_participle(room):
         "# Articles\n\nAshfell Holdings Limited was incorporated in England on "
         "17 April 1998 and Kessler Werke GmbH incorporated in 2004.\n"
     )
-    assert gate_14_unchecked_names(ctx_for(room)).status == "PASS"
+    assert gate_14_unchecked_names(gate_ctx(room)).status == "PASS"
 
 
 def test_gate_14_names_an_unchecked_entity_the_way_the_document_spells_it(room):
@@ -966,7 +955,7 @@ def test_gate_14_names_an_unchecked_entity_the_way_the_document_spells_it(room):
     blind_doc(room).write_text(
         "# Articles\n\nUnlisted Trading Limited incorporated in Jersey in 2019.\n"
     )
-    result = gate_14_unchecked_names(ctx_for(room))
+    result = gate_14_unchecked_names(gate_ctx(room))
     assert result.status == "FAIL"
     assert "Unlisted Trading Limited" in result.detail
     assert "incorporated" not in result.detail

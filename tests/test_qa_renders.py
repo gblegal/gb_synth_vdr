@@ -1,23 +1,9 @@
 import pytest
 
 from synthvdr.qa.renders import gate_16_render_parity
-from synthvdr.qa.runner import GateContext
-from synthvdr.roomconf import load_room_conf
-from synthvdr.schema import FindingSet
+from tests.conftest import gate_ctx, room_conf_text
 
-CONF = '''ROOM_CODENAME="Project Testbed"
-INDEX_TOTAL=1
-BLIND_TOTAL=1
-FLAGGED_TOTAL=1
-BLIND_TREE="data-room"
-FLAGGED_TREE="_key/flagged"
-KEY_ROOT="_key"
-FLAG_STRING_1="Key diligence points"
-FLAG_STRING_2="DD flag"
-FINDING_PREFIXES="ENV"
-EXPECTED_KDP_CARRIERS=0
-SECTION_DIRS="01_corporate"
-'''
+CONF = room_conf_text(FINDING_PREFIXES="ENV")
 
 
 @pytest.fixture
@@ -30,15 +16,8 @@ def room(tmp_path):
     return tmp_path
 
 
-def ctx_for(room, strict=False):
-    return GateContext(
-        room=room, conf=load_room_conf(room / "room.conf"),
-        findings=FindingSet([], ""), distractors=[], strict=strict,
-    )
-
-
 def test_skips_loudly_when_no_render_tree_exists(room):
-    result = gate_16_render_parity(ctx_for(room))
+    result = gate_16_render_parity(gate_ctx(room))
     assert result.status == "SKIP"
     assert "no render tree" in result.detail.lower()
 
@@ -47,12 +26,12 @@ def test_passes_when_the_render_tree_mirrors_the_blind_tree(room):
     out = room / "data-room-docx" / "01_corporate"
     out.mkdir(parents=True)
     (out / "1.1.1_articles.docx").write_bytes(b"stub")
-    assert gate_16_render_parity(ctx_for(room)).status == "PASS"
+    assert gate_16_render_parity(gate_ctx(room)).status == "PASS"
 
 
 def test_fails_when_a_render_is_missing(room):
     (room / "data-room-docx").mkdir()
-    result = gate_16_render_parity(ctx_for(room))
+    result = gate_16_render_parity(gate_ctx(room))
     assert result.status == "FAIL"
     assert "1.1.1_articles" in result.detail
 
@@ -64,7 +43,7 @@ def test_fails_and_names_missing_direction_distinctly(room):
     """A render tree with a document that has no render must report it as
     a MISSING render, distinct wording from an orphaned render."""
     (room / "data-room-docx" / "01_corporate").mkdir(parents=True)
-    result = gate_16_render_parity(ctx_for(room))
+    result = gate_16_render_parity(gate_ctx(room))
     assert result.status == "FAIL"
     assert "no render" in result.detail.lower()
     assert "no source" not in result.detail.lower()
@@ -80,7 +59,7 @@ def test_fails_on_orphaned_render_with_no_missing_direction(room):
     (out / "1.1.1_articles.docx").write_bytes(b"stub")
     (out / "9.9.9_deleted-source.docx").write_bytes(b"stale")
 
-    result = gate_16_render_parity(ctx_for(room))
+    result = gate_16_render_parity(gate_ctx(room))
 
     assert result.status == "FAIL"
     assert "render(s) with no source" in result.detail
@@ -102,7 +81,7 @@ def test_fails_on_both_directions_reported_distinctly(room):
     # An orphaned render with no matching source (orphaned direction).
     (out / "9.9.9_deleted-source.docx").write_bytes(b"stale")
 
-    result = gate_16_render_parity(ctx_for(room))
+    result = gate_16_render_parity(gate_ctx(room))
 
     assert result.status == "FAIL"
     assert "source(s) with no render" in result.detail
@@ -116,7 +95,7 @@ def test_passes_across_both_docx_and_pdf_trees(room):
         out = room / f"data-room{suffix}" / "01_corporate"
         out.mkdir(parents=True)
         (out / f"1.1.1_articles{ext}").write_bytes(b"stub")
-    result = gate_16_render_parity(ctx_for(room))
+    result = gate_16_render_parity(gate_ctx(room))
     assert result.status == "PASS"
     assert "data-room-docx" in result.detail
     assert "data-room-pdf" in result.detail
@@ -131,7 +110,7 @@ def test_fails_naming_which_tree_has_the_problem(room):
 
     (room / "data-room-pdf").mkdir()  # present but empty: PDF render missing
 
-    result = gate_16_render_parity(ctx_for(room))
+    result = gate_16_render_parity(gate_ctx(room))
     assert result.status == "FAIL"
     assert "data-room-pdf" in result.detail
     assert "data-room-docx" not in result.detail
@@ -154,7 +133,7 @@ def test_case_only_mismatch_is_consistent_across_both_directions(room):
     out.mkdir(parents=True)
     (out / "1.1.1_ARTICLES.docx").write_bytes(b"stub")  # source is 1.1.1_articles.md
 
-    result = gate_16_render_parity(ctx_for(room))
+    result = gate_16_render_parity(gate_ctx(room))
 
     assert result.status == "FAIL"
     assert "source(s) with no render" in result.detail
@@ -180,7 +159,7 @@ def test_fails_when_a_scanned_render_is_missing(room):
     a data-room-pdf-scanned/ with no render for the source document must
     fail, naming that document."""
     (room / "data-room-pdf-scanned").mkdir()
-    result = gate_16_render_parity(ctx_for(room))
+    result = gate_16_render_parity(gate_ctx(room))
     assert result.status == "FAIL"
     assert "1.1.1_articles" in result.detail
 
@@ -195,7 +174,7 @@ def test_fails_on_orphaned_scanned_render_with_no_missing_direction(room):
     (out / "1.1.1_articles.pdf").write_bytes(b"stub")
     (out / "9.9.9_deleted-source.pdf").write_bytes(b"stale")
 
-    result = gate_16_render_parity(ctx_for(room))
+    result = gate_16_render_parity(gate_ctx(room))
 
     assert result.status == "FAIL"
     assert "render(s) with no source" in result.detail
@@ -214,7 +193,7 @@ def test_missing_direction_uses_full_relative_paths_not_bare_stems(room):
 
     (room / "data-room-docx").mkdir()  # both renders missing
 
-    result = gate_16_render_parity(ctx_for(room))
+    result = gate_16_render_parity(gate_ctx(room))
 
     assert result.status == "FAIL"
     assert "01_corporate/1.1.1_articles.docx" in result.detail
@@ -239,7 +218,7 @@ def test_a_room_that_does_not_opt_in_is_completely_unaffected(room):
         out.mkdir(parents=True)
         (out / f"1.1.1_articles{ext}").write_bytes(b"stub")
 
-    result = gate_16_render_parity(ctx_for(room, strict=True))
+    result = gate_16_render_parity(gate_ctx(room, strict=True))
     assert result.status == "PASS", result.detail
     assert "scanned" not in result.detail.lower(), (
         "a room that never opted in must not be told anything about the "

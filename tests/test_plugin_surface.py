@@ -65,6 +65,7 @@ from synthvdr.score import (
 )
 from synthvdr.slots import _subsection_name, slot_slug
 from synthvdr.twin import TwinError, build_flagged_tree
+from tests.conftest import room_conf_text
 
 ROOT = Path(__file__).resolve().parent.parent
 SKILL_NAMES = ("vdr-scope", "vdr-findings", "vdr-build", "vdr-qa", "vdr-package", "vdr-score")
@@ -231,20 +232,11 @@ def find_example_by_top_level_key(blocks: List[str], key: str, source: Path) -> 
 # Fix round 1, coordinator ruling: a minimal but real room.conf for SEMANTIC
 # example-validation — see assert_evidence_paths_resolve_under_blind_tree() below. Every
 # value is arbitrary except the three PATH_KEYS, which must be internally consistent for
-# synthvdr.roomconf.load_room_conf / check_tree_identity to accept it at all.
-_SEMANTIC_ROOM_CONF = """ROOM_CODENAME="Example Verification Room"
-INDEX_TOTAL=1
-BLIND_TOTAL=1
-FLAGGED_TOTAL=1
-BLIND_TREE="data-room"
-FLAGGED_TREE="_key/flagged"
-KEY_ROOT="_key"
-FLAG_STRING_1="Key diligence points"
-FLAG_STRING_2="DD flag"
-FINDING_PREFIXES="XXX"
-EXPECTED_KDP_CARRIERS=0
-SECTION_DIRS="."
-"""
+# synthvdr.roomconf.load_room_conf / check_tree_identity to accept it at all, and
+# room_conf_text's defaults for them are. The long-mode tests further down reuse these
+# values with every section declared.
+_SEMANTIC_CONF_VALUES = dict(ROOM_CODENAME="Example Verification Room", FINDING_PREFIXES="XXX")
+_SEMANTIC_ROOM_CONF = room_conf_text(**_SEMANTIC_CONF_VALUES, SECTION_DIRS=".")
 
 
 def _domain_pack():
@@ -616,13 +608,7 @@ def test_findings_skill_validate_example_executes_without_a_nameerror(tmp_path, 
     (tmp_path / "_key" / "findings.yaml").write_text(findings_yaml, encoding="utf-8")
     (tmp_path / "_key" / "distractors.yaml").write_text(distractors_yaml, encoding="utf-8")
     (tmp_path / "room.conf").write_text(
-        'ROOM_CODENAME="Project Example"\n'
-        "INDEX_TOTAL=1\nBLIND_TOTAL=1\nFLAGGED_TOTAL=1\n"
-        'BLIND_TREE="data-room"\nFLAGGED_TREE="_key/flagged"\nKEY_ROOT="_key"\n'
-        'FLAG_STRING_1="Key diligence points"\nFLAG_STRING_2="DD flag"\n'
-        'FINDING_PREFIXES="ENV|FIN"\nEXPECTED_KDP_CARRIERS=0\n'
-        'SECTION_DIRS="01_corporate"\n',
-        encoding="utf-8",
+        room_conf_text(ROOM_CODENAME="Project Example", FINDING_PREFIXES="ENV|FIN"), encoding="utf-8"
     )
     block = find_example_by_marker(python_examples(path), "render_findings_md", path)
     monkeypatch.chdir(tmp_path)
@@ -686,12 +672,10 @@ def test_build_skill_consolidation_script_executes_and_regenerates_findings_md(t
 
     (tmp_path / "_key" / "incoming").mkdir(parents=True)
     (tmp_path / "room.conf").write_text(
-        'ROOM_CODENAME="Project Example"\n'
-        "INDEX_TOTAL=1\nBLIND_TOTAL=1\nFLAGGED_TOTAL=1\n"
-        'BLIND_TREE="data-room"\nFLAGGED_TREE="_key/flagged"\nKEY_ROOT="_key"\n'
-        'FLAG_STRING_1="Key diligence points"\nFLAG_STRING_2="DD flag"\n'
-        'FINDING_PREFIXES="CORP|FIN|TAX|FING|COMM|IP|IT|PROP|EMPL|REG|ENV|INS|PEN|DATA|'
-        'LIT|OPS|MGMT|TXN|ESG|JV"\nEXPECTED_KDP_CARRIERS=0\nSECTION_DIRS="01_corporate"\n',
+        room_conf_text(
+            ROOM_CODENAME="Project Example",
+            FINDING_PREFIXES="CORP|FIN|TAX|FING|COMM|IP|IT|PROP|EMPL|REG|ENV|INS|PEN|DATA|LIT|OPS|MGMT|TXN|ESG|JV",
+        ),
         encoding="utf-8",
     )
     (tmp_path / "_key" / "findings.yaml").write_text(
@@ -2527,8 +2511,8 @@ def test_findings_skill_step_2_listing_fence_prints_each_band_and_the_house_form
     slots = build_slot_manifest(pack, SIZE_PRESETS["M"])
     (tmp_path / "_key").mkdir()
     write_anchors_csv(slots, tmp_path / "_key" / "anchors.csv")
-    conf = _SEMANTIC_ROOM_CONF.replace('SECTION_DIRS="."', f'SECTION_DIRS="{" ".join(pack.section_dirs())}"')
-    (tmp_path / "room.conf").write_text(conf + 'DOC_LENGTH="long"\n', encoding="utf-8")
+    conf = room_conf_text(**_SEMANTIC_CONF_VALUES, SECTION_DIRS=" ".join(pack.section_dirs()), DOC_LENGTH="long")
+    (tmp_path / "room.conf").write_text(conf, encoding="utf-8")
 
     path = ROOT / "skills" / "vdr-findings" / "SKILL.md"
     text = _read(path)
@@ -2568,11 +2552,7 @@ def _long_m_room(tmp_path):
 
     pack = load_domain(DEFAULT_DOMAIN_ROOT)
     (tmp_path / "room.conf").write_text(
-        _SEMANTIC_ROOM_CONF.replace(
-            _SEMANTIC_ROOM_CONF.split("SECTION_DIRS=")[1].split("\n")[0],
-            '"' + " ".join(pack.section_dirs()) + '"',
-        )
-        + 'DOC_LENGTH="long"\n'
+        room_conf_text(**_SEMANTIC_CONF_VALUES, SECTION_DIRS=" ".join(pack.section_dirs()), DOC_LENGTH="long")
     )
     write_anchors_csv(build_slot_manifest(pack, SIZE_PRESETS["M"]), tmp_path / "_key" / "anchors.csv")
     (tmp_path / "_key" / "findings.yaml").write_text("findings: []\n")

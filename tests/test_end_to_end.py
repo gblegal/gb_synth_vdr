@@ -4,21 +4,20 @@ import sys
 from pathlib import Path
 
 from synthvdr.qa import ALL_GATES
-from synthvdr.qa.runner import GateContext, run_gates
+from synthvdr.qa.runner import run_gates
 from synthvdr.roomconf import load_room_conf
 from synthvdr.schema import load_distractors, load_findings
 from synthvdr.score import load_tool_output, score
+from tests.conftest import gate_ctx
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def ctx_for(room, strict=False):
-    conf = load_room_conf(room / "room.conf")
-    return GateContext(
-        room=room,
-        conf=conf,
-        findings=load_findings(room / "_key" / "findings.yaml"),
-        distractors=load_distractors(room / "_key" / "distractors.yaml"),
+    return gate_ctx(
+        room,
+        load_findings(room / "_key" / "findings.yaml"),
+        load_distractors(room / "_key" / "distractors.yaml"),
         strict=strict,
     )
 

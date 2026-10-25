@@ -1,23 +1,9 @@
 import pytest
 
 from synthvdr.qa.depth import gate_10_depth
-from synthvdr.qa.runner import GateContext
-from synthvdr.roomconf import load_room_conf
-from synthvdr.schema import FindingSet
+from tests.conftest import gate_ctx, room_conf_text
 
-CONF = '''ROOM_CODENAME="Project Testbed"
-INDEX_TOTAL=1
-BLIND_TOTAL=1
-FLAGGED_TOTAL=1
-BLIND_TREE="data-room"
-FLAGGED_TREE="_key/flagged"
-KEY_ROOT="_key"
-FLAG_STRING_1="Key diligence points"
-FLAG_STRING_2="DD flag"
-FINDING_PREFIXES="ENV"
-EXPECTED_KDP_CARRIERS=0
-SECTION_DIRS="01_corporate"
-'''
+CONF = room_conf_text(FINDING_PREFIXES="ENV")
 
 
 @pytest.fixture
@@ -33,23 +19,17 @@ def room(tmp_path):
     return tmp_path
 
 
-def ctx_for(room):
-    return GateContext(
-        room=room, conf=load_room_conf(room / "room.conf"), findings=FindingSet([], ""), distractors=[]
-    )
-
-
 def test_passes_when_above_the_tier_f_floor(room):
     # The fixture body contains none of PLACEHOLDER_MARKERS below, so this
     # also stands as the "clean document still passes" check: the
     # placeholder mechanism has not been widened into always-failing.
-    assert gate_10_depth(ctx_for(room)).status == "PASS"
+    assert gate_10_depth(gate_ctx(room)).status == "PASS"
 
 
 def test_fails_below_the_floor(room):
     p = room / "data-room/01_corporate/1.1_constitutional/1.1.1_articles.md"
     p.write_text("# Articles\n\n" + ("word " * 20))
-    assert gate_10_depth(ctx_for(room)).status == "FAIL"
+    assert gate_10_depth(gate_ctx(room)).status == "FAIL"
 
 
 def test_fail_detail_also_names_the_metric(room):
@@ -57,7 +37,7 @@ def test_fail_detail_also_names_the_metric(room):
     # wants to argue with the number needs to see it too.
     p = room / "data-room/01_corporate/1.1_constitutional/1.1.1_articles.md"
     p.write_text("# Articles\n\n" + ("word " * 20))
-    result = gate_10_depth(ctx_for(room))
+    result = gate_10_depth(gate_ctx(room))
     assert result.status == "FAIL"
     assert "metric" in result.detail.lower()
 
@@ -95,7 +75,7 @@ PLACEHOLDER_MARKER_OUTCOMES = [
 def test_placeholder_marker_outcomes(room, marker, expected):
     p = room / "data-room/01_corporate/1.1_constitutional/1.1.1_articles.md"
     p.write_text(f"# Articles\n\n{marker}\n" + ("word " * 400))
-    result = gate_10_depth(ctx_for(room))
+    result = gate_10_depth(gate_ctx(room))
     assert result.status == expected
     if expected == "FAIL":
         assert "placeholder" in result.detail.lower()
@@ -106,7 +86,7 @@ def test_an_invalid_tier_is_a_hard_failure_naming_the_slot_and_value(room, bad_t
     (room / "_key" / "anchors.csv").write_text(
         f"slot_id,tier,rel_path\n1.1.1,{bad_tier},01_corporate/1.1_constitutional/1.1.1_articles.md\n"
     )
-    result = gate_10_depth(ctx_for(room))
+    result = gate_10_depth(gate_ctx(room))
     assert result.status == "FAIL"
     assert "1.1.1" in result.detail
     assert repr(bad_tier) in result.detail
@@ -114,21 +94,20 @@ def test_an_invalid_tier_is_a_hard_failure_naming_the_slot_and_value(room, bad_t
 
 def test_a_slot_missing_from_the_manifest_is_a_failure(room):
     (room / "_key" / "anchors.csv").write_text("slot_id,tier,rel_path\n")
-    result = gate_10_depth(ctx_for(room))
+    result = gate_10_depth(gate_ctx(room))
     assert result.status == "FAIL"
     assert "1.1.1" in result.detail
 
 
 def test_skips_when_there_is_no_anchors_manifest(room):
     (room / "_key" / "anchors.csv").unlink()
-    assert gate_10_depth(ctx_for(room)).status == "SKIP"
+    assert gate_10_depth(gate_ctx(room)).status == "SKIP"
 
 
-LONG_CONF = CONF.replace('SECTION_DIRS="01_corporate"', 'SECTION_DIRS="05_commercial"')
-
-
-def long_room(tmp_path, words, doc_length_line='DOC_LENGTH="long"\n'):
-    (tmp_path / "room.conf").write_text(LONG_CONF + doc_length_line)
+def long_room(tmp_path, words, doc_length="long"):
+    (tmp_path / "room.conf").write_text(
+        room_conf_text(FINDING_PREFIXES="ENV", SECTION_DIRS="05_commercial", DOC_LENGTH=doc_length)
+    )
     d = tmp_path / "data-room" / "05_commercial" / "5.1_customer-contracts"
     d.mkdir(parents=True)
     (d / "5.1.1_customer-contracts-01.md").write_text("# Supply agreement\n\n" + ("word " * words))
@@ -141,30 +120,30 @@ def long_room(tmp_path, words, doc_length_line='DOC_LENGTH="long"\n'):
 
 
 def test_long_mode_fails_an_agreement_below_its_band_floor(tmp_path):
-    result = gate_10_depth(ctx_for(long_room(tmp_path, words=5000)))
+    result = gate_10_depth(gate_ctx(long_room(tmp_path, words=5000)))
     assert result.status == "FAIL"
     assert "floor 10000" in result.detail
 
 
 def test_long_mode_passes_an_agreement_at_its_band_floor_and_says_so(tmp_path):
-    result = gate_10_depth(ctx_for(long_room(tmp_path, words=10050)))
+    result = gate_10_depth(gate_ctx(long_room(tmp_path, words=10050)))
     assert result.status == "PASS"
     assert "DOC_LENGTH long" in result.detail
 
 
 def test_the_same_agreement_passes_in_short_mode(tmp_path):
-    assert gate_10_depth(ctx_for(long_room(tmp_path, words=5000, doc_length_line=""))).status == "PASS"
+    assert gate_10_depth(gate_ctx(long_room(tmp_path, words=5000, doc_length=None))).status == "PASS"
 
 
 def test_short_mode_detail_is_identical_with_and_without_the_key(room):
-    before = gate_10_depth(ctx_for(room)).detail
+    before = gate_10_depth(gate_ctx(room)).detail
     conf = room / "room.conf"
     conf.write_text(conf.read_text() + 'DOC_LENGTH="short"\n')
-    assert gate_10_depth(ctx_for(room)).detail == before
+    assert gate_10_depth(gate_ctx(room)).detail == before
 
 
 def test_long_mode_in_a_subset_room_uses_the_full_pack(tmp_path):
     # Review Focus 1: SECTION_DIRS here is one section of twenty; the lengths
     # file's rows for the other nineteen must match nothing and break nothing.
     room = long_room(tmp_path, words=10050)
-    assert gate_10_depth(ctx_for(room)).status == "PASS"
+    assert gate_10_depth(gate_ctx(room)).status == "PASS"

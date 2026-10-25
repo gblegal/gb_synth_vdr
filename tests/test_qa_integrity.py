@@ -11,23 +11,10 @@ from synthvdr.qa.integrity import (
     gate_17_answer_key_validation,
     parse_canonical_figures,
 )
-from synthvdr.qa.runner import GateContext
-from synthvdr.roomconf import load_room_conf
 from synthvdr.schema import Distractor, Finding, FindingSet
+from tests.conftest import gate_ctx, room_conf_text
 
-CONF = '''ROOM_CODENAME="Project Testbed"
-INDEX_TOTAL=1
-BLIND_TOTAL=1
-FLAGGED_TOTAL=1
-BLIND_TREE="data-room"
-FLAGGED_TREE="_key/flagged"
-KEY_ROOT="_key"
-FLAG_STRING_1="Key diligence points"
-FLAG_STRING_2="DD flag"
-FINDING_PREFIXES="ENV"
-EXPECTED_KDP_CARRIERS=1
-SECTION_DIRS="01_corporate"
-'''
+CONF = room_conf_text(FINDING_PREFIXES="ENV", EXPECTED_KDP_CARRIERS=1)
 
 FACT_SHEET = """# Fact sheet
 
@@ -72,12 +59,7 @@ def room(tmp_path):
 
 
 def ctx_for(room, findings=None):
-    return GateContext(
-        room=room,
-        conf=load_room_conf(room / "room.conf"),
-        findings=findings if findings is not None else FindingSet([finding()], "Project Testbed"),
-        distractors=[],
-    )
+    return gate_ctx(room, findings if findings is not None else FindingSet([finding()], "Project Testbed"))
 
 
 def test_parses_values_and_superseded_lists():
@@ -579,23 +561,14 @@ def test_gate_13_skip_reason_matches_a_valid_header_with_no_data_rows(room):
 # ---------------------------------------------------------------------------
 
 
-def ctx_with(room, findings, distractors=()):
-    return GateContext(
-        room=room,
-        conf=load_room_conf(room / "room.conf"),
-        findings=findings,
-        distractors=list(distractors),
-    )
-
-
 def test_gate_17_passes_on_a_consistent_answer_key(room):
-    result = gate_17_answer_key_validation(ctx_with(room, FindingSet([finding()], "Project Testbed")))
+    result = gate_17_answer_key_validation(gate_ctx(room, FindingSet([finding()], "Project Testbed")))
     assert result.status == "PASS"
     assert "1 finding(s)" in result.detail
 
 
 def test_gate_17_skips_when_there_is_nothing_to_validate(room):
-    result = gate_17_answer_key_validation(ctx_with(room, FindingSet([], "")))
+    result = gate_17_answer_key_validation(gate_ctx(room, FindingSet([], "")))
     assert result.status == "SKIP"
 
 
@@ -606,7 +579,7 @@ def test_gate_17_fails_on_a_dangling_cross_link_and_names_it(room):
         location="x", substance="s", discoverable_from_blind=True,
         audit_note="reachable from 1.1.1", cross_links=["NO-SUCH-ID"],
     )
-    result = gate_17_answer_key_validation(ctx_with(room, FindingSet([bad], "Project Testbed")))
+    result = gate_17_answer_key_validation(gate_ctx(room, FindingSet([bad], "Project Testbed")))
     assert result.status == "FAIL"
     # The failure output must name the SPECIFIC problem validate() returned,
     # not a generic "the answer key is invalid".
@@ -622,7 +595,7 @@ def test_gate_17_fails_when_a_distractors_location_is_also_real_evidence(room):
         resolution="01_corporate/1.1_constitutional/1.1.1_other.md",
     )
     result = gate_17_answer_key_validation(
-        ctx_with(room, FindingSet([f], "Project Testbed"), distractors=[dx])
+        gate_ctx(room, FindingSet([f], "Project Testbed"), distractors=[dx])
     )
     assert result.status == "FAIL"
     assert "DX-1" in result.detail

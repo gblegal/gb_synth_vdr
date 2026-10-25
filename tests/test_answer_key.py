@@ -19,21 +19,9 @@ import pytest
 from synthvdr.answer_key import AnswerKeyError, build_answer_key, load_labels
 from synthvdr.domain import DEFAULT_DOMAIN_ROOT, Archetype, DomainPack, Section, load_domain
 from synthvdr.roomconf import load_room_conf
+from tests.conftest import room_conf_text
 
-CONF_LINES = """\
-ROOM_CODENAME="Test Room"
-INDEX_TOTAL=1
-BLIND_TOTAL=1
-FLAGGED_TOTAL=1
-BLIND_TREE="data-room"
-FLAGGED_TREE="_key/flagged"
-KEY_ROOT="_key"
-FLAG_STRING_1="Key diligence points"
-FLAG_STRING_2="DD flag"
-FINDING_PREFIXES="CORP"
-SECTION_DIRS="01_corporate"
-EXPECTED_KDP_CARRIERS=0
-"""
+CONF_LINES = room_conf_text(ROOM_CODENAME="Test Room")
 
 LABELS = """\
 labels:

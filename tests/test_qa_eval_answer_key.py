@@ -24,23 +24,7 @@ from synthvdr.answer_key import answer_key_records
 from synthvdr.domain import DEFAULT_DOMAIN_ROOT, load_domain
 from synthvdr.qa.integrity import gate_19_eval_answer_key
 from synthvdr.qa.runner import FAIL, PASS, SKIP, GateContext
-from synthvdr.roomconf import load_room_conf
-from synthvdr.schema import FindingSet
-
-CONF_LINES = """\
-ROOM_CODENAME="Test Room"
-INDEX_TOTAL=1
-BLIND_TOTAL=1
-FLAGGED_TOTAL=1
-BLIND_TREE="data-room"
-FLAGGED_TREE="_key/flagged"
-KEY_ROOT="_key"
-FLAG_STRING_1="Key diligence points"
-FLAG_STRING_2="DD flag"
-FINDING_PREFIXES="CORP"
-SECTION_DIRS="01_corporate"
-EXPECTED_KDP_CARRIERS=0
-"""
+from tests.conftest import gate_ctx, room_conf_text
 
 LABELS = """\
 labels:
@@ -55,8 +39,7 @@ def _room(
     labels: str | None = LABELS,
     docs=("01_corporate/1.1.1_constitutional-01.md",),
 ):
-    conf_text = CONF_LINES + (f'ROOM_ROLE="{role}"\n' if role else "")
-    (tmp_path / "room.conf").write_text(conf_text)
+    (tmp_path / "room.conf").write_text(room_conf_text(ROOM_CODENAME="Test Room", ROOM_ROLE=role))
     for rel in docs:
         doc = tmp_path / "data-room" / rel
         doc.parent.mkdir(parents=True, exist_ok=True)
@@ -65,10 +48,7 @@ def _room(
     key_root.mkdir(exist_ok=True)
     if labels is not None:
         (key_root / "labels.yaml").write_text(labels)
-    conf = load_room_conf(tmp_path / "room.conf")
-    return GateContext(
-        room=tmp_path, conf=conf, findings=FindingSet([], ""), distractors=[], strict=False
-    )
+    return gate_ctx(tmp_path)
 
 
 def _write_key(ctx: GateContext) -> Path:
