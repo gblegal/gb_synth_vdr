@@ -167,6 +167,18 @@ def _same_file(a: Path, b: Path) -> bool:
         return False
 
 
+# Finder writes a .DS_Store into every folder it opens. It holds Finder's view
+# settings, not a document, and Finder rewrites it whenever someone looks, so
+# a room that has been browsed must read exactly as one that has not: no gate
+# counts it, no build copies it and no content hash covers it.
+FINDER_LITTER = ".DS_Store"
+
+
+def room_files(root: Path) -> List[Path]:
+    """Every file under `root`, sorted, less Finder's .DS_Store files."""
+    return sorted(p for p in root.rglob("*") if p.is_file() and p.name != FINDER_LITTER)
+
+
 _FINDING_PREFIX_TOKEN = re.compile(r"^[A-Z][A-Z0-9]*$")
 
 

@@ -32,7 +32,7 @@ def _tree(root: Path, files: dict) -> Path:
 
 def test_content_hash_is_the_documented_construction(tmp_path):
     # sha256 over the SORTED `rel_path + "\0" + sha256(bytes)` of every file
-    # in the tree, joined with newlines. Spelled out here independently of
+    # in the tree (Finder's .DS_Store aside), joined with newlines. Spelled out here independently of
     # the implementation, because this exact form is what every packaged
     # room's provenance already rests on: change it and every hash handed
     # out with a released room stops matching.
@@ -104,3 +104,12 @@ def test_the_manifest_command_refuses_a_room_it_cannot_read(tmp_path, capsys):
     code = main(["manifest", "--room", str(tmp_path)])
     assert code == 2
     assert "room.conf" in capsys.readouterr().err
+
+
+def test_content_hash_leaves_out_finder_litter(tmp_path, browse_in_finder):
+    # Finder rewrites a folder's .DS_Store whenever someone opens it, so
+    # hashing it would turn a look at the room into a different room.
+    root = _tree(tmp_path / "data-room", {"01_corporate/articles.md": "# Articles\n"})
+    never_opened = compute_content_hash(root)
+    browse_in_finder(root)
+    assert compute_content_hash(root) == never_opened

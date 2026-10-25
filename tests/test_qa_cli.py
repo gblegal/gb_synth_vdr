@@ -52,3 +52,14 @@ def test_malformed_answer_key_exits_cleanly_without_a_traceback(tmp_path, capsys
     assert code == 2
     assert "Traceback" not in captured.err
     assert "Traceback" not in captured.out
+
+
+def test_a_room_opened_in_finder_reads_exactly_as_one_never_opened(xs_room, browse_in_finder, capsys):
+    # Finder leaves a .DS_Store in every folder it opens. Gate 7 used to fail
+    # on it ("no flagged twin"), and every leak sweep counted it as a file
+    # read with lossy decoding.
+    main(["--room", str(xs_room)])
+    never_opened = capsys.readouterr().out
+    browse_in_finder(xs_room)
+    main(["--room", str(xs_room)])
+    assert capsys.readouterr().out == never_opened

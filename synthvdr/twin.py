@@ -28,6 +28,7 @@ from .ownership import NotOwnedError
 from .ownership import assert_target_is_ours as _assert_target_is_ours
 from .ownership import write_marker
 from .roomconf import (
+    FINDER_LITTER,
     PATH_KEYS,
     RoomConf,
     RoomConfError,
@@ -276,7 +277,7 @@ def build_flagged_tree(
     written = carrier_count = identical = 0
     matched: Set[str] = set()
     for source in blind_entries:
-        if not source.is_file():
+        if not source.is_file() or source.name == FINDER_LITTER:
             continue
         rel = source.relative_to(blind_root).as_posix()
         matched.add(rel)

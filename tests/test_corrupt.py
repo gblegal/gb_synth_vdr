@@ -424,3 +424,16 @@ def test_the_clean_rooms_hash_is_refused_on_a_twin_run(tmp_path, capsys):
     assert code == 2
     assert "different room" in captured.err
     assert "Classification scorecard" not in captured.out
+
+
+def test_a_room_opened_in_finder_corrupts_exactly_as_one_never_opened(tmp_path, browse_in_finder):
+    (tmp_path / "never-opened").mkdir()
+    (tmp_path / "opened").mkdir()
+    never_opened, conf = _room(tmp_path / "never-opened")
+    opened, opened_conf = _room(tmp_path / "opened")
+    browse_in_finder(opened / "data-room")
+
+    corrupt_room(never_opened, conf, seed=1, profile=PROFILES["heavy"])
+    corrupt_room(opened, opened_conf, seed=1, profile=PROFILES["heavy"])
+
+    assert _tree_digest(opened / CORRUPTED_DIR) == _tree_digest(never_opened / CORRUPTED_DIR)

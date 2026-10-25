@@ -19,7 +19,7 @@ import yaml
 from .ownership import NotOwnedError, UnsafeOutDirError, assert_safe_out_dir
 from .ownership import assert_target_is_ours as _assert_target_is_ours
 from .ownership import write_marker
-from .roomconf import RoomConf
+from .roomconf import RoomConf, room_files
 from .schema import FindingSet
 
 
@@ -65,9 +65,7 @@ def _hash_key(rel: str) -> str:
 
 def select_subset(room: Path, conf: RoomConf, findings: FindingSet, total: int) -> List[str]:
     blind_root = room / conf.get("BLIND_TREE")
-    everything = sorted(
-        p.relative_to(blind_root).as_posix() for p in blind_root.rglob("*") if p.is_file()
-    )
+    everything = sorted(p.relative_to(blind_root).as_posix() for p in room_files(blind_root))
     evidence = sorted(findings.all_evidence_paths() & set(everything))
     chosen = set(evidence)
     filler_pool = [rel for rel in everything if rel not in chosen]
@@ -157,15 +155,11 @@ def check_subset(findings: FindingSet, out_dir: Path) -> SubsetReport:
     # The marker is infrastructure the subset itself writes, not a
     # document — it must never inflate .total/.evidence/.filler, exactly as
     # synthvdr.twin.MARKER_NAME must never inflate a TwinReport (see that
-    # module's gate coverage). Excluded by exact relative path, not by
-    # suffix: subset documents are not guaranteed to be markdown (evidence
-    # may be a CSV register, say), so a suffix filter would risk excluding
-    # a real document instead.
-    present = {
-        p.relative_to(out_dir).as_posix()
-        for p in out_dir.rglob("*")
-        if p.is_file() and p.relative_to(out_dir).as_posix() != SUBSET_MARKER_NAME
-    }
+    # module's gate coverage), and nor must Finder's .DS_Store. Excluded by
+    # exact name, not by suffix: subset documents are not guaranteed to be
+    # markdown (evidence may be a CSV register, say), so a suffix filter
+    # would risk excluding a real document instead.
+    present = {p.relative_to(out_dir).as_posix() for p in room_files(out_dir)} - {SUBSET_MARKER_NAME}
     report.total = len(present)
     evidence_paths = findings.all_evidence_paths()
     report.evidence = len(evidence_paths & present)
