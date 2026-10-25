@@ -132,7 +132,10 @@ Writes `_key/manifest.json` and prints the `content_hash` to hand to whoever pro
 tool output scored against the room. This is `/vdr-package` step 4, and it is a command
 rather than a code block inside that skill because `check_provenance` compares the hash as a
 plain string: a hash constructed even slightly differently does not fail loudly, it reports
-that a correct output came from a different room. Exit **2** if `room.conf` cannot be
+that a correct output came from a different room. Finder's `.DS_Store` files are left out of
+the hash, as they are out of every gate and build (`synthvdr.roomconf.FINDER_LITTER`): Finder
+rewrites them whenever someone opens a folder, so hashing them would make a look at the room a
+different room. A tree with none hashes as it always has. Exit **2** if `room.conf` cannot be
 loaded, if the blind tree is missing (a manifest there would certify an empty room), or if
 `findings.yaml` exists but is malformed.
 

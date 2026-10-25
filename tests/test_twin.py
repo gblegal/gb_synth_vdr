@@ -3,16 +3,13 @@ import unicodedata
 
 import pytest
 
-from synthvdr.roomconf import PATH_KEYS, ROOM_ROOT_LABEL, RoomConf, load_room_conf
+from synthvdr.roomconf import PATH_KEYS, ROOM_ROOT_LABEL, RoomConf, _is_inside, _same_file, load_room_conf
 from synthvdr.schema import Distractor, Finding, FindingSet
 from synthvdr.twin import (
     MARKER_NAME,
     MARKER_TEXT,
     SUBJECT_KEY,
     TwinError,
-    _is_inside,
-    _overlaps,
-    _same_file,
     annotation_block,
     assert_safe_delete_target,
     assert_target_is_ours,
@@ -427,10 +424,10 @@ def test_build_flagged_tree_refuses_when_flagged_and_blind_are_the_same_director
 
 def test_build_flagged_tree_refuses_an_alias_the_string_check_cannot_see(tmp_path):
     # Isolates the samefile backstop's own necessity within build_flagged_tree,
-    # separately from _overlaps: BLIND_TREE and FLAGGED_TREE spelled with
+    # separately from _is_inside: BLIND_TREE and FLAGGED_TREE spelled with
     # different Unicode normalisation forms of the same name ('café-room',
     # NFC vs NFD). casefold() does not perform Unicode normalisation, so
-    # _overlaps genuinely does not fire for this pair — if the samefile
+    # _is_inside genuinely does not fire for this pair — if the samefile
     # loop were removed, nothing else in build_flagged_tree would catch it.
     # Skipped on a filesystem that doesn't alias the two spellings.
     import unicodedata
@@ -449,7 +446,7 @@ def test_build_flagged_tree_refuses_an_alias_the_string_check_cannot_see(tmp_pat
     (blind_root / "articles.md").write_text("# Articles\n")
 
     conf = load_room_conf(conf_path)
-    assert not _overlaps(room / nfd, blind_root), (
+    assert not _is_inside(room / nfd, blind_root) and not _is_inside(blind_root, room / nfd), (
         "test assumption broken: the string-level check must not catch this "
         "on its own, or the test isn't isolating the samefile backstop"
     )
@@ -527,7 +524,7 @@ def test_same_file_detects_a_unicode_normalisation_alias_if_the_filesystem_has_o
 
 
 # ---------------------------------------------------------------------------
-# _is_inside / _overlaps in isolation: the string-level comparison that sits
+# _is_inside in isolation: the string-level comparison that sits
 # alongside _same_file. Case-insensitive unconditionally (see
 # _casefolded_parts), independent of whether _same_file would also catch a
 # given scenario once the paths exist on disk.
@@ -550,19 +547,6 @@ def test_is_inside_false_for_unrelated_paths(tmp_path):
     b = tmp_path / "flagged"
     assert not _is_inside(a, b)
     assert not _is_inside(b, a)
-
-
-def test_overlaps_is_case_insensitive_in_either_direction(tmp_path):
-    a = tmp_path / "data-room"
-    b = tmp_path / "DATA-ROOM" / "sub"
-    assert _overlaps(a, b)
-    assert _overlaps(b, a)
-
-
-def test_overlaps_false_for_two_genuinely_separate_trees(tmp_path):
-    a = tmp_path / "data-room"
-    b = tmp_path / "flagged"
-    assert not _overlaps(a, b)
 
 
 # ---------------------------------------------------------------------------
@@ -622,7 +606,7 @@ def test_build_flagged_tree_refuses_a_unicode_alias_between_key_root_and_flagged
     victim.write_text("findings: []\n")
 
     conf = load_room_conf(conf_path)
-    assert not _overlaps(room / nfd, room / nfc), (
+    assert not _is_inside(room / nfd, room / nfc) and not _is_inside(room / nfc, room / nfd), (
         "test assumption broken: the casefolded string check must not catch "
         "this on its own, or the test isn't isolating the samefile comparison"
     )
@@ -1146,21 +1130,12 @@ def test_an_unreadable_blind_subdirectory_does_not_destroy_the_previous_flagged_
     assert (previous / "previous.md").read_text(encoding="utf-8") == "from the last good build\n"
 
 
-# ---------------------------------------------------------------------------
-# Review item 14: the three path helpers are re-exported from roomconf on
-# purpose, and the comment above twin.__all__ says so — but until this pin
-# existed the DECLARATION was only a comment. _overlaps in particular is
-# called nowhere in twin.py, so a linter reports it as an unused import and
-# the only thing that would break on deleting it is this test file.
+def test_finder_litter_in_the_blind_tree_is_not_copied_into_the_flagged_tree(tmp_path, browse_in_finder):
+    room, conf = make_room(tmp_path)
+    write_blind(room, "11_environmental-hs/11.2_site-reports/11.2.1_phase-2.md", BLIND)
+    browse_in_finder(room / "data-room")
 
+    report = build_flagged_tree(room, conf, FindingSet(findings=[], room="Project Testbed"))
 
-def test_the_shared_path_helpers_are_declared_re_exports():
-    from synthvdr import roomconf, twin
-
-    for name in ("_is_inside", "_overlaps", "_same_file"):
-        assert name in twin.__all__, f"{name} is re-exported but not declared"
-        assert getattr(twin, name) is getattr(roomconf, name), (
-            f"twin.{name} must BE roomconf.{name}, not a second copy — one "
-            "implementation of 'are these two paths the same tree?' is the "
-            "whole point of the re-export"
-        )
+    assert report.written == 1
+    assert not list((room / "_key/flagged").rglob(".DS_Store"))

@@ -12,14 +12,14 @@ import hashlib
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 import yaml
 
 from .ownership import NotOwnedError, UnsafeOutDirError, assert_safe_out_dir
 from .ownership import assert_target_is_ours as _assert_target_is_ours
 from .ownership import write_marker
-from .roomconf import RoomConf
+from .roomconf import RoomConf, room_files
 from .schema import FindingSet
 
 
@@ -65,11 +65,10 @@ def _hash_key(rel: str) -> str:
 
 def select_subset(room: Path, conf: RoomConf, findings: FindingSet, total: int) -> List[str]:
     blind_root = room / conf.get("BLIND_TREE")
-    everything = sorted(
-        p.relative_to(blind_root).as_posix() for p in blind_root.rglob("*") if p.is_file()
-    )
+    everything = sorted(p.relative_to(blind_root).as_posix() for p in room_files(blind_root))
     evidence = sorted(findings.all_evidence_paths() & set(everything))
-    filler_pool = [rel for rel in everything if rel not in set(evidence)]
+    chosen = set(evidence)
+    filler_pool = [rel for rel in everything if rel not in chosen]
     filler_pool.sort(key=_hash_key)
     shortfall = max(0, total - len(evidence))
     return evidence + filler_pool[:shortfall]
@@ -127,7 +126,8 @@ def build_subset(
         for rel in selected:
             writer.writerow([rel, "evidence" if rel in evidence else "filler"])
 
-    covered = [f for f in findings.findings if set(f.evidence_paths()) <= set(selected)]
+    in_subset = set(selected)
+    covered = [f for f in findings.findings if set(f.evidence_paths()) <= in_subset]
     (key_root / "subset-key.yaml").write_text(
         yaml.safe_dump(
             {
@@ -143,13 +143,10 @@ def build_subset(
         ),
         encoding="utf-8",
     )
-    return check_subset(room, conf, findings, out_dir=out_dir)
+    return check_subset(findings, out_dir)
 
 
-def check_subset(
-    room: Path, conf: RoomConf, findings: FindingSet, out_dir: Optional[Path] = None
-) -> SubsetReport:
-    out_dir = out_dir or (room / "subset")
+def check_subset(findings: FindingSet, out_dir: Path) -> SubsetReport:
     report = SubsetReport(findings_total=len(findings.findings))
     if not out_dir.is_dir():
         report.errors.append(f"{out_dir} does not exist")
@@ -158,15 +155,11 @@ def check_subset(
     # The marker is infrastructure the subset itself writes, not a
     # document — it must never inflate .total/.evidence/.filler, exactly as
     # synthvdr.twin.MARKER_NAME must never inflate a TwinReport (see that
-    # module's gate coverage). Excluded by exact relative path, not by
-    # suffix: subset documents are not guaranteed to be markdown (evidence
-    # may be a CSV register, say), so a suffix filter would risk excluding
-    # a real document instead.
-    present = {
-        p.relative_to(out_dir).as_posix()
-        for p in out_dir.rglob("*")
-        if p.is_file() and p.relative_to(out_dir).as_posix() != SUBSET_MARKER_NAME
-    }
+    # module's gate coverage), and nor must Finder's .DS_Store. Excluded by
+    # exact name, not by suffix: subset documents are not guaranteed to be
+    # markdown (evidence may be a CSV register, say), so a suffix filter
+    # would risk excluding a real document instead.
+    present = {p.relative_to(out_dir).as_posix() for p in room_files(out_dir)} - {SUBSET_MARKER_NAME}
     report.total = len(present)
     evidence_paths = findings.all_evidence_paths()
     report.evidence = len(evidence_paths & present)

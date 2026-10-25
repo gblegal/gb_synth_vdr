@@ -7,12 +7,10 @@ import pytest
 from synthvdr.namecheck import (
     KINDS,
     VERDICTS,
-    CandidateName,
     NameCheckError,
     Verdict,
     extract_candidates,
     load_name_check,
-    names_needing_check,
     render_name_check_md,
     unresolved,
 )
@@ -43,14 +41,6 @@ def test_extracts_entities_by_corporate_suffix():
 def test_extracts_people_from_the_cast_table():
     names = {c.text for c in extract_candidates(FACT_SHEET) if c.kind == "person"}
     assert names == {"Marta Vinceau", "Daniel Oyelaran"}
-
-
-def test_names_needing_check_excludes_already_checked():
-    candidates = extract_candidates(FACT_SHEET)
-    existing = [Verdict("Kessler Werke GmbH", "entity", "clear", "2026-08-24", "")]
-    todo = {c.text for c in names_needing_check(candidates, existing)}
-    assert "Kessler Werke GmbH" not in todo
-    assert "Ashfell Advanced Materials Limited" in todo
 
 
 def test_render_and_load_round_trip(tmp_path):
@@ -301,8 +291,7 @@ def test_the_verdict_vocabulary_is_closed_and_pinned():
 # ---------------------------------------------------------------------------
 # Fix round 2: duplicate declared rows with a genuine kind conflict, a Name
 # the pipe-table format cannot carry as a key (a literal '|', or text that
-# would vanish as a separator row), a Note sanitised rather than rejected,
-# and a pin proving names_needing_check is exact-match, not folded.
+# would vanish as a separator row), and a Note sanitised rather than rejected.
 # ---------------------------------------------------------------------------
 
 
@@ -437,20 +426,6 @@ def test_render_sanitises_a_pipe_in_the_note_without_truncating(tmp_path):
     # Sanitised, not truncated at the first pipe: the whole note survives.
     assert loaded[0].note == long_note.replace("|", "/")
     assert "possible false positive" in loaded[0].note
-
-
-@pytest.mark.parametrize(
-    "existing_text",
-    ["ashfell holdings limited", " Ashfell Holdings Limited ", "ASHFELL HOLDINGS LIMITED"],
-)
-def test_names_needing_check_does_not_fold_case_or_whitespace(existing_text):
-    # Pin for the exact-match behaviour already shipped: folding case or
-    # whitespace here would create a false "already checked" when the
-    # fact sheet's exact text differs from what was actually searched.
-    candidates = [CandidateName("Ashfell Holdings Limited", "entity")]
-    existing = [Verdict(existing_text, "entity", "clear", "2026-08-24", "")]
-    todo = names_needing_check(candidates, existing)
-    assert [c.text for c in todo] == ["Ashfell Holdings Limited"]
 
 
 

@@ -159,39 +159,6 @@ def test_render_is_byte_stable_across_independent_runs(tmp_path, monkeypatch):
     assert output_normal == output_reversed
 
 
-def test_render_is_byte_stable_fails_without_sorted(tmp_path, monkeypatch):
-    """Verify the byte-stability test actually catches missing sorted() call.
-
-    This is a regression test for the test itself: proves that removing sorted()
-    from render_index would make test_render_is_byte_stable_across_independent_runs fail.
-    """
-    pack = load_domain(DEFAULT_DOMAIN_ROOT)
-    slots = build_slot_manifest(pack, SIZE_PRESETS["S"])
-    src = tmp_path / "index-src"
-    write_index_sources(slots, pack, src)
-
-    # Monkeypatch glob to return paths in reversed order
-    original_glob = Path.glob
-
-    def reversed_glob(self, pattern):
-        return reversed(list(original_glob(self, pattern)))
-
-    monkeypatch.setattr(Path, "glob", reversed_glob)
-
-    # Without sorted(), the reversed order would produce different output
-    # Simulate render_index without sorted() by directly concatenating in glob order
-    preamble = (src / "00_preamble.txt").read_text(encoding="utf-8").rstrip("\n")
-    parts = [preamble, ""]
-    for path in (p for p in src.glob("*.md")):  # No sorted() call
-        parts.append(path.read_text(encoding="utf-8").rstrip("\n"))
-        parts.append("")
-    output_no_sort = "\n".join(parts).rstrip("\n") + "\n"
-
-    # This should be different from the properly sorted output
-    output_with_sort = render_index(src)
-    assert output_no_sort != output_with_sort
-
-
 def test_sections_appear_in_numerical_order(tmp_path):
     pack, _, src = sources(tmp_path)
     text = render_index(src)

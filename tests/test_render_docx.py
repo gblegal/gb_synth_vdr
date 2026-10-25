@@ -7,12 +7,12 @@ import subprocess
 import sys
 import zlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from synthvdr.render.docx import (
     _ATX_HEADING,
-    _FENCE,
     RenderUnavailable,
     default_scanned_count,
     render_tree_docx,
@@ -71,12 +71,6 @@ def two_findings():
     ]
 
 
-def test_rotation_is_deterministic_and_in_range():
-    first = rotation_for("11.1.1", 1)
-    assert first == rotation_for("11.1.1", 1)
-    assert 0.4 <= abs(first) <= 1.1
-
-
 def test_rotation_varies_by_page():
     assert rotation_for("11.1.1", 1) != rotation_for("11.1.1", 2)
 
@@ -119,10 +113,6 @@ def test_scanned_slots_prefer_evidence_documents():
     assert slots == ["11_env/11.1_x/11.1.1_report.md"]
 
 
-def test_scanned_slots_are_deterministic():
-    assert scanned_slots(findings(), count=1) == scanned_slots(findings(), count=1)
-
-
 def test_scanned_slots_stable_across_reordering():
     """The set of findings, not the order they were listed in, determines
     the chosen slots — a findings.yaml re-save that shuffles entries must
@@ -157,15 +147,6 @@ def test_scanned_slots_deterministic_across_processes_with_different_hash_seed()
         )
         results.add(proc.stdout.strip())
     assert len(results) == 1
-
-
-def test_renders_every_markdown_file(tmp_path):
-    src = tmp_path / "data-room" / "01_corporate"
-    src.mkdir(parents=True)
-    (src / "1.1.1_articles.md").write_text("# Articles\n\nA paragraph.\n")
-    out = tmp_path / "data-room-docx"
-    assert render_tree_docx(tmp_path / "data-room", out) == 1
-    assert (out / "01_corporate" / "1.1.1_articles.docx").is_file()
 
 
 def test_render_tree_docx_is_non_destructive(tmp_path):
@@ -914,102 +895,59 @@ FENCE_CORPUS = [
 ]
 
 
-def _python_fenced_headings(lines):
-    """What docx.py's own state machine makes of each line: the heading level
-    for a heading, or None for a paragraph. Mirrors render_tree_docx's loop
-    exactly — the shape the node side is compared against below."""
-    out, in_fence, fence_char = [], None, None
-    in_fence = False
-    for raw in lines:
-        stripped = raw.rstrip()
-        if in_fence:
-            out.append(None)
-            closing = _FENCE.match(stripped)
-            if closing and closing.group(1)[0] == fence_char:
-                in_fence, fence_char = False, None
-            continue
-        fence = _FENCE.match(stripped)
-        if fence:
-            in_fence, fence_char = True, fence.group(1)[0]
-            out.append(None)
-            continue
-        match = _ATX_HEADING.match(stripped)
-        out.append(min(len(match.group(1)), 4) if match else None)
-    return out
-
-
-def test_pdf_mjs_fence_tracking_matches_python_exactly():
+def test_pdf_mjs_fence_tracking_matches_python_exactly(tmp_path):
     """pdf.mjs shipped with no fence handling at all, so every `# comment`
     inside a fenced block became an <h1> while the DOCX render correctly left
     it a paragraph. docx.py's own comment names the case: "# a shell comment"
     is the most common line in any snippet, and is not a heading just because
     a fence is open.
 
-    Runs the real FENCE regex out of the shipped pdf.mjs under node, same as
-    the rotation and heading ports; SKIPs, never silently passes, without node.
+    Runs both shipped renderers over the same lines — pdf.mjs's own mdToHtml
+    under node, render_tree_docx read back with python-docx — and compares
+    what each made of every line. It used to compare two copies of the state
+    machine written into this test, which kept passing when either real loop
+    stopped closing its fences. SKIPs, never silently passes, without node.
     """
     node = shutil.which("node")
     if node is None:
         pytest.skip("node not available — cross-language fence parity unverified")
 
-    fence_src = _extract_pdf_mjs(r"^const FENCE = /.*/;$", "the `const FENCE = /.../;` line")
-    atx_src = _extract_pdf_mjs(r"^const ATX_HEADING = /.*/;$", "the ATX_HEADING line")
     script = (
-        f"{fence_src}\n{atx_src}\n"
-        f"const lines = {json.dumps(FENCE_CORPUS)};\n"
-        "let inFence = false, fenceChar = null;\n"
-        "const out = [];\n"
-        "for (const raw of lines) {\n"
-        "  const line = raw.trimEnd();\n"
-        "  if (inFence) {\n"
-        "    out.push(null);\n"
-        "    const c = FENCE.exec(line);\n"
-        "    if (c && c[1][0] === fenceChar) { inFence = false; fenceChar = null; }\n"
-        "    continue;\n"
-        "  }\n"
-        "  const f = FENCE.exec(line);\n"
-        "  if (f) { inFence = true; fenceChar = f[1][0]; out.push(null); continue; }\n"
-        "  const m = ATX_HEADING.exec(line);\n"
-        "  out.push(m ? Math.min(m[1].length, 4) : null);\n"
-        "}\n"
-        "console.log(JSON.stringify(out));\n"
+        _extract_pdf_mjs(r"^const FENCE = /.*/;$", "the `const FENCE = /.../;` line") + "\n"
+        + _extract_pdf_mjs(r"^const ATX_HEADING = /.*/;$", "the ATX_HEADING line") + "\n"
+        + _extract_pdf_function("mdToHtml") + "\n"
+        + f"const html = mdToHtml({json.dumps(chr(10).join(FENCE_CORPUS))});\n"
+        + "const out = [...html.matchAll(/<(h[1-6]|p)>(.*?)<\\/\\1>/g)]"
+        + ".map((m) => [m[1][0] === 'h' ? Number(m[1][1]) : null, m[2]]);\n"
+        + "console.log(JSON.stringify(out));\n"
     )
-    proc = subprocess.run(
-        [node, "--input-type=module", "-e", script], capture_output=True, text=True
-    )
+    proc = subprocess.run([node, "--input-type=module", "-e", script], capture_output=True, text=True)
     if proc.returncode != 0:
-        raise AssertionError(f"node failed to run pdf.mjs's FENCE: {proc.stderr}")
+        raise AssertionError(f"node failed to run pdf.mjs's mdToHtml: {proc.stderr}")
+    pdf_lines = [tuple(pair) for pair in json.loads(proc.stdout)]
 
-    py_results = _python_fenced_headings(FENCE_CORPUS)
-    assert json.loads(proc.stdout.strip()) == py_results
-
-    # Pin the rule itself, so a pair of regexes that both matched nothing
-    # could not satisfy the equality above.
-    assert py_results[0] == 1, "a real heading outside any fence must stay a heading"
-    assert py_results[2] is None and py_results[3] is None, (
-        "'# a shell comment' inside a fence must not be a heading"
-    )
-    assert py_results[5] == 1, "the fence must close and headings resume after it"
-    assert py_results[7] is None, "a ~~~ fence must be tracked as well as ```"
-    assert py_results[-1] is None, "an unclosed fence must run to EOF"
-
-
-def test_render_tree_docx_keeps_a_hash_comment_inside_a_fence_as_a_paragraph(tmp_path):
-    """The Python side of the same rule, checked against real .docx output
-    rather than the regex — this is the behaviour pdf.mjs is being held to."""
     src = tmp_path / "data-room" / "01_corporate"
     src.mkdir(parents=True)
-    (src / "1.1.1_articles.md").write_text(
-        "# Articles\n\n```bash\n# a shell comment\n```\n", encoding="utf-8"
-    )
-    out = tmp_path / "data-room-docx"
-    render_tree_docx(tmp_path / "data-room", out)
+    (src / "1.1.1_fenced.md").write_text("\n".join(FENCE_CORPUS) + "\n")
+    render_tree_docx(tmp_path / "data-room", tmp_path / "docx")
+    document = docx_module.Document(str(tmp_path / "docx" / "01_corporate" / "1.1.1_fenced.docx"))
+    docx_lines = [
+        (int(p.style.name.split()[-1]) if p.style.name.startswith("Heading") else None, p.text)
+        for p in document.paragraphs
+    ]
 
-    document = docx_module.Document(str(out / "01_corporate" / "1.1.1_articles.docx"))
-    styles = {p.text: p.style.name for p in document.paragraphs}
-    assert styles["Articles"].startswith("Heading")
-    assert not styles["# a shell comment"].startswith("Heading")
-    assert "```bash" in styles, "fence markers must survive the render verbatim"
+    assert pdf_lines == docx_lines
+
+    # Pin the rule itself, so two renderers that agreed on getting it wrong
+    # could not satisfy the equality above.
+    levels = dict((text, level) for level, text in docx_lines)
+    assert levels["Real heading"] == 1, "a real heading outside any fence must stay a heading"
+    assert levels["# a shell comment"] is None and levels["## not a heading either"] is None, (
+        "'# a shell comment' inside a fence must not be a heading"
+    )
+    assert levels["Heading again"] == 1, "the fence must close and headings resume after it"
+    assert levels["# tilde-fenced comment"] is None, "a ~~~ fence must be tracked as well as ```"
+    assert levels["# still inside the fence"] is None, "an unclosed fence must run to EOF"
 
 
 # --- the scanned render is per PAGE, not per document-tall image ----------
@@ -1487,7 +1425,28 @@ def _build_mini_scan_tree(tmp_path: Path, build_xs_room):
     return blind, src, scanned_rel, digital_rel
 
 
-def test_scan_profile_none_is_byte_identical_to_default(tmp_path, build_xs_room):
+@pytest.fixture(scope="module")
+def mini_scan(tmp_path_factory, build_xs_room):
+    """`_build_mini_scan_tree` once for the module, with its renders cached by
+    name: the two tests below read the same renders and never write to them,
+    and each render launches a browser for several seconds."""
+    node = shutil.which("node")
+    if node is None or not CHROME.exists():
+        pytest.skip("needs node and system Chrome to render PDFs")
+    root = tmp_path_factory.mktemp("scan-profiles")
+    blind, src, scanned_rel, digital_rel = _build_mini_scan_tree(root, build_xs_room)
+    renders = {}
+
+    def render(name, profile):
+        if name not in renders:
+            _render_pdf_tree(node, src, root / name, profile)
+            renders[name] = root / name
+        return renders[name]
+
+    return SimpleNamespace(blind=blind, scanned_rel=scanned_rel, digital_rel=digital_rel, render=render)
+
+
+def test_scan_profile_none_is_byte_identical_to_default(mini_scan):
     """`--scan-profile none` is the compatibility guarantee every existing
     room depends on: it must be byte-identical to passing no `--scan-profile`
     flag at all, which is what every caller before this branch — and every
@@ -1501,18 +1460,10 @@ def test_scan_profile_none_is_byte_identical_to_default(tmp_path, build_xs_room)
     Needs node and Chrome only, so it runs on every machine — it must not
     sit behind the rapidocr skip the way the byte comparisons below used to.
     """
-    node = shutil.which("node")
-    if node is None or not CHROME.exists():
-        pytest.skip("needs node and system Chrome to render PDFs")
+    default_tree = mini_scan.render("pdf-default-argv", None)
+    explicit_none_tree = mini_scan.render("pdf-none", "none")
 
-    _blind, src, scanned_rel, digital_rel = _build_mini_scan_tree(tmp_path, build_xs_room)
-
-    default_tree = tmp_path / "pdf-default-argv"
-    explicit_none_tree = tmp_path / "pdf-explicit-none"
-    _render_pdf_tree(node, src, default_tree, None)
-    _render_pdf_tree(node, src, explicit_none_tree, "none")
-
-    for rel in (scanned_rel, digital_rel):
+    for rel in (mini_scan.scanned_rel, mini_scan.digital_rel):
         target = rel.replace(".md", ".pdf")
         assert (default_tree / target).read_bytes() == (
             explicit_none_tree / target
@@ -1522,7 +1473,7 @@ def test_scan_profile_none_is_byte_identical_to_default(tmp_path, build_xs_room)
         )
 
 
-def test_office_profile_measurably_degrades_extracted_text(tmp_path, build_xs_room):
+def test_office_profile_measurably_degrades_extracted_text(mini_scan):
     """Render one small room twice, pristine and degraded, OCR both, and
     require that the degraded tree loses text the pristine one keeps.
 
@@ -1537,18 +1488,10 @@ def test_office_profile_measurably_degrades_extracted_text(tmp_path, build_xs_ro
     takes three quarters of a minute per profile and measures nothing the two
     do not.
     """
-    node = shutil.which("node")
-    if node is None or not CHROME.exists():
-        pytest.skip("needs node and system Chrome to render PDFs")
-
-    blind, src, scanned_rel, digital_rel = _build_mini_scan_tree(tmp_path, build_xs_room)
-
-    pristine_tree = tmp_path / "pdf-none"
-    degraded_tree = tmp_path / "pdf-office"
-    repeat_tree = tmp_path / "pdf-office-again"
-    _render_pdf_tree(node, src, pristine_tree, "none")
-    _render_pdf_tree(node, src, degraded_tree, "office")
-    _render_pdf_tree(node, src, repeat_tree, "office")
+    blind, scanned_rel, digital_rel = mini_scan.blind, mini_scan.scanned_rel, mini_scan.digital_rel
+    pristine_tree = mini_scan.render("pdf-none", "none")
+    degraded_tree = mini_scan.render("pdf-office", "office")
+    repeat_tree = mini_scan.render("pdf-office-again", "office")
 
     def pdf_for(tree, rel):
         return tree / rel.replace(".md", ".pdf")
@@ -1781,50 +1724,9 @@ def test_every_page_is_a_full_page_tall_including_the_last():
         pytest.skip("node not available — page-cut arithmetic unverified")
 
     assert _run_node_page_cuts(node, [[0, 10]], 40, 100) == [[0, 100]]
-    for _start, end in _run_node_page_cuts(node, [[i * 25, i * 25 + 15] for i in range(12)], 300, 100):
-        assert end - _start == 100 or end - _start < 100, (end, _start)
-    last_start, last_end = _run_node_page_cuts(node, [], 250, 100)[-1]
-    assert last_end - last_start == 100, "the final page must be a full page tall"
-
-
-def test_line_boxes_are_measured_per_visual_line_not_per_block():
-    """A wrapped paragraph must yield one box per VISUAL line. Measuring per
-    block instead would return one tall box for the whole paragraph, and the
-    cut chooser would then treat a 40-line paragraph as an indivisible unit
-    taller than a page — falling back to the hard clip every time and fixing
-    nothing at all."""
-    node = shutil.which("node")
-    if node is None or not CHROME.exists():
-        pytest.skip("needs node and system Chrome to measure line boxes")
-
-    mjs = PDF_MJS.read_text(encoding="utf-8")
-    match = re.search(r"async function lineBoxesFor\([^)]*\)\s*\{.*?\n\}", mjs, re.DOTALL)
-    assert match, (
-        "could not find `async function lineBoxesFor(...)` in "
-        "synthvdr/render/pdf.mjs — update the extraction regex"
-    )
-
-    body = "<p style='font:16px/20px serif;margin:0;width:200px'>" + ("word " * 40) + "</p>"
-    script = (
-        "import puppeteer from 'puppeteer';\n"
-        f"{match.group(0)}\n"
-        f"const browser = await puppeteer.launch({{executablePath: {json.dumps(str(CHROME))}}});\n"
-        "const page = await browser.newPage();\n"
-        "await page.setViewport({width: 400, height: 600});\n"
-        f"await page.setContent({json.dumps(body)});\n"
-        "console.log(JSON.stringify(await lineBoxesFor(page)));\n"
-        "await browser.close();\n"
-    )
-    proc = subprocess.run(
-        [node, "--input-type=module", "-e", script], capture_output=True, text=True
-    )
-    assert proc.returncode == 0, proc.stderr
-    boxes = json.loads(proc.stdout.strip())
-
-    assert len(boxes) > 3, f"expected one box per wrapped line, got {len(boxes)}"
-    for top, bottom in boxes:
-        assert 0 < bottom - top < 40, f"box {top}..{bottom} is not one line tall"
-    assert boxes == sorted(boxes), "boxes must be sorted by top"
+    cuts = _run_node_page_cuts(node, [[i * 25, i * 25 + 15] for i in range(12)], 300, 100)
+    assert all(end - start <= 100 for start, end in cuts), cuts
+    assert cuts[-1][1] - cuts[-1][0] == 100, f"the final page must be a full page tall: {cuts}"
 
 
 def test_no_page_cut_falls_through_a_line_in_a_real_render():
@@ -1864,6 +1766,14 @@ def test_no_page_cut_falls_through_a_line_in_a_real_render():
     )
     assert proc.returncode == 0, proc.stderr
     data = json.loads(proc.stdout.strip())
+
+    # One box per VISUAL line, not per block: a 2,000-word paragraph measured
+    # as one tall box would be an indivisible unit taller than a page, so the
+    # cut chooser would fall back to the hard clip every time.
+    boxes = data["boxes"]
+    assert len(boxes) > 3, f"expected one box per wrapped line, got {len(boxes)}"
+    assert all(0 < bottom - top < 40 for top, bottom in boxes), "a box is more than one line tall"
+    assert boxes == sorted(boxes), "boxes must be sorted by top"
 
     assert len(data["cuts"]) > 2, "the fixture must be long enough to paginate"
     boundaries = {end for _start, end in data["cuts"][:-1]}

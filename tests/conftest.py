@@ -42,7 +42,7 @@ def build_fixture_room(dest: Path) -> Path:
     `test_end_to_end.py`'s cross-process determinism test, which is the only
     way to observe a set/dict-ordering dependence: two calls inside the same
     pytest process always share one interpreter's hash seed, so a same-process
-    comparison (`test_repeat_builds_are_byte_identical`) cannot see it.
+    comparison cannot see it.
     """
     shutil.copytree(FIXTURE, dest)
     conf = load_room_conf(dest / "room.conf")
@@ -72,9 +72,27 @@ def build_fixture_room(dest: Path) -> Path:
     return dest
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def build_xs_room():
     return build_fixture_room
+
+
+# The opening bytes of a real Finder .DS_Store: binary, and not valid UTF-8.
+DS_STORE = b"\x00\x00\x00\x01Bud1\x00\x00\x10\x00\x00\x00\x08\x00\xff\xfe"
+
+
+def _browse_in_finder(*trees: Path) -> None:
+    """Leave a .DS_Store in each tree and every folder below it, as opening
+    each one in Finder does. Each records its own folder, as Finder's do, so
+    a blind folder and its flagged twin never hold the same bytes."""
+    for tree in trees:
+        for folder in [tree, *[p for p in tree.rglob("*") if p.is_dir()]]:
+            (folder / ".DS_Store").write_bytes(DS_STORE + str(folder).encode())
+
+
+@pytest.fixture(scope="session")
+def browse_in_finder():
+    return _browse_in_finder
 
 
 @pytest.fixture

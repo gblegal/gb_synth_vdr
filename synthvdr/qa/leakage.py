@@ -82,8 +82,8 @@ def _read_lossy(path: Path) -> Tuple[str, bool]:
     is still a file a leak can hide in — skipping it and then reporting the
     room "clean" would assert that a file was read when it never was.
     Returns (text, needed_fallback). OSError (the file cannot be opened at
-    all) is left to the caller, which already needs a per-path try/except
-    for it around whatever else it does with `text`.
+    all) is raised, for the same reason: the runner turns it into a FAIL
+    naming the file, where catching it here would count the file clean.
     """
     try:
         return path.read_text(encoding="utf-8"), False
@@ -104,10 +104,7 @@ def _hits(paths: List[Path], needles, pattern=None) -> Tuple[List[str], int]:
     out: List[str] = []
     replaced = 0
     for path in paths:
-        try:
-            text, needed_fallback = _read_lossy(path)
-        except OSError:
-            continue
+        text, needed_fallback = _read_lossy(path)
         if needed_fallback:
             replaced += 1
         haystacks = (text.lower(), path.name.lower())
@@ -297,10 +294,7 @@ def gate_14_unchecked_names(ctx):
     unchecked: Set[str] = set()
     replaced = 0
     for path in files:
-        try:
-            text, needed_fallback = _read_lossy(path)
-        except OSError:
-            continue
+        text, needed_fallback = _read_lossy(path)
         if needed_fallback:
             replaced += 1
         unchecked |= entity_tokens(mask_cast_names(text, cast))

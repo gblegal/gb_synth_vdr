@@ -149,6 +149,29 @@ def test_cli_reports_verified_provenance_when_hashes_match(room, capsys):
     assert "matching-hash" in captured.out
 
 
+def test_cli_reads_the_manifest_and_adjudications_from_the_rooms_own_key_root(room, capsys):
+    # `manifest` writes <KEY_ROOT>/manifest.json, so `score` must read it
+    # there. Reading a literal _key/ instead, a room keyed elsewhere had no
+    # manifest to check against, and an output from a different room was
+    # scored as merely UNVERIFIED rather than refused.
+    conf = room / "room.conf"
+    conf.write_text(
+        conf.read_text().replace('KEY_ROOT="_key"', 'KEY_ROOT="answers"').replace(
+            'FLAGGED_TREE="_key/flagged"', 'FLAGGED_TREE="answers/flagged"'
+        )
+    )
+    (room / "_key").rename(room / "answers")
+    (room / "answers" / "manifest.json").write_text(json.dumps({"content_hash": "abc123"}))
+    out_path = write_output(room, room_hash="different-hash", documents=[SRC])
+    assert main(["score", str(out_path), "--room", str(room)]) == 2
+    assert "abc123" in capsys.readouterr().err
+
+    (room / "answers" / "manifest.json").unlink()
+    (room / "answers" / "adjudications.yaml").write_text("adjudications: []\n")
+    assert main(["score", str(out_path), "--room", str(room)]) == 0
+    assert "0 adjudication(s) applied from answers/adjudications.yaml" in capsys.readouterr().out
+
+
 # --- ordinary CLI failure modes ------------------------------------------------
 
 

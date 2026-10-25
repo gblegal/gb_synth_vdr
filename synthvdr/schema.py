@@ -59,10 +59,6 @@ class FindingSet:
     def all_evidence_paths(self) -> Set[str]:
         return {p for f in self.findings for p in f.evidence_paths()}
 
-    def carrier_paths(self) -> Set[str]:
-        """Documents that receive an annotation block in the flagged tree."""
-        return self.all_evidence_paths()
-
 
 def _require(row: dict, key: str, context: str):
     if key not in row:
@@ -78,7 +74,6 @@ def _require_mapping(row, context: str) -> None:
     test that can pass, and `row["id"]` then raises
     `TypeError: string indices must be integers`. Same escape as a bare
     KeyError, same untrusted input, so it is guarded on the same terms.
-    `load_findings` and `load_distractors` both already do this inline.
     """
     if not isinstance(row, dict):
         raise SchemaError(f"{context}: not a mapping — got {type(row).__name__}")
@@ -98,10 +93,7 @@ def load_findings(path: Path) -> FindingSet:
     findings: List[Finding] = []
     seen: Set[str] = set()
     for index, row in enumerate(rows):
-        if not isinstance(row, dict):
-            raise SchemaError(
-                f"{path}: findings[{index}] is not a mapping — got {type(row).__name__}"
-            )
+        _require_mapping(row, f"{path}: findings[{index}]")
         fid = _require(row, "id", str(path))
         if fid in seen:
             raise SchemaError(f"{path}: duplicate finding id {fid}")
@@ -136,10 +128,7 @@ def load_distractors(path: Path) -> List[Distractor]:
     out: List[Distractor] = []
     seen: Set[str] = set()
     for index, row in enumerate(rows):
-        if not isinstance(row, dict):
-            raise SchemaError(
-                f"{path}: distractors[{index}] is not a mapping — got {type(row).__name__}"
-            )
+        _require_mapping(row, f"{path}: distractors[{index}]")
         did = _require(row, "id", str(path))
         if did in seen:
             raise SchemaError(f"{path}: duplicate distractor id {did}")
@@ -422,8 +411,10 @@ def derive_prefix_for_workstream(workstreams, prefixes, existing_findings=()):
     return mapping
 
 
+# The final id's prefix is the shape roomconf accepts in FINDING_PREFIXES: a
+# letter, then letters or digits.
 NEW_FINDING_LEDGER_ROW = re.compile(
-    r"^\|\s*([\w-]+)\s*\|\s*([A-Z]+-\d+)\s*\|\s*(\w+)\s*\|\s*$", re.MULTILINE
+    r"^\|\s*([\w-]+)\s*\|\s*([A-Z][A-Z0-9]*-\d+)\s*\|\s*(\w+)\s*\|\s*$", re.MULTILINE
 )
 
 

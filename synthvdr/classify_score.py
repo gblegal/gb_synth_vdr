@@ -50,9 +50,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .answer_key import ANSWER_KEY_NAME
+from .answer_key import ANSWER_KEY_NAME, _named
 
-_SHOW = 10
 _CONFUSION_SHOW = 15
 
 
@@ -62,14 +61,6 @@ class ClassificationOutputError(Exception):
 
 class ClassificationScoreError(Exception):
     """The output and the answer key cannot be scored against each other."""
-
-
-def _named(paths: List[str], limit: int = _SHOW) -> str:
-    shown = ", ".join(paths[:limit])
-    remaining = len(paths) - limit
-    if remaining > 0:
-        shown += f" (+{remaining} more)"
-    return shown
 
 
 @dataclass(frozen=True)

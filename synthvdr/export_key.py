@@ -31,7 +31,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from .roomconf import load_room_conf
+from .roomconf import _is_inside, load_room_conf
 from .schema import load_distractors, load_findings, render_distractors_md, render_findings_md
 
 
@@ -56,9 +56,7 @@ def export_key(room: Path, out: Path) -> ExportReport:
         raise ExportKeyError(
             f"{out} already exists — export-key writes a fresh folder and never over one"
         )
-    target = [part.casefold() for part in out.resolve().parts]
-    inside = [part.casefold() for part in room.resolve().parts]
-    if target[: len(inside)] == inside:
+    if _is_inside(out.resolve(), room.resolve()):
         raise ExportKeyError(
             f"{out} is inside the room ({room}) — the key must never be written into the "
             "room, where a cut uploaded for review could carry it. Write it outside, for "

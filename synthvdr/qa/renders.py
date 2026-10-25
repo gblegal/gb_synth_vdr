@@ -23,7 +23,7 @@ from typing import Dict, List
 from .runner import fail, ok, skip, truncated
 
 # suffix appended to BLIND_TREE's name -> file extension the render tree uses.
-# `-pdf-scanned` is the deliberately-degraded twin of `-pdf` (same 800
+# `-pdf-scanned` is the deliberately-degraded twin of `-pdf` (the same
 # documents, the scanned slots rendered hard to OCR). It is listed here and
 # nowhere else: parity in both directions, and the orphan detection this
 # module's docstring explains is load-bearing, then apply to it unchanged.
@@ -41,8 +41,7 @@ def gate_16_render_parity(ctx):
         return skip("16", "render parity", "no render tree present — renders are optional")
 
     # ctx.blind_files() returns every file under BLIND_TREE unfiltered by
-    # design (marker dotfiles included) — the suffix filter is this gate's
-    # own job, same as every other gate that walks blind_files().
+    # design — the suffix filter is this gate's own job.
     sources = [p for p in ctx.blind_files() if p.suffix == ".md"]
 
     missing: Dict[str, List[str]] = {}

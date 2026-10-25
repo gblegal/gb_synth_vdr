@@ -178,8 +178,8 @@ def write_scanned_csv(findings: FindingSet, count: int, path: Path) -> List[str]
 _FIXED_ZIP_DATE_TIME = (1980, 1, 1, 0, 0, 0)
 
 
-def _normalise_zip_mtimes(path: Path) -> None:
-    """Rewrite the .docx at `path` with every member's mtime pinned.
+def _pin_zip_mtimes(data: bytes) -> bytes:
+    """The .docx `data` with every member's mtime pinned.
 
     A .docx is a zip, and everything python-docx puts INSIDE one is already
     deterministic: `dcterms:created` is a fixed template constant
@@ -199,17 +199,15 @@ def _normalise_zip_mtimes(path: Path) -> None:
     Every other field is copied from the archive python-docx produced rather
     than reconstructed, so this changes the timestamps and nothing else: the
     member order, the compression method, and the permission and platform
-    bits all survive. Reading the whole archive into memory first is
-    deliberate — the alternative is writing the replacement beside the
-    original and renaming, and this module's contract (see the module
-    docstring) is that it never deletes a file it did not just write.
+    bits all survive. It runs on the bytes before they are written, so an
+    unpinned archive is never on disk, even after an interrupted render.
     """
-    with zipfile.ZipFile(path) as source:
+    with zipfile.ZipFile(io.BytesIO(data)) as source:
         members = [(info, source.read(info.filename)) for info in source.infolist()]
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as target:
-        for info, data in members:
+        for info, member in members:
             pinned = zipfile.ZipInfo(info.filename, _FIXED_ZIP_DATE_TIME)
             pinned.compress_type = info.compress_type
             pinned.comment = info.comment
@@ -219,9 +217,9 @@ def _normalise_zip_mtimes(path: Path) -> None:
             pinned.extract_version = info.extract_version
             pinned.internal_attr = info.internal_attr
             pinned.external_attr = info.external_attr
-            target.writestr(pinned, data)
+            target.writestr(pinned, member)
 
-    path.write_bytes(buffer.getvalue())
+    return buffer.getvalue()
 
 
 def render_tree_docx(src: Path, out: Path) -> int:
@@ -279,10 +277,8 @@ def render_tree_docx(src: Path, out: Path) -> int:
                 document.add_heading(heading.group(2), level=level)
             elif stripped:
                 document.add_paragraph(stripped)
-        document.save(str(target))
-        # Immediately, not in a pass at the end: a half-normalised tree left
-        # behind by an interrupted render is indistinguishable from a
-        # normalised one until something hashes it.
-        _normalise_zip_mtimes(target)
+        saved = io.BytesIO()
+        document.save(saved)
+        target.write_bytes(_pin_zip_mtimes(saved.getvalue()))
         written += 1
     return written

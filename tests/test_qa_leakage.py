@@ -1,8 +1,10 @@
+import os
 import re
+import string
 
 import pytest
 
-from synthvdr.names import cast_list, entity_tokens, mask_cast_names
+from synthvdr.names import _ASCII_LOOKALIKES, cast_list, entity_tokens, mask_cast_names
 from synthvdr.qa.leakage import (
     ANSWER_KEY_NOUNS,
     BUILD_VOCABULARY,
@@ -14,7 +16,7 @@ from synthvdr.qa.leakage import (
     gate_12_key_containment,
     gate_14_unchecked_names,
 )
-from synthvdr.qa.runner import GateContext
+from synthvdr.qa.runner import GateContext, run_gates
 from synthvdr.roomconf import load_room_conf
 from synthvdr.schema import FindingSet
 
@@ -122,6 +124,24 @@ def test_gate_14_skips_when_no_name_check_has_been_run(room):
 # read (with errors="replace"), never silently skipped and then folded into
 # a "clean" count for files that were never actually swept.
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "gate", [gate_03_flag_leakage, gate_04_vocabulary, gate_12_key_containment, gate_14_unchecked_names]
+)
+def test_a_leak_sweep_fails_on_a_file_it_cannot_read(room, gate, capsys):
+    # These gates used to skip a file they could not open and still count it
+    # in "N files clean" — the unsafe direction, since a leak can sit in a
+    # file nobody read. The runner turns the read error into a FAIL naming it.
+    doc = blind_doc(room)
+    doc.chmod(0)
+    try:
+        if os.access(doc, os.R_OK):
+            pytest.skip("running with permissions that ignore chmod")
+        assert run_gates(ctx_for(room), [gate]) == 1
+    finally:
+        doc.chmod(0o644)
+    assert "1.1.1_articles.md" in capsys.readouterr().out
 
 
 def test_gate_04_catches_a_leak_hidden_by_an_invalid_utf8_byte(room):
@@ -406,6 +426,34 @@ def test_mask_cast_names_still_requires_whitespace_between_a_names_words():
     # no business touching.
     residue = mask_cast_names("AshfellHoldings Limited", {"Ashfell Holdings Limited"})
     assert "AshfellHoldings" in residue
+
+
+def test_ascii_lookalikes_are_every_character_ignorecase_folds_to_ascii():
+    # mask_cast_names skips a name whose lower-cased words are not all in the
+    # lower-cased text, which is exact only while _ASCII_LOOKALIKES holds
+    # every non-ASCII character re.IGNORECASE lets match an ASCII letter.
+    # Asked of the running interpreter, over every code point.
+    any_letter = re.compile("(?i:" + "|".join(string.ascii_lowercase) + ")")
+    folds = {chr(c) for c in range(128, 0x110000) if any_letter.fullmatch(chr(c))}
+    assert folds == {chr(c) for c in _ASCII_LOOKALIKES}
+    for code, letter in _ASCII_LOOKALIKES.items():
+        assert re.fullmatch(letter, chr(code), re.IGNORECASE), hex(code)
+
+
+def test_mask_cast_names_matches_a_cast_entry_spelt_with_a_lookalike_letter():
+    # The mask has always read dotless ı, İ and long ſ as i, i and s, because
+    # re.IGNORECASE does. The pre-test that lets it skip absent names has to
+    # agree, or a name it removed before comes back as unchecked.
+    for rendering in ("KİNGSWAY ISIS LIMITED", "Kingsway Iſiſ Limited", "Kingsway Isis Limıted"):
+        residue = mask_cast_names(rendering, {"Kingsway Isis Limited"})
+        assert entity_tokens(residue) == set(), rendering
+
+
+def test_mask_cast_names_matches_a_non_ascii_cast_entry_whatever_its_case():
+    # Why a name with a non-ASCII word is never pre-tested: "yıldırım" is not
+    # in "yildirim", but re.IGNORECASE matches the capital I to the dotless ı.
+    residue = mask_cast_names("YILDIRIM HOLDING LIMITED", {"Yıldırım Holding Limited"})
+    assert entity_tokens(residue) == set()
 
 
 def test_gate_14_reports_the_right_name_when_a_shorter_cast_entry_is_nested(room):

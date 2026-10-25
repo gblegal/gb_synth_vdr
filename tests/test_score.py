@@ -318,20 +318,6 @@ def test_render_scorecard_omits_the_provenance_line_when_not_supplied():
 # --- determinism ---------------------------------------------------------------
 
 
-def _build_scorecard_text() -> str:
-    out = output(
-        ToolFinding("Land issue", "critical", [SRC], "x"),
-        ToolFinding("Regulator notice", "high", [DX_DOC], "y"),
-        ToolFinding("Something else", "low", [], "z"),
-    )
-    card = score(out, findings(), distractors())
-    return render_scorecard(card, out, findings())
-
-
-def test_render_scorecard_is_byte_identical_across_two_calls():
-    assert _build_scorecard_text() == _build_scorecard_text()
-
-
 _SUBPROCESS_SCRIPT = textwrap.dedent(
     """
     from synthvdr.schema import Distractor, Finding, FindingSet

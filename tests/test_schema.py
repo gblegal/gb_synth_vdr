@@ -446,6 +446,8 @@ def _existing(tmp_path):
 
 
 def test_derive_prefix_for_workstream_accepts_the_correct_correspondence(tmp_path):
+    # "operations" has no existing finding to cross-check against — only
+    # length is checked for it, and it must not be blocked.
     mapping = derive_prefix_for_workstream(
         ["environmental", "financial", "operations"], ["ENV", "FIN", "OPS"], _existing(tmp_path)
     )
@@ -468,16 +470,6 @@ def test_derive_prefix_for_workstream_rejects_a_reordered_list(tmp_path):
         derive_prefix_for_workstream(
             ["environmental", "financial"], ["FIN", "ENV"], _existing(tmp_path)
         )
-
-
-def test_derive_prefix_for_workstream_does_not_block_a_workstream_with_no_existing_finding(
-    tmp_path,
-):
-    # "operations" has no existing finding to cross-check against — only length is checked.
-    mapping = derive_prefix_for_workstream(
-        ["environmental", "financial", "operations"], ["ENV", "FIN", "OPS"], _existing(tmp_path)
-    )
-    assert mapping["operations"] == "OPS"
 
 
 def test_derive_prefix_for_workstream_against_the_real_domain_pack_and_room_conf():
@@ -519,6 +511,17 @@ def test_parse_new_findings_ledger_reads_the_table():
         "| wave2-batch-a-NEW-1 | ENV-2 | environmental |\n"
     )
     assert parse_new_findings_ledger(text) == {"wave2-batch-a-NEW-1": "ENV-2"}
+
+
+def test_parse_new_findings_ledger_reads_a_prefix_with_a_digit_in_it():
+    # room.conf accepts a prefix such as ESG2 (a letter, then letters or
+    # digits). A ledger row the parser cannot see is a discovery a resumed
+    # build allocates a second time.
+    text = (
+        "## New findings\n\n| Provisional id | Final id | Workstream |\n|---|---|---|\n"
+        "| w1-a-NEW-1 | IP-3 | ip |\n| w1-a-NEW-2 | ESG2-1 | esg |\n"
+    )
+    assert parse_new_findings_ledger(text) == {"w1-a-NEW-1": "IP-3", "w1-a-NEW-2": "ESG2-1"}
 
 
 def test_parse_new_findings_ledger_is_empty_for_a_fresh_build():

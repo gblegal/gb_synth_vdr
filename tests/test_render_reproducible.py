@@ -335,25 +335,6 @@ def test_docx_zip_member_mtimes_are_pinned(tmp_path):
                 )
 
 
-def test_docx_render_still_reads_back_correctly(tmp_path):
-    """Metadata-only: the normalisation must not disturb the document.
-
-    Rewriting a zip is the sort of change that can produce a file that hashes
-    beautifully and no longer opens, so the structure python-docx put in is
-    read back out of the normalised archive here.
-    """
-    Document = _require_docx().Document
-
-    src = _source_tree(tmp_path / "room")
-    out = tmp_path / "docx"
-    render_tree_docx(src, out)
-
-    document = Document(str(out / "01_corporate" / "1.1.1_articles.docx"))
-    paragraphs = [(p.text, p.style.name) for p in document.paragraphs]
-    assert ("Articles of association", "Heading 1") in paragraphs
-    assert ("The company was incorporated in 2011.", "Normal") in paragraphs
-
-
 # --- tier 4: the full PDF render, which needs puppeteer AND a browser -----
 
 
@@ -400,7 +381,20 @@ def _render_pdf(src: Path, out: Path) -> None:
     )
 
 
-def test_pdf_render_is_byte_reproducible(tmp_path):
+@pytest.fixture(scope="module")
+def two_renders(tmp_path_factory):
+    """One source tree rendered twice, into two directories. Shared by the two
+    tests below, which only read the renders: each render launches a browser
+    and takes several seconds."""
+    root = tmp_path_factory.mktemp("pdf-reproducible")
+    src = _source_tree(root / "room")
+    first, second = root / "pdf-a", root / "pdf-b"
+    _render_pdf(src, first)
+    _render_pdf(src, second)
+    return first, second
+
+
+def test_pdf_render_is_byte_reproducible(two_renders):
     """Two renders of one source tree, two output directories, one hash —
     across BOTH branches, live-text and scanned (the scanned one rebuilds the
     document as one screenshot per page, so it is a second, quite different
@@ -409,19 +403,14 @@ def test_pdf_render_is_byte_reproducible(tmp_path):
     This is the check the whole change exists to satisfy: while it fails, a
     render tree cannot carry a manifest that means anything.
     """
-    src = _source_tree(tmp_path / "room")
-    first, second = tmp_path / "pdf-a", tmp_path / "pdf-b"
-
-    _render_pdf(src, first)
-    _render_pdf(src, second)
-
+    first, second = two_renders
     hash_a, count_a = compute_content_hash(first)
     hash_b, count_b = compute_content_hash(second)
     assert count_a == count_b == 2
     assert hash_a == hash_b
 
 
-def test_pdf_render_stamps_nothing_that_varies(tmp_path):
+def test_pdf_render_stamps_nothing_that_varies(two_renders):
     """No `/CreationDate`, `/ModDate`, `/Producer` or `/Creator` may differ
     between two renders — and the two that remain must be the pinned value,
     not merely a value the two runs agreed on by being a second apart.
@@ -430,11 +419,7 @@ def test_pdf_render_stamps_nothing_that_varies(tmp_path):
     different reasons and should be read differently: this one says WHAT is
     still moving, where the hash can only say that something is.
     """
-    src = _source_tree(tmp_path / "room")
-    first, second = tmp_path / "pdf-a", tmp_path / "pdf-b"
-
-    _render_pdf(src, first)
-    _render_pdf(src, second)
+    first, second = two_renders
 
     def stamped(root: Path) -> dict:
         return {

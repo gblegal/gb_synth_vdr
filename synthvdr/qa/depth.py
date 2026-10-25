@@ -25,6 +25,7 @@ from ..domain import DEFAULT_DOMAIN_ROOT, DomainPack, load_domain
 from ..lengths import Lengths, load_lengths
 from ..roomconf import doc_length
 from ..slots import read_anchors_csv
+from ..twin import split_twin
 from .runner import fail, ok, skip, truncated
 
 # Literal phrases and bracketed-instruction prefixes that read as a
@@ -78,9 +79,9 @@ def wordcount(text: str) -> int:
 
 
 def strip_annotation(text: str, flag_string: str) -> str:
-    marker = f"\n## {flag_string}\n"
-    position = text.rfind(marker)
-    return text if position == -1 else text[:position]
+    """`text` without a trailing annotation block, split where the twin
+    builder splits it."""
+    return split_twin(text, flag_string)[0]
 
 
 def _placeholder_hit(text: str) -> str | None:
@@ -112,9 +113,13 @@ def classify_archetype(filename: str, pack: DomainPack) -> str:
     return best[2] if best else pack.default_archetype
 
 
-def floor_for(slot_id: str, filename: str, tier: str, pack: DomainPack) -> int:
+def _require_tier(slot_id: str, tier: str) -> None:
     if tier not in ("A", "F"):
         raise DepthLintError(f"{slot_id}: invalid tier {tier!r} in anchors.csv, expected 'A' or 'F'")
+
+
+def floor_for(slot_id: str, filename: str, tier: str, pack: DomainPack) -> int:
+    _require_tier(slot_id, tier)
     if tier == "F":
         return pack.tier_f_floor
     return pack.archetypes[classify_archetype(filename, pack)].floor
@@ -134,8 +139,7 @@ def slot_floor(
     if lengths is not None:
         row = lengths.row_for_rel_path(rel_path)
         if row is not None:
-            if tier not in ("A", "F"):
-                raise DepthLintError(f"{slot_id}: invalid tier {tier!r} in anchors.csv, expected 'A' or 'F'")
+            _require_tier(slot_id, tier)
             return lengths.bands[row.band].floor
     return floor_for(slot_id, Path(rel_path).name, tier, pack)
 
@@ -186,9 +190,9 @@ def depth_problems(
     drift from the gate it is meant to predict, which is how a wave could pass
     its own check and fail gate 10 anyway.
 
-    `tiers` is `read_anchors_csv`'s mapping. `flag_string` is `FLAG_STRING_1`,
-    used to strip a flagged twin's annotation block so it cannot pad a document
-    over a floor its blind twin does not clear. `lengths` is
+    `tiers` is `read_anchors_csv`'s mapping. `flag_string` is `FLAG_STRING_1`:
+    an annotation block is stripped before counting, so a flagged twin passed
+    here is held to the floor its blind twin must clear. `lengths` is
     `load_lengths(...)` in a long room and None in a short one; see `slot_floor`.
     """
     problems: List[str] = []

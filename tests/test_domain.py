@@ -30,15 +30,9 @@ def test_weights_sum_to_one():
     assert abs(sum(s.weight for s in pack.sections) - 1.0) < 1e-6
 
 
-def test_every_archetype_declares_a_positive_floor():
-    pack = load_domain(DEFAULT_DOMAIN_ROOT)
-    assert pack.archetypes
-    assert all(a.floor > 0 for a in pack.archetypes.values())
-
-
 def test_shipped_domain_pack_pins_its_exact_depth_floors():
-    """Final review, test-suite gap: `test_every_archetype_declares_a_positive_floor`
-    above only checks `> 0` — quartering every floor in the shipped
+    """Final review, test-suite gap: a check that every floor is `> 0` is not
+    enough — quartering every floor in the shipped
     `domain/ma/archetypes.yaml` (tier_f_floor 350 -> 87, every archetype floor
     divided by 4) still satisfies ">0" and leaves the whole suite passing,
     silently producing rooms a quarter as deep with gate 10 reporting a

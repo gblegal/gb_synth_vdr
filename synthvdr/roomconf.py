@@ -154,16 +154,6 @@ def _is_inside(inner: Path, outer: Path) -> bool:
     return inner_parts[: len(outer_parts)] == outer_parts
 
 
-def _overlaps(a: Path, b: Path) -> bool:
-    """True if `a` and `b` name the same directory, or either is nested
-    under the other — they are not two genuinely separate trees by path
-    alone. This is a string comparison: it cannot see two differently
-    *spelled* paths that the filesystem itself resolves to one directory by
-    a route other than case (Unicode normalisation, a hardlink, a bind
-    mount). That is what _same_file is for."""
-    return _is_inside(a, b) or _is_inside(b, a)
-
-
 def _same_file(a: Path, b: Path) -> bool:
     """True if `a` and `b` are the same directory entry on disk — same
     device and inode, per os.path.samefile. Catches every aliasing route a
@@ -175,6 +165,18 @@ def _same_file(a: Path, b: Path) -> bool:
         return os.path.samefile(a, b)
     except OSError:
         return False
+
+
+# Finder writes a .DS_Store into every folder it opens. It holds Finder's view
+# settings, not a document, and Finder rewrites it whenever someone looks, so
+# a room that has been browsed must read exactly as one that has not: no gate
+# counts it, no build copies it and no content hash covers it.
+FINDER_LITTER = ".DS_Store"
+
+
+def room_files(root: Path) -> List[Path]:
+    """Every file under `root`, sorted, less Finder's .DS_Store files."""
+    return sorted(p for p in root.rglob("*") if p.is_file() and p.name != FINDER_LITTER)
 
 
 _FINDING_PREFIX_TOKEN = re.compile(r"^[A-Z][A-Z0-9]*$")
