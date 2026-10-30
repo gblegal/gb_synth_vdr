@@ -238,7 +238,8 @@ page entries. Left:
 
 ## Afterwards
 
-Each fact goes on `gb-docclass/docs/legora-environment.md`, dated and saying
+Each fact goes on `legora-environment.md` in gb-legora-info (`~/Dev/gb-legora-info`,
+moved there from gb-docclass on 30 October 2026), dated and saying
 which run established it, written about Legora rather than about this skill.
 The decision on Tier B of `docs/legora-bundle-plan.md` is made from those
 entries, not from the agent's replies.
