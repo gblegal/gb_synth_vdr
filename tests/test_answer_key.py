@@ -53,11 +53,13 @@ def test_a_fully_labelled_room_produces_the_key(tmp_path):
             "document_type": "Articles of association",
             "primary_workstream": "corporate",
             "secondary_workstreams": [],
+            "teams_as_of": "0.15.0",
         }
     ], (
         "one line per document, speaking the classifier's vocabulary: the "
         "type from the labels file, the workstream from the section's "
-        "classifier_workstream"
+        "classifier_workstream, and the document list whose team names "
+        "those are"
     )
     assert out == room / "_key" / "answer-key.jsonl", (
         "the key is answer-key material and lives under KEY_ROOT"
@@ -134,6 +136,120 @@ def test_the_shipped_pack_names_a_classifier_workstream_for_every_section():
         "every shipped section must say which classifier workstream its "
         f"documents belong to; missing: {missing}"
     )
+
+
+# gb-docclass divided three teams on its document list 0.15.0 (release
+# 2.0.1, 23 November 2026): ip-it into ip and it-data, employment into
+# employment and incentives, finance into finance and banking. One document
+# from each section the division touched, with the team a new key must give
+# it. 9.3 is the Employment section's share-schemes subsection.
+DIVIDED_SECTIONS = {
+    "02_financial/2.1_statutory-accounts/2.1.1_statutory-accounts-01.md": "finance",
+    "04_financing-banking/4.1_facilities/4.1.1_facilities-01.md": "banking",
+    "06_intellectual-property/6.1_registrations/6.1.1_registrations-01.md": "ip",
+    "07_information-technology/7.1_systems/7.1.1_systems-01.md": "it-data",
+    "09_employment/9.1_contracts/9.1.1_contracts-01.md": "employment",
+    "09_employment/9.3_share-schemes/9.3.1_share-schemes-01.md": "incentives",
+    "14_data-protection/14.2_dpias/14.2.1_dpias-01.md": "it-data",
+}
+
+
+def _labels_for(paths) -> str:
+    return "labels:\n" + "".join(
+        f'  - path: "{p}"\n    document_type: "Correspondence"\n' for p in paths
+    )
+
+
+def test_a_new_key_names_the_teams_gb_docclass_divided_and_never_ip_it(tmp_path):
+    room, conf = _room(
+        tmp_path, labels=_labels_for(DIVIDED_SECTIONS), docs=tuple(DIVIDED_SECTIONS)
+    )
+    out = build_answer_key(room, conf, load_domain(DEFAULT_DOMAIN_ROOT))
+    records = [json.loads(line) for line in out.read_text().splitlines()]
+    got = {r["source_path"]: r["primary_workstream"] for r in records}
+    assert got == DIVIDED_SECTIONS, (
+        "each section the division touched goes to one of the new teams; "
+        "share-scheme documents go to incentives, the rest of Employment "
+        "stays employment"
+    )
+    assert "ip-it" not in out.read_text(), "ip-it is retired and never issued again"
+    assert {r.get("teams_as_of") for r in records} == {"0.15.0"}, (
+        "every row says it is written on the new names, which is how "
+        "gb-docclass's scorer knows employment and finance mean the "
+        "narrower teams and not either half"
+    )
+
+
+def test_teams_as_of_sits_after_secondary_workstreams(tmp_path):
+    room, conf = _room(tmp_path)
+    out = build_answer_key(room, conf, load_domain(DEFAULT_DOMAIN_ROOT))
+    keys = list(json.loads(out.read_text().splitlines()[0]))
+    assert keys == [
+        "source_path",
+        "document_type",
+        "primary_workstream",
+        "secondary_workstreams",
+        "teams_as_of",
+    ], "the field order gb-docclass's own key builder writes"
+
+
+def test_every_shipped_team_is_a_current_gb_docclass_team():
+    from synthvdr.answer_key import CLASSIFIER_TEAMS
+
+    pack = load_domain(DEFAULT_DOMAIN_ROOT)
+    named = {s.classifier_workstream for s in pack.sections} | {
+        team
+        for s in pack.sections
+        for team in s.classifier_workstream_by_subsection.values()
+    }
+    assert named - CLASSIFIER_TEAMS == set(), (
+        "sections.yaml may only name teams gb-docclass issues today"
+    )
+    assert "ip-it" not in CLASSIFIER_TEAMS
+
+
+def _one_section_pack(team: str, by_subsection=None) -> DomainPack:
+    return DomainPack(
+        sections=[
+            Section(
+                number=1,
+                dir_name="01_corporate",
+                title="Corporate",
+                workstream="corporate",
+                weight=1.0,
+                subsections=["constitutional"],
+                classifier_workstream=team,
+                classifier_workstream_by_subsection=by_subsection or {},
+            )
+        ],
+        archetypes={"standard": Archetype(name="standard", floor=1, filename_patterns=[])},
+        default_archetype="standard",
+        tier_f_floor=1,
+        finding_archetypes={"corporate": []},
+    )
+
+
+def test_a_section_naming_the_retired_ip_it_is_refused(tmp_path):
+    room, conf = _room(tmp_path)
+    with pytest.raises(AnswerKeyError, match="ip-it") as excinfo:
+        build_answer_key(room, conf, _one_section_pack("ip-it"))
+    message = str(excinfo.value)
+    assert "01_corporate" in message and "it-data" in message, (
+        "the refusal names the section and what the retired team became"
+    )
+
+
+def test_a_section_naming_no_gb_docclass_team_is_refused(tmp_path):
+    room, conf = _room(tmp_path)
+    with pytest.raises(AnswerKeyError, match="real_estate"):
+        build_answer_key(room, conf, _one_section_pack("real_estate"))
+
+
+def test_a_subsection_team_for_a_subsection_the_section_lacks_is_refused():
+    from synthvdr.domain import DomainError
+
+    with pytest.raises(DomainError, match="share-schemes"):
+        _one_section_pack("corporate", {"share-schemes": "incentives"})
 
 
 def test_cli_writes_the_key_and_reports(tmp_path):

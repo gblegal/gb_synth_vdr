@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, Iterable, List
 
@@ -29,16 +29,48 @@ class Section:
     core: bool = False
     # Which workstream the downstream classifier (gb-docclass) files this
     # section's documents under — that project's fixed internal IDs
-    # ('corporate', 'ip-it', 'environmental-hs'), NOT this pack's own
+    # ('corporate', 'it-data', 'environmental-hs'), NOT this pack's own
     # `workstream` tokens; the two vocabularies are different sizes and must
-    # never be conflated. Twenty sections fold onto fourteen IDs (financial
-    # and financing-banking are both 'finance'; IP, IT and data-protection
-    # are all 'ip-it'). Defaulted for the same splatting reason as `core` —
+    # never be conflated. The IDs are the ones on gb-docclass's document list
+    # 0.15.0 (`synthvdr.answer_key.CLASSIFIER_TEAMS`). Twenty sections fold
+    # onto sixteen of its seventeen IDs, and one subsection takes the
+    # seventeenth: IT and data protection are both 'it-data'; management
+    # presentations, the transaction and JV interests are all 'corporate';
+    # Employment's share schemes are 'incentives'. Defaulted for the same
+    # splatting reason as `core` —
     # and because a custom pack without it should load fine right up until
     # someone asks synthvdr.answer_key to build a key from it, which is the
     # point at which the omission stops being harmless and is refused by
     # section name.
     classifier_workstream: str = ""
+    # A subsection whose documents belong to a different gb-docclass team
+    # from the rest of its section, by subsection name: Employment's
+    # share-schemes go to 'incentives' while its contracts and policies stay
+    # 'employment'. A name that is not one of `subsections` is refused when
+    # the Section is built, since it would otherwise match nothing and the
+    # documents it meant would quietly take the section's team.
+    classifier_workstream_by_subsection: Dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        unknown = sorted(set(self.classifier_workstream_by_subsection) - set(self.subsections))
+        if unknown:
+            raise DomainError(
+                f"section {self.dir_name}: classifier_workstream_by_subsection names "
+                f"{unknown}, which {'is' if len(unknown) == 1 else 'are'} not among its "
+                f"subsections ({self.subsections})"
+            )
+
+    def classifier_workstream_for(self, subsection_dir: str = "") -> str:
+        """The gb-docclass team for a document in `subsection_dir` (the
+        folder name as built, '9.3_share-schemes'), or the section's own
+        team when the document is not in a subsection or its subsection has
+        no team of its own."""
+        for index, name in enumerate(self.subsections):
+            if subsection_dir == f"{self.number}.{index + 1}_{name}":
+                return self.classifier_workstream_by_subsection.get(
+                    name, self.classifier_workstream
+                )
+        return self.classifier_workstream
 
 
 @dataclass(frozen=True)
