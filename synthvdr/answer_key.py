@@ -18,15 +18,21 @@ feed the key:
             document_type: "Articles of association"
 
   - the domain pack's per-section `classifier_workstream`, which says
-    which of the classifier's workstreams a section's documents belong to.
+    which of the classifier's workstreams a section's documents belong to,
+    and `classifier_workstream_by_subsection` where one subsection's
+    documents belong to another (Employment's share schemes, which
+    gb-docclass reviews as `incentives`).
 
 The output format is pinned by gb-docclass (docs/answer-key-format.md
 there): one JSON line per document — source_path, document_type,
-primary_workstream, secondary_workstreams. This side emits what the
-generator actually knows: the type it deliberately wrote and the
+primary_workstream, secondary_workstreams, teams_as_of. This side emits
+what the generator actually knows: the type it deliberately wrote and the
 workstream the room's own organisation assigns. secondary_workstreams is
 always empty here — which OTHER teams should see a document is that
-project's routing policy, not a fact about the room.
+project's routing policy, not a fact about the room. teams_as_of names
+the gb-docclass document list whose team IDs the row uses (TEAMS_AS_OF
+below), so that its scorer reads the row on the teams as they are now and
+not as they were before it divided three of them.
 
 The builder refuses a key that covers anything less than the whole blind
 tree, in either direction: an unlabelled document would grade the
@@ -54,6 +60,29 @@ LABELS_NAME = "labels.yaml"
 # classifier's repository — and so a wave can be checked against it while
 # the wave that caused a drift is still the one being worked on.
 VOCABULARY_NAME = "classifier-vocab.txt"
+
+# The gb-docclass document list whose team IDs a key is written in, stamped
+# on every row as `teams_as_of`. gb-docclass divided three teams on 0.15.0
+# (its release 2.0.1, 23 November 2026), and its scorer reads a row with no
+# marker on the old map: there a bare `employment` or `finance` is met by
+# either half, which would hide a share scheme sent to the wrong team. With
+# the marker the row means exactly what it says. Must be three numbers; the
+# scorer reads anything else as no marker at all.
+TEAMS_AS_OF = "0.15.0"
+
+# gb-docclass's seventeen team IDs on that list (profiles/mna-buyside, the
+# `workstreams` of its document list). A copy, like the vocabulary file, so
+# a key can be checked without reaching into the classifier's repository.
+CLASSIFIER_TEAMS = frozenset(
+    {
+        "corporate", "commercial", "ip", "it-data", "employment", "incentives",
+        "pensions", "real-estate", "finance", "banking", "tax", "litigation",
+        "regulatory", "environmental-hs", "esg", "insurance", "operations",
+    }
+)
+
+# Names gb-docclass no longer issues, with what each became.
+RETIRED_TEAMS = {"ip-it": ("ip", "it-data")}
 
 _SHOW = 10
 
@@ -248,28 +277,50 @@ def answer_key_records(
             "in the path, or a document since removed: " + _named(phantom)
         )
 
-    workstream_by_dir: Dict[str, str] = {}
     records = []
     for rel in docs:
-        section_dir = rel.split("/", 1)[0]
-        if section_dir not in workstream_by_dir:
-            section = pack.section_by_dir(section_dir)
-            if not section.classifier_workstream:
-                raise AnswerKeyError(
-                    f"section {section_dir} has no classifier_workstream in "
-                    "the domain pack's sections.yaml — add the field before "
-                    "building a key from this pack"
-                )
-            workstream_by_dir[section_dir] = section.classifier_workstream
+        parts = rel.split("/")
+        section_dir = parts[0]
+        section = pack.section_by_dir(section_dir)
+        if not section.classifier_workstream:
+            raise AnswerKeyError(
+                f"section {section_dir} has no classifier_workstream in "
+                "the domain pack's sections.yaml — add the field before "
+                "building a key from this pack"
+            )
+        # A document directly under its section has no subsection folder.
+        subsection_dir = parts[1] if len(parts) > 2 else ""
+        team = section.classifier_workstream_for(subsection_dir)
+        _check_team(team, section_dir)
         records.append(
             {
                 "source_path": rel,
                 "document_type": labels[rel],
-                "primary_workstream": workstream_by_dir[section_dir],
+                "primary_workstream": team,
                 "secondary_workstreams": [],
+                "teams_as_of": TEAMS_AS_OF,
             }
         )
     return records
+
+
+def _check_team(team: str, section_dir: str) -> None:
+    """Refuse a team gb-docclass does not issue on TEAMS_AS_OF, naming the
+    section, so a stale or misspelt ID in sections.yaml never reaches a key."""
+    if team in CLASSIFIER_TEAMS:
+        return
+    if team in RETIRED_TEAMS:
+        raise AnswerKeyError(
+            f"section {section_dir} names {team!r}, which gb-docclass retired "
+            f"on document list {TEAMS_AS_OF}; it became "
+            f"{' and '.join(RETIRED_TEAMS[team])} — name the one this "
+            "section's documents belong to in sections.yaml"
+        )
+    raise AnswerKeyError(
+        f"section {section_dir} names {team!r}, which is not one of "
+        f"gb-docclass's teams on document list {TEAMS_AS_OF}: "
+        + ", ".join(sorted(CLASSIFIER_TEAMS))
+    )
 
 
 def build_answer_key(

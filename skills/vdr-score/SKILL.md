@@ -162,3 +162,11 @@ fact about the room — and the scorecard says so in its own text rather than le
 absent column to be guessed at. For the same reason `sent_to_all_workstreams` never makes
 a wrong primary right. The classifier's own eval (which owns the routing table) is where
 delivery breadth is scored.
+
+**Team names are matched exactly.** A key built since gb-docclass divided three teams on its
+document list 0.15.0 (release 2.0.1) names the new teams — `ip`, `it-data`, `incentives`,
+`banking` — and stamps every row `teams_as_of: "0.15.0"`, which gb-docclass's own scorer
+reads. This scorer does not read that marker or the old names: a key built before then
+still says `ip-it` and `finance` for IP, IT, data protection and financing, and a run from
+gb-docclass 2.0.1 or later will be scored wrong on every one of those documents. Rebuild
+the key with `python3 -m synthvdr answerkey` before scoring a current run against it.
