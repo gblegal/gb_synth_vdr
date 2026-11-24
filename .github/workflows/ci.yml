@@ -16,7 +16,10 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.9", "3.11", "3.13"]
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: latest moved to 26.04 in November 2026, and
+    # setup-python has no 3.9 build for it, so the floor stopped being tested
+    # at all. 24.04 still has one.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
